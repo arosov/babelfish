@@ -43,6 +43,20 @@ class HybridTrigger:
     def stop_speech(self):
         self.is_speaking = False
 
+class AlignmentManager:
+    """
+    Manages text alignment and prefix context extraction.
+    """
+    def __init__(self, context_words: int = 4):
+        self.context_words = context_words
+
+    def get_prefix_context(self, text: str) -> str:
+        """Extracts the last N words as prefix context."""
+        words = text.split()
+        if not words:
+            return ""
+        return " ".join(words[-self.context_words:])
+
 class SinglePassPipeline(Pipeline):
     def __init__(self, vad, engine, display):
         self.vad = vad
