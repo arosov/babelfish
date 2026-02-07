@@ -6,7 +6,7 @@ This plan outlines the steps to implement a togglable two-pass transcription sys
 Enable selecting between Single-Pass and Double-Pass modes via CLI/Configuration.
 
 - [x] Task: Update `main.py` to support a `--double-pass` flag using `argparse`. 226f46e
-- [ ] Task: Refactor the main loop to delegate to specialized `SinglePassPipeline` or `DoublePassPipeline` handlers.
+- [x] Task: Refactor the main loop to delegate to specialized `SinglePassPipeline` or `DoublePassPipeline` handlers. c89bce5
 - [ ] Task: Verify the `SessionStart` hook successfully injects technical context and the model uses it to answer basic architectural questions.
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Mode Selection' (Protocol in workflow.md)
 
