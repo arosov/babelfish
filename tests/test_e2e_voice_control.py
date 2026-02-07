@@ -4,13 +4,19 @@ import numpy as np
 import logging
 
 class TestE2EVoiceControl(unittest.TestCase):
+    @patch('babelfish_stt.main.find_best_microphone')
+    @patch('babelfish_stt.main.get_gpu_info')
     @patch('babelfish_stt.main.AudioStreamer')
     @patch('babelfish_stt.main.WakeWordEngine')
     @patch('babelfish_stt.main.STTEngine')
     @patch('babelfish_stt.main.TerminalDisplay')
     @patch('babelfish_stt.main.SileroVAD')
-    def test_full_lifecycle_logging(self, mock_vad, mock_display, mock_stt, mock_ww, mock_streamer):
+    def test_full_lifecycle_logging(self, mock_vad, mock_display, mock_stt, mock_ww, mock_streamer, mock_gpu, mock_mic):
         from babelfish_stt.main import run_babelfish
+        
+        # Setup hardware mocks
+        mock_gpu.return_value = {'cuda_available': False}
+        mock_mic.return_value = 0
         
         # 1. Setup Streamer to yield a sequence of chunks
         streamer_inst = mock_streamer.return_value

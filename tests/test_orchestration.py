@@ -3,14 +3,19 @@ from unittest.mock import patch, MagicMock
 import numpy as np
 
 class TestOrchestration(unittest.TestCase):
+    @patch('babelfish_stt.main.find_best_microphone')
+    @patch('babelfish_stt.main.get_gpu_info')
     @patch('babelfish_stt.main.AudioStreamer')
     @patch('babelfish_stt.main.WakeWordEngine')
     @patch('babelfish_stt.main.STTEngine')
     @patch('babelfish_stt.main.SileroVAD')
-    def test_orchestration_lifecycle(self, mock_vad, mock_stt, mock_ww, mock_streamer):
+    def test_orchestration_lifecycle(self, mock_vad, mock_stt, mock_ww, mock_streamer, mock_gpu, mock_mic):
         from babelfish_stt.main import run_babelfish
         
         # Setup mocks
+        mock_gpu.return_value = {'cuda_available': False}
+        mock_mic.return_value = 0
+        
         streamer_inst = mock_streamer.return_value
         # Yield 3 chunks: 1. Silence, 2. WakeWord, 3. Speech
         chunk1 = np.zeros(512)
@@ -36,11 +41,17 @@ class TestOrchestration(unittest.TestCase):
         # but we can verify STTEngine (used by pipeline) was called eventually
         # Actually, let's mock the pipeline classes in main.
         
+    @patch('babelfish_stt.main.find_best_microphone')
+    @patch('babelfish_stt.main.get_gpu_info')
+    @patch('babelfish_stt.main.STTEngine')
     @patch('babelfish_stt.main.SinglePassPipeline')
     @patch('babelfish_stt.main.WakeWordEngine')
     @patch('babelfish_stt.main.AudioStreamer')
-    def test_state_transition_call(self, mock_streamer, mock_ww, mock_pipeline):
+    def test_state_transition_call(self, mock_streamer, mock_ww, mock_pipeline, mock_stt, mock_gpu, mock_mic):
         from babelfish_stt.main import run_babelfish
+        
+        mock_gpu.return_value = {'cuda_available': False}
+        mock_mic.return_value = 0
         
         streamer_inst = mock_streamer.return_value
         chunk1 = np.zeros(512)
