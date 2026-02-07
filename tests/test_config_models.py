@@ -49,3 +49,19 @@ def test_babelfish_config_serialization():
     
     new_config = BabelfishConfig.model_validate_json(json_data)
     assert new_config.hardware.device == config.hardware.device
+
+def test_babelfish_config_nested_validation():
+    # Test that nested validation works
+    with pytest.raises(ValidationError):
+        BabelfishConfig(hardware={"vram_limit_gb": "not a number"})
+
+def test_babelfish_config_partial_update():
+    # Test updating only one field via dict
+    config = BabelfishConfig()
+    updated_data = {"pipeline": {"double_pass": True}}
+    
+    # We can't directly update from dict in Pydantic easily without model_validate
+    # but we can check if validation works on partial dicts if we were to use them
+    validated = BabelfishConfig.model_validate({**config.model_dump(), **updated_data})
+    assert validated.pipeline.double_pass is True
+    assert validated.hardware.device == "auto" # preserved
