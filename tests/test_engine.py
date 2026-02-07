@@ -38,5 +38,28 @@ class TestEngine(unittest.TestCase):
         self.assertEqual(text, "")
         mock_parakeet.return_value.transcribe.assert_not_called()
 
+    @patch('babelfish_stt.engine.Parakeet')
+    def test_set_quality(self, mock_parakeet):
+        engine = STTEngine(device="cpu")
+        engine.set_quality('balanced')
+        mock_parakeet.return_value.with_quality.assert_called_once_with('balanced')
+
+    @patch('babelfish_stt.engine.Parakeet')
+    def test_transcribe_with_context(self, mock_parakeet):
+        engine = STTEngine(device="cpu")
+        mock_audio = np.zeros(16000, dtype=np.float32)
+        
+        # Mock parakeet result
+        mock_result = MagicMock()
+        mock_result.text = "Hello world"
+        # In parakeet-stream, context is handled via with_params
+        mock_parakeet.return_value.with_params.return_value.transcribe.return_value = mock_result
+        
+        text = engine.transcribe(mock_audio, left_context_secs=2.0)
+        
+        self.assertEqual(text, "Hello world")
+        mock_parakeet.return_value.with_params.assert_called_once_with(left_context_secs=2.0)
+        mock_parakeet.return_value.with_params.return_value.transcribe.assert_called_once_with(mock_audio, _quiet=True)
+
 if __name__ == '__main__':
     unittest.main()
