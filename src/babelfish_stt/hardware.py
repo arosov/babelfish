@@ -1,5 +1,6 @@
 import torch
 import sounddevice as sd
+import numpy as np
 from typing import Dict, Optional, List
 
 def is_cuda_available() -> bool:
@@ -45,3 +46,34 @@ def list_microphones() -> List[Dict]:
                 "sample_rate": dev['default_samplerate']
             })
     return input_devices
+
+def find_best_microphone() -> int:
+    """
+    Heuristically finds the most likely active microphone based on system priority.
+    Prioritizes Audio Servers (PipeWire/Pulse) and system abstractions over raw hardware.
+    """
+    devices = sd.query_devices()
+    
+    # Priority list (keywords ordered by preference)
+    priority_keywords = [
+        'pipewire', 
+        'pulse', 
+        'default', 
+        'sysdefault', 
+        'usb', 
+        'headset', 
+        'siberia'
+    ]
+    
+    # Find the first device that matches the highest priority keyword
+    for keyword in priority_keywords:
+        for i, dev in enumerate(devices):
+            if dev['max_input_channels'] > 0 and keyword in dev['name'].lower():
+                return i
+            
+    # Fallback: First input device
+    for i, dev in enumerate(devices):
+        if dev['max_input_channels'] > 0:
+            return i
+            
+    return 0 # Absolute fallback
