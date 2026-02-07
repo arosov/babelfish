@@ -22,7 +22,7 @@ Implement the core refinement triggers and the contextual merge logic.
 
 - [x] Task: Implement `HybridTrigger` (2s timer + VAD pause) to activate Pass 2. 8e72a10
 - [x] Task: Implement `AlignmentManager` to handle "Contextual Merge" (using last words of Pass 2 as Pass 1 prefix context). 7a90190
-- [ ] Task: Implement the "Catch-up" mechanism to process backlogged audio after a Pass 2 compute.
+- [x] Task: Implement the "Catch-up" mechanism to process backlogged audio after a Pass 2 compute. d6de467
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Refinement & Alignment' (Protocol in workflow.md)
 
 ## Phase 4: UI Styles & E2E Verification
