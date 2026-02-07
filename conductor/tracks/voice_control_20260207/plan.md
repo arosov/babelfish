@@ -20,7 +20,7 @@ Implement the text-based stop-word detection and the IDLE/LISTENING state machin
 - [x] Task: Update `Pipeline` base class and implementations to support an `IDLE` state. cdb29cb
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Stop-Word & State' (Protocol in workflow.md)
 
-## Phase 3: CLI Integration & Orchestration
+## Phase 3: CLI Integration & Orchestration [checkpoint: 94db750]
 Update the main entry point to support new flags and orchestrate the state transitions.
 
 - [x] Task: Update `main.py` to support `--wakeword` and `--stopword` flags. e6d7fa6
