@@ -24,9 +24,10 @@ class STTEngine:
     def set_quality(self, level: str):
         """
         Switch model quality/latency preset instantly.
-        Levels: 'max', 'high', 'good', 'low', 'realtime'
+        Supports quality levels ('max', 'high', 'good', 'low', 'realtime') 
+        and preset names ('balanced', 'ultra_realtime', etc.)
         """
-        self.pk.with_quality(level)
+        self.pk.with_config(level)
 
     def transcribe(self, audio_buffer: np.ndarray, left_context_secs: float = 0.0) -> str:
         """

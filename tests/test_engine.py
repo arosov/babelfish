@@ -42,7 +42,7 @@ class TestEngine(unittest.TestCase):
     def test_set_quality(self, mock_parakeet):
         engine = STTEngine(device="cpu")
         engine.set_quality('balanced')
-        mock_parakeet.return_value.with_quality.assert_called_once_with('balanced')
+        mock_parakeet.return_value.with_config.assert_called_once_with('balanced')
 
     @patch('babelfish_stt.engine.Parakeet')
     def test_transcribe_with_context(self, mock_parakeet):
