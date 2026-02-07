@@ -1,9 +1,9 @@
 {
     "context": {
         "includeDirectories": [
-            "/home/arosovsky/dev/kvoice/RealtimeSTT",
-            "/home/arosovsky/dev/kvoice/parakeet-stream",
-            "/home/arosovsky/dev/kvoice/speaches"
+            "/home/arosovsky/dev/VogonPoet/RealtimeSTT",
+            "/home/arosovsky/dev/VogonPoet/parakeet-stream",
+            "/home/arosovsky/dev/VogonPoet/speaches"
         ]
     },
     "hooks": {
