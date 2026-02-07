@@ -32,7 +32,7 @@ Update the main entry point to support new flags and orchestrate the state trans
 ## Phase 4: Logging & E2E Verification
 Finalize the feature with detailed logging and end-to-end testing.
 
-- [ ] Task: Implement event logging for state changes, including timestamps and confidence scores.
-- [ ] Task: Write Tests: Perform E2E tests verifying the full lifecycle (Launch IDLE -> Wake-Word -> LISTENING -> Stop-Word -> IDLE).
-- [ ] Task: Implement: Finalize logging and perform E2E fixes.
+- [x] Task: Implement event logging for state changes, including timestamps and confidence scores. 73b425c
+- [x] Task: Write Tests: Perform E2E tests verifying the full lifecycle (Launch IDLE -> Wake-Word -> LISTENING -> Stop-Word -> IDLE). 73b425c
+- [x] Task: Implement: Finalize logging and perform E2E fixes. 73b425c
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: Logging & E2E' (Protocol in workflow.md)

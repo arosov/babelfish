@@ -113,11 +113,24 @@ def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str
         print("✅ Shutdown complete.")
 
 def main():
+    import openwakeword
+    # In 0.6.0, the dictionary is upper-case MODELS in the root module
+    available_ww = list(openwakeword.MODELS.keys())
+    
     parser = argparse.ArgumentParser(description="Babelfish STT - High-performance streaming transcription")
     parser.add_argument("--double-pass", action="store_true", help="Enable two-pass refinement system")
-    parser.add_argument("--wakeword", type=str, help="Enable wake-word activation (e.g. 'hey_jarvis')")
+    parser.add_argument("--wakeword", type=str, nargs='?', const='LIST_OPTIONS', help=f"Enable wake-word activation. Available: {', '.join(available_ww)}")
     parser.add_argument("--stopword", type=str, help="Enable stop-word deactivation (e.g. 'stop talking')")
     args = parser.parse_args()
+    
+    if args.wakeword == 'LIST_OPTIONS' or (args.wakeword and args.wakeword not in available_ww):
+        if args.wakeword != 'LIST_OPTIONS' and args.wakeword is not None:
+            print(f"\n❌ Error: '{args.wakeword}' is not a valid wake-word.")
+        print("\n📋 Available wake-words:")
+        for ww in available_ww:
+            print(f"  - {ww}")
+        print("\nUsage example: uv run babelfish --wakeword hey_jarvis\n")
+        sys.exit(0)
     
     run_babelfish(
         double_pass=args.double_pass,
