@@ -12,6 +12,8 @@
   - **CUDA Python:** >=12.3 (For optimized decoding speed)
 - **Speech-to-Text (Orchestration):** Custom two-pass system using Parakeet's instant preset switching.
   - **Presets:** 'realtime' for Ghost pass, 'balanced' for Anchor pass.
+- **Wake-Word Detection:** [openWakeWord](https://github.com/dscripka/openWakeWord) (ONNX-based).
+- **Stop-Word Detection:** Custom text-based strict matching logic.
 - **Voice Activity Detection (VAD):** Integrated via `parakeet-stream`'s native loop.
 - **Audio Input:** `sounddevice` for real-time microphone capture.
 - **Large Language Model (LLM):** *TBD* (Phase 3 integration).
@@ -25,4 +27,5 @@
 
 ## Distribution & Orchestration
 - **Launcher:** Custom Python scripts invoked via `uv run`.
+  - **CLI Flags:** `--double-pass`, `--wakeword`, `--stopword`.
 - **Service Management:** Designed for integration with Kotlin-based frontend controller.

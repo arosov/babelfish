@@ -14,7 +14,8 @@ Babelfish is a high-performance, local backend server designed to power system-w
 ## Phased Implementation Plan
 1.  **Phase 1: Streaming Foundation (Completed):** Established a robust, modular single-pass pipeline using `parakeet-stream` and `sounddevice` for industry-leading latency, executable via `uv run babelfish`.
 2.  **Phase 2: Two-Pass Refinement (Completed):** Integrated a dual-pass orchestration system (Fast Ghost + Solid Anchor) that combines ultra-low latency updates with high-accuracy refinements.
-3.  **Phase 3: LLM Optimization:** Integrating a local low-latency LLM to provide context-aware text correction and optimization.
+3.  **Phase 3: Voice-Activated Control (Completed):** Implemented hands-free operation using `openWakeWord` for activation and text-based stop-word detection for deactivation.
+4.  **Phase 4: LLM Optimization:** Integrating a local low-latency LLM to provide context-aware text correction and optimization.
 
 ## Core Goals
 - **Top-of-the-Line Latency:** Prioritizing `parakeet-stream` (TDT) over Whisper for superior real-time performance.
@@ -26,6 +27,7 @@ Babelfish is a high-performance, local backend server designed to power system-w
 ## Key Features
 - **NVIDIA Parakeet Integration:** Leveraging Parakeet TDT for various quality/latency presets.
 - **Two-Pass Refinement System:** A togglable mode that provides immediate "dimmed" speculative feedback (Ghost) followed by bold "refined" corrections (Anchor) every 2 seconds.
+- **Voice-Activated Control:** Optional hands-free operation with configurable wake-words (via `openWakeWord`) and stop-words for seamless state management.
 - **Hardware-Aware Initialization:** Automatic lookup of GPU cards, VRAM reporting, and microphone sorting to provide optimal default settings.
 - **Remote-Controlled Configuration:** The server owns the configuration logic; the frontend acts as a remote controller to view and modify it.
 - **Effortless Lifecycle Management:** Designed to be started/stopped/restarted by a companion Kotlin frontend.
