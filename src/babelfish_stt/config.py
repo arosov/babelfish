@@ -20,8 +20,15 @@ class UIConfig(BaseModel):
     verbose: bool = False
     show_timestamps: bool = True
 
+class ServerConfig(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 4433
+    cert_path: Optional[str] = None
+    key_path: Optional[str] = None
+
 class BabelfishConfig(BaseModel):
     hardware: HardwareConfig = Field(default_factory=HardwareConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
+    server: ServerConfig = Field(default_factory=ServerConfig)
