@@ -21,13 +21,25 @@ class STTEngine:
             config='realtime'
         )
 
-    def transcribe(self, audio_buffer: np.ndarray) -> str:
+    def set_quality(self, level: str):
         """
-        Transcribes a complete buffer of audio.
+        Switch model quality/latency preset instantly.
+        Levels: 'max', 'high', 'good', 'low', 'realtime'
+        """
+        self.pk.with_quality(level)
+
+    def transcribe(self, audio_buffer: np.ndarray, left_context_secs: float = 0.0) -> str:
+        """
+        Transcribes a complete buffer of audio with optional left context for accuracy.
         """
         if len(audio_buffer) == 0:
             return ""
             
         # Parakeet.transcribe is very robust for variable length audio
-        result = self.pk.transcribe(audio_buffer, _quiet=True)
+        # Using with_params to inject context if provided
+        if left_context_secs > 0:
+            result = self.pk.with_params(left_context_secs=left_context_secs).transcribe(audio_buffer, _quiet=True)
+        else:
+            result = self.pk.transcribe(audio_buffer, _quiet=True)
+            
         return result.text.strip()
