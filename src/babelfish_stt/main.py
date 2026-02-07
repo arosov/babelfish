@@ -1,6 +1,6 @@
 import sys
 import logging
-from babelfish_stt.hardware import get_gpu_info
+from babelfish_stt.hardware import get_gpu_info, list_microphones
 from babelfish_stt.engine import STTEngine
 from babelfish_stt.audio import AudioStreamer
 from babelfish_stt.display import TerminalDisplay
@@ -12,21 +12,36 @@ def run_babelfish():
     """
     Main orchestration loop for Babelfish STT.
     """
-    print("🚀 Babelfish STT Initializing...")
+    print("\n" + "="*50)
+    print("🚀 BABELFISH STT INITIALIZING")
+    print("="*50)
     
-    # 1. Hardware Detection
+    # 1. Hardware & Environment Detection
     hw_info = get_gpu_info()
     device = "cuda" if hw_info['cuda_available'] else "cpu"
-    print(f"💻 Hardware: {hw_info['name'] if hw_info['name'] else 'CPU'} (using {device})")
+    mics = list_microphones()
     
-    # 2. Initialize STT Engine
+    # 2. Initialize STT Engine (Loads model)
     engine = STTEngine(device=device)
     
-    # 3. Initialize Audio and Display
+    # 3. Initialize Audio (Auto-selects default)
     streamer = AudioStreamer()
-    display = TerminalDisplay()
+    default_mic_name = next((m['name'] for m in mics if m['index'] == streamer.device_index), "Unknown")
     
-    print("\n🎤 Listening... (Press Ctrl+C to stop)\n")
+    # 4. Final Configuration Report
+    print("\n" + "-"*50)
+    print("HARDWARE & CONFIGURATION REPORT")
+    print(f"  Acceleration: {'GPU' if hw_info['cuda_available'] else 'CPU'} ({device})")
+    if hw_info['cuda_available']:
+        print(f"  GPU Device:   {hw_info['name']}")
+        print(f"  Total VRAM:   {hw_info['vram_gb']:.2f} GB")
+    
+    print(f"  STT Engine:   {engine.model_name}")
+    print(f"  Audio Input:  [{streamer.device_index}] {default_mic_name}")
+    print("-"*50 + "\n")
+    
+    display = TerminalDisplay()
+    print("🎤 Listening... (Press Ctrl+C to stop)\n")
     
     try:
         # 4. Orchestrate streaming

@@ -1,5 +1,6 @@
 import torch
-from typing import Dict, Optional
+import sounddevice as sd
+from typing import Dict, Optional, List
 
 def is_cuda_available() -> bool:
     """Checks if CUDA acceleration is available."""
@@ -30,3 +31,17 @@ def get_gpu_info() -> Dict:
             "name": "Unknown GPU",
             "vram_gb": 0.0
         }
+
+def list_microphones() -> List[Dict]:
+    """Lists all available audio input devices."""
+    devices = sd.query_devices()
+    input_devices = []
+    for i, dev in enumerate(devices):
+        if dev['max_input_channels'] > 0:
+            input_devices.append({
+                "index": i,
+                "name": dev['name'],
+                "channels": dev['max_input_channels'],
+                "sample_rate": dev['default_samplerate']
+            })
+    return input_devices

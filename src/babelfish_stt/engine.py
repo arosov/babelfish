@@ -8,6 +8,7 @@ class STTEngine:
     """
     
     def __init__(self, device: str = "cpu", model_name: str = "nvidia/parakeet-tdt-0.6b-v3"):
+        self.model_name = model_name
         # "Fast" Preset configuration
         self.config = TranscriberConfig(
             model_name=model_name,
@@ -20,7 +21,7 @@ class STTEngine:
         self.transcriber = StreamingTranscriber(config=self.config)
         
         # Eagerly initialize the model so it doesn't happen during the first audio chunk
-        print(f"Loading model {model_name}...")
+        print(f"🧠 Loading STT Engine: {model_name}...")
         self.transcriber._initialize_model()
 
     def transcribe_stream(self, audio_data: Any) -> Iterable[Any]:
