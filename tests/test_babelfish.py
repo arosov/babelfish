@@ -7,8 +7,11 @@ class TestBabelfish(unittest.TestCase):
     @patch('babelfish_stt.main.STTEngine')
     @patch('babelfish_stt.main.AudioStreamer')
     @patch('babelfish_stt.main.TerminalDisplay')
-    def test_run_babelfish(self, mock_display, mock_audio, mock_engine, mock_hardware):
+    @patch('babelfish_stt.main.SileroVAD')
+    def test_run_babelfish(self, mock_vad, mock_display, mock_audio, mock_engine, mock_hardware):
         mock_hardware.return_value = {'cuda_available': True, 'name': 'Test GPU'}
+        mock_vad_instance = mock_vad.return_value
+        mock_vad_instance.is_speech.return_value = True
         
         # Mock engine behavior
         mock_engine_instance = mock_engine.return_value
@@ -22,8 +25,10 @@ class TestBabelfish(unittest.TestCase):
         
         # Run babelfish but simulate a KeyboardInterrupt after one iteration
         # We can do this by making the audio stream raise KeyboardInterrupt after one yield
-        def audio_side_effect():
-            yield MagicMock()
+        def audio_side_effect(*args, **kwargs):
+            import numpy as np
+            for _ in range(10):
+                yield np.zeros(512, dtype=np.float32)
             raise KeyboardInterrupt()
         
         mock_audio_instance.stream.side_effect = audio_side_effect

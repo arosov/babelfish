@@ -2,6 +2,7 @@ import sys
 import logging
 import numpy as np
 import time
+import argparse
 from babelfish_stt.hardware import get_gpu_info, list_microphones, find_best_microphone
 from babelfish_stt.engine import STTEngine
 from babelfish_stt.audio import AudioStreamer
@@ -11,12 +12,16 @@ from babelfish_stt.vad import SileroVAD
 # Configure logging
 logging.basicConfig(level=logging.ERROR)
 
-def run_babelfish():
+def run_babelfish(double_pass: bool = False):
     """
     Main VAD-driven segmented loop for Babelfish STT.
     """
     print("\n" + "="*50)
     print("🚀 BABELFISH STT INITIALIZING")
+    if double_pass:
+        print("   MODE: Double-Pass Refinement")
+    else:
+        print("   MODE: Single-Pass (Default)")
     print("="*50)
     
     # 1. Hardware Detection
@@ -99,5 +104,12 @@ def run_babelfish():
         streamer.stop()
         print("✅ Shutdown complete.")
 
+def main():
+    parser = argparse.ArgumentParser(description="Babelfish STT - High-performance streaming transcription")
+    parser.add_argument("--double-pass", action="store_true", help="Enable two-pass refinement system")
+    args = parser.parse_args()
+    
+    run_babelfish(double_pass=args.double_pass)
+
 if __name__ == "__main__":
-    run_babelfish()
+    main()
