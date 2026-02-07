@@ -5,5 +5,20 @@
             "/home/arosovsky/dev/kvoice/parakeet-stream",
             "/home/arosovsky/dev/kvoice/speaches"
         ]
+    },
+    "hooks": {
+        "SessionStart": [
+            {
+                "matcher": "*",
+                "hooks": [
+                    {
+                        "name": "codebase-overview",
+                        "type": "command",
+                        "command": "python3 $GEMINI_PROJECT_DIR/.gemini/hooks/codebase_overview.py",
+                        "description": "Provides a technical overview of linked codebases at startup."
+                    }
+                ]
+            }
+        ]
     }
 }
