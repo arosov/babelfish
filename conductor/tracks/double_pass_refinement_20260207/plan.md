@@ -17,7 +17,7 @@ Extend the engine and buffer management to support refinements.
 - [x] Task: Implement `HistoryBuffer` to maintain the 4-second sliding window required for Pass 2. 72275ba
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Engine & History' (Protocol in workflow.md)
 
-## Phase 3: Refinement Logic & Alignment
+## Phase 3: Refinement Logic & Alignment [checkpoint: ae6beca]
 Implement the core refinement triggers and the contextual merge logic.
 
 - [x] Task: Implement `HybridTrigger` (2s timer + VAD pause) to activate Pass 2. 8e72a10
