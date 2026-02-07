@@ -25,9 +25,16 @@ Connect the modules in `babelfish.py` and implement the real-time streaming disp
 - [x] Task: Implement graceful shutdown (Ctrl+C) and resource cleanup. 18f10a7
 - [x] Task: Conductor - User Manual Verification 'Phase 3: Orchestration & UI' (Protocol in workflow.md) 40044dd
 
-## Phase 4: Verification & Portability
+## Phase 4: Verification & Portability [checkpoint: da77ce5]
 Ensure the "uv one-liner" works as expected and the pipeline meets performance goals.
 
-- [x] Task: Verify the `uv run babelfish.py` command downloads models and starts transcription automatically. 40158
-- [x] Task: Perform end-to-end testing of real-time transcription latency and terminal output accuracy. 40158
-- [x] Task: Conductor - User Manual Verification 'Phase 4: Verification' (Protocol in workflow.md) 40158
+- [x] Task: Verify the `uv run babelfish.py` command downloads models and starts transcription automatically. da77ce5
+- [x] Task: Perform end-to-end testing of real-time transcription latency and terminal output accuracy. da77ce5
+- [x] Task: Conductor - User Manual Verification 'Phase 4: Verification' (Protocol in workflow.md) da77ce5
+
+## Implementation Notes: Industry Standard Upgrade
+The pipeline was refactored from a simple streaming loop to a robust VAD-driven architecture:
+1. **Silero VAD v5** acts as the gatekeeper, segmenting speech into utterances.
+2. **soxr Resampling** ensures hardware compatibility by capturing at native rates.
+3. **Pulse/PipeWire Priority** ensures the correct system microphone is selected automatically.
+4. **Segmented Transcribing** provides the model with full sentence context for maximum accuracy.
