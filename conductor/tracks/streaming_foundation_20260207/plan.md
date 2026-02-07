@@ -17,13 +17,13 @@ Implement the decoupled logic for hardware detection and `parakeet-stream` orche
 - [x] Task: Implement `audio.py` module to manage microphone streams using `parakeet-stream`'s native interface. eecc6b6
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Core STT Module' (Protocol in workflow.md) d2c3ecf
 
-## Phase 3: Orchestration & Terminal UI
+## Phase 3: Orchestration & Terminal UI [checkpoint: 40044dd]
 Connect the modules in `babelfish.py` and implement the real-time streaming display logic.
 
 - [x] Task: Implement `display.py` module for terminal-based, word-by-word streaming updates. b72d915
 - [x] Task: Implement the main loop in `babelfish.py` to orchestrate audio capture, STT processing, and display. 18f10a7
 - [x] Task: Implement graceful shutdown (Ctrl+C) and resource cleanup. 18f10a7
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Orchestration & UI' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Orchestration & UI' (Protocol in workflow.md) 40044dd
 
 ## Phase 4: Verification & Portability
 Ensure the "uv one-liner" works as expected and the pipeline meets performance goals.
