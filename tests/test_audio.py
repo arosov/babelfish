@@ -8,15 +8,18 @@ class TestAudio(unittest.TestCase):
     @patch('sounddevice.query_devices')
     def test_audio_streamer_initialization(self, mock_query, mock_input_stream):
         # Mock default device
-        mock_query.return_value = {'name': 'test mic', 'max_input_channels': 1, 'default_sample_rate': 16000}
+        mock_query.return_value = {'name': 'test mic', 'max_input_channels': 1, 'default_samplerate': 16000}
         
         with patch('sounddevice.default.device', [0, 0]):
             streamer = AudioStreamer(sample_rate=16000)
-            self.assertEqual(streamer.sample_rate, 16000)
+            self.assertEqual(streamer.target_rate, 16000)
             self.assertEqual(streamer.device_index, 0)
+            self.assertFalse(streamer.needs_resampling)
 
     @patch('sounddevice.InputStream')
-    def test_audio_stream_generator(self, mock_input_stream):
+    @patch('sounddevice.query_devices')
+    def test_audio_stream_generator(self, mock_query, mock_input_stream):
+        mock_query.return_value = {'name': 'test mic', 'max_input_channels': 1, 'default_samplerate': 16000}
         streamer = AudioStreamer(sample_rate=16000)
         
         # Add some data to the queue to simulate audio input
@@ -38,7 +41,9 @@ class TestAudio(unittest.TestCase):
         with self.assertRaises(StopIteration):
             next(gen)
 
-    def test_audio_callback(self):
+    @patch('sounddevice.query_devices')
+    def test_audio_callback_no_resample(self, mock_query):
+        mock_query.return_value = {'name': 'test mic', 'max_input_channels': 1, 'default_samplerate': 16000}
         streamer = AudioStreamer(sample_rate=16000)
         test_data = np.array([[0.1], [0.2]], dtype='float32')
         
@@ -49,6 +54,24 @@ class TestAudio(unittest.TestCase):
         self.assertFalse(streamer.audio_queue.empty())
         chunk = streamer.audio_queue.get()
         np.testing.assert_array_equal(chunk, test_data.flatten())
+
+    @patch('sounddevice.query_devices')
+    @patch('soxr.resample')
+    def test_audio_callback_resample(self, mock_resample, mock_query):
+        mock_query.return_value = {'name': 'test mic', 'max_input_channels': 1, 'default_samplerate': 44100}
+        mock_resampled_data = np.array([0.05], dtype='float32')
+        mock_resample.return_value = mock_resampled_data
+        
+        streamer = AudioStreamer(sample_rate=16000)
+        self.assertTrue(streamer.needs_resampling)
+        
+        test_data = np.array([[0.1], [0.2]], dtype='float32')
+        streamer._audio_callback(test_data, 2, None, None)
+        
+        self.assertFalse(streamer.audio_queue.empty())
+        chunk = streamer.audio_queue.get()
+        np.testing.assert_array_equal(chunk, mock_resampled_data)
+        mock_resample.assert_called_once()
 
 if __name__ == '__main__':
     unittest.main()
