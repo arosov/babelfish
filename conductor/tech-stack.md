@@ -10,7 +10,8 @@
   - **NeMo Toolkit:** >=2.6.2 (Required for `StreamingBatchedAudioBuffer`)
   - **PyTorch:** >=2.6.0
   - **CUDA Python:** >=12.3 (For optimized decoding speed)
-- **Speech-to-Text (Secondary/Shadow):** *TBD* (Phase 2 integration).
+- **Speech-to-Text (Orchestration):** Custom two-pass system using Parakeet's instant preset switching.
+  - **Presets:** 'realtime' for Ghost pass, 'balanced' for Anchor pass.
 - **Voice Activity Detection (VAD):** Integrated via `parakeet-stream`'s native loop.
 - **Audio Input:** `sounddevice` for real-time microphone capture.
 - **Large Language Model (LLM):** *TBD* (Phase 3 integration).
