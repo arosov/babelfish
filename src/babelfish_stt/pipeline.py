@@ -3,7 +3,17 @@ import time
 from typing import List
 
 class Pipeline:
-    def process_chunk(self, chunk: np.ndarray, now_ms: float):
+    def __init__(self):
+        self.is_idle = False
+        self.stop_detector = None
+
+    def set_idle(self, idle: bool):
+        self.is_idle = idle
+
+    def process_chunk(self, chunk: np.ndarray, now_ms: float) -> bool:
+        """
+        Returns True if a state transition occurred (e.g., stop word detected).
+        """
         raise NotImplementedError
 
 class HybridTrigger:
@@ -57,8 +67,39 @@ class AlignmentManager:
             return ""
         return " ".join(words[-self.context_words:])
 
+class StopWordDetector:
+    """
+    Detects stop phrases in transcript strings.
+    """
+    def __init__(self, stop_words: List[str]):
+        self.stop_words = [w.lower().strip() for w in stop_words]
+
+    def detect(self, text: str) -> bool:
+        """
+        Returns True if the text ends with any of the stop words.
+        Handles basic punctuation at the end of the text.
+        """
+        if not text:
+            return False
+
+        # Normalize text: lower case and remove trailing punctuation
+        text_clean = text.lower().strip()
+        while text_clean and text_clean[-1] in ".,!?;:":
+            text_clean = text_clean[:-1].strip()
+
+        for stop_phrase in self.stop_words:
+            # Check if the text ends exactly with the stop phrase
+            # We want to match whole words/phrases at the end
+            if text_clean == stop_phrase:
+                return True
+            if text_clean.endswith(" " + stop_phrase):
+                return True
+        
+        return False
+
 class SinglePassPipeline(Pipeline):
     def __init__(self, vad, engine, display):
+        super().__init__()
         self.vad = vad
         self.engine = engine
         self.display = display
@@ -70,7 +111,10 @@ class SinglePassPipeline(Pipeline):
         self.update_interval_samples = 3200
         self.last_update_size = 0
 
-    def process_chunk(self, chunk: np.ndarray, now_ms: float):
+    def process_chunk(self, chunk: np.ndarray, now_ms: float) -> bool:
+        if self.is_idle:
+            return False
+
         if self.vad.is_speech(chunk):
             if not self.is_speaking:
                 self.is_speaking = True
@@ -85,6 +129,9 @@ class SinglePassPipeline(Pipeline):
                 text = self.engine.transcribe(full_audio)
                 if text:
                     self.display.update(text)
+                    if self.stop_detector and self.stop_detector.detect(text):
+                        self._handle_stop()
+                        return True
                 self.last_update_size = current_size
         else:
             # Silence detected
@@ -97,16 +144,29 @@ class SinglePassPipeline(Pipeline):
                     text = self.engine.transcribe(full_audio)
                     if text:
                         self.display.finalize(text)
+                        if self.stop_detector and self.stop_detector.detect(text):
+                            self._handle_stop()
+                            return True
                     
-                    # Reset for next sentence
-                    self.active_buffer = []
-                    self.last_update_size = 0
-                    self.is_speaking = False
-                    self.vad.reset_states()
+                    self._reset_utterance()
+        
+        return False
+
+    def _handle_stop(self):
+        self.set_idle(True)
+        self._reset_utterance()
+
+    def _reset_utterance(self):
+        # Reset for next sentence
+        self.active_buffer = []
+        self.last_update_size = 0
+        self.is_speaking = False
+        self.vad.reset_states()
 
 class DoublePassPipeline(Pipeline):
     def __init__(self, vad, engine, display):
         from babelfish_stt.audio import HistoryBuffer
+        super().__init__()
         self.vad = vad
         self.engine = engine
         self.display = display
@@ -121,7 +181,10 @@ class DoublePassPipeline(Pipeline):
         self.last_speech_time = 0
         self.silence_threshold_ms = 700
         
-    def process_chunk(self, chunk: np.ndarray, now_ms: float):
+    def process_chunk(self, chunk: np.ndarray, now_ms: float) -> bool:
+        if self.is_idle:
+            return False
+
         is_speech = self.vad.is_speech(chunk)
         self.history.append(chunk)
 
@@ -135,28 +198,35 @@ class DoublePassPipeline(Pipeline):
             self.last_speech_time = now_ms
 
             if self.trigger.should_trigger(now_ms, is_speaking=True):
-                self._run_anchor_pass(now_ms)
+                if self._run_anchor_pass(now_ms):
+                    return True
             else:
-                self._run_ghost_pass()
+                if self._run_ghost_pass():
+                    return True
         else:
             if self.is_speaking:
                 self.active_ghost_buffer.append(chunk)
                 
                 # Check for finalized sentence (long silence)
                 if now_ms - self.last_speech_time > self.silence_threshold_ms:
-                    self._run_anchor_pass(now_ms, finalize=True)
+                    if self._run_anchor_pass(now_ms, finalize=True):
+                        return True
                     self._reset_utterance()
                 # Check for minor pause trigger
                 elif self.trigger.should_trigger(now_ms, is_speaking=False):
-                    self._run_anchor_pass(now_ms)
+                    if self._run_anchor_pass(now_ms):
+                        return True
+        
+        return False
 
-    def _run_anchor_pass(self, now_ms: float, finalize: bool = False):
-        """High-accuracy refinement pass."""
+    def _run_anchor_pass(self, now_ms: float, finalize: bool = False) -> bool:
+        """High-accuracy refinement pass. Returns True if stop word detected."""
         self.engine.set_quality('balanced')
         
         audio = self.history.get_all()
         new_refined = self.engine.transcribe(audio)
         
+        stop_detected = False
         if new_refined:
             self.refined_text = new_refined
             if finalize:
@@ -166,14 +236,19 @@ class DoublePassPipeline(Pipeline):
                 # The anchor pass has covered all history
                 self.active_ghost_buffer = []
                 self.display.update(refined=self.refined_text)
+            
+            if self.stop_detector and self.stop_detector.detect(self.refined_text):
+                self._handle_stop()
+                stop_detected = True
         
         self.trigger.reset(now_ms)
         self.engine.set_quality('realtime')
+        return stop_detected
 
-    def _run_ghost_pass(self):
-        """Fast low-latency update."""
+    def _run_ghost_pass(self) -> bool:
+        """Fast low-latency update. Returns True if stop word detected."""
         if not self.active_ghost_buffer:
-            return
+            return False
             
         audio = np.concatenate(self.active_ghost_buffer)
         
@@ -182,9 +257,6 @@ class DoublePassPipeline(Pipeline):
             history_audio = self.history.get_all()
             # Use up to 2 seconds of previous audio as context
             context_samples = 32000
-            # Ensure we don't include the current ghost buffer twice if it's already in history
-            # Actually history.append(chunk) is called at the start of process_chunk, 
-            # so active_ghost_buffer is already at the end of history.
             
             # We want the audio BEFORE the active_ghost_buffer
             ghost_len = len(audio)
@@ -198,12 +270,22 @@ class DoublePassPipeline(Pipeline):
             ghost_text = self.engine.transcribe(audio)
         
         if ghost_text:
-            # Contextual Merge: 
-            # If ghost_text starts with words that are at the end of refined_text, 
-            # we should avoid duplicating them.
-            
             # For now, we rely on the display to handle the merge with styles
             self.display.update(refined=self.refined_text, ghost=ghost_text)
+            
+            # Check for stop words in the combined text if available, or just ghost text
+            # Display update already shows the combination.
+            # Stop detector should ideally see the "full" text.
+            combined_text = (self.refined_text + " " + ghost_text).strip()
+            if self.stop_detector and self.stop_detector.detect(combined_text):
+                self._handle_stop()
+                return True
+        
+        return False
+
+    def _handle_stop(self):
+        self.set_idle(True)
+        self._reset_utterance()
 
     def _reset_utterance(self):
         self.is_speaking = False
