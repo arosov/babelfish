@@ -60,8 +60,9 @@ def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str
     # 6. Report
     print("\n" + "-"*50)
     print("HARDWARE & CONFIGURATION REPORT")
-    print(f"  Acceleration: {'GPU' if hw_info['cuda_available'] else 'CPU'} ({device})")
+    print(f"  Acceleration: {'GPU' if hw_info['cuda_available'] and not force_cpu else 'CPU'} ({device})")
     print(f"  STT Engine:   {engine.model_name}")
+    print(f"  STT Preset:   {engine.preset}")
     print(f"  Audio Input:  [{streamer.device_index}] {streamer.mic_name}")
     if streamer.needs_resampling:
         print(f"  Resampling:   {streamer.native_rate}Hz -> {streamer.target_rate}Hz (soxr)")
