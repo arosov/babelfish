@@ -82,3 +82,25 @@ class AudioStreamer:
                 self.audio_queue.get_nowait()
             except queue.Empty:
                 break
+
+class HistoryBuffer:
+    """
+    Maintains a fixed-size sliding window of audio samples.
+    """
+    def __init__(self, maxlen_samples: int = 64000): # 4s @ 16kHz
+        self.maxlen = maxlen_samples
+        self.buffer = np.array([], dtype=np.float32)
+
+    def append(self, chunk: np.ndarray):
+        """Adds a new chunk and trims the buffer to maxlen."""
+        self.buffer = np.concatenate([self.buffer, chunk])
+        if len(self.buffer) > self.maxlen:
+            self.buffer = self.buffer[-self.maxlen:]
+
+    def get_all(self) -> np.ndarray:
+        """Returns the entire current buffer."""
+        return self.buffer
+
+    def clear(self):
+        """Clears the buffer."""
+        self.buffer = np.array([], dtype=np.float32)
