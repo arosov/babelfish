@@ -20,7 +20,6 @@ def run_babelfish():
     print(f"💻 Hardware: {hw_info['name'] if hw_info['name'] else 'CPU'} (using {device})")
     
     # 2. Initialize STT Engine
-    print("🧠 Loading STT Engine (Fast Preset)...")
     engine = STTEngine(device=device)
     
     # 3. Initialize Audio and Display

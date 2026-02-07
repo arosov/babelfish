@@ -18,6 +18,10 @@ class STTEngine:
         )
         
         self.transcriber = StreamingTranscriber(config=self.config)
+        
+        # Eagerly initialize the model so it doesn't happen during the first audio chunk
+        print(f"Loading model {model_name}...")
+        self.transcriber._initialize_model()
 
     def transcribe_stream(self, audio_data: Any) -> Iterable[Any]:
         """
