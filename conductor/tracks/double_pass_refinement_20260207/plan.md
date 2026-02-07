@@ -14,7 +14,7 @@ Enable selecting between Single-Pass and Double-Pass modes via CLI/Configuration
 Extend the engine and buffer management to support refinements.
 
 - [x] Task: Update `STTEngine` to support rapid preset switching (`realtime` <-> `balanced`) and context-aware `transcribe` calls. f0d5dcc
-- [ ] Task: Implement `HistoryBuffer` to maintain the 4-second sliding window required for Pass 2.
+- [x] Task: Implement `HistoryBuffer` to maintain the 4-second sliding window required for Pass 2. 72275ba
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Engine & History' (Protocol in workflow.md)
 
 ## Phase 3: Refinement Logic & Alignment
