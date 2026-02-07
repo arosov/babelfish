@@ -23,10 +23,10 @@ Implement the text-based stop-word detection and the IDLE/LISTENING state machin
 ## Phase 3: CLI Integration & Orchestration
 Update the main entry point to support new flags and orchestrate the state transitions.
 
-- [ ] Task: Update `main.py` to support `--wakeword` and `--stopword` flags.
-- [ ] Task: Refactor `run_babelfish` to handle the `IDLE` state (running WakeWord detection) and `LISTENING` state (running STT).
-- [ ] Task: Write Tests: Verify CLI arguments are correctly parsed and passed to the orchestration loop.
-- [ ] Task: Implement: Update `main.py` and orchestration logic.
+- [x] Task: Update `main.py` to support `--wakeword` and `--stopword` flags. e6d7fa6
+- [x] Task: Refactor `run_babelfish` to handle the `IDLE` state (running WakeWord detection) and `LISTENING` state (running STT). e6d7fa6
+- [x] Task: Write Tests: Verify CLI arguments are correctly parsed and passed to the orchestration loop. e6d7fa6
+- [x] Task: Implement: Update `main.py` and orchestration logic. e6d7fa6
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: CLI & Orchestration' (Protocol in workflow.md)
 
 ## Phase 4: Logging & E2E Verification
