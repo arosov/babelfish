@@ -2,12 +2,12 @@
 
 This plan outlines the steps to implement a togglable two-pass transcription system, ensuring coexistence with the existing single-pass pipeline.
 
-## Phase 1: Mode Selection & Orchestration Refactor
+## Phase 1: Mode Selection & Orchestration Refactor [checkpoint: 8de2471]
 Enable selecting between Single-Pass and Double-Pass modes via CLI/Configuration.
 
 - [x] Task: Update `main.py` to support a `--double-pass` flag using `argparse`. 226f46e
 - [x] Task: Refactor the main loop to delegate to specialized `SinglePassPipeline` or `DoublePassPipeline` handlers. c89bce5
-- [ ] Task: Verify the `SessionStart` hook successfully injects technical context and the model uses it to answer basic architectural questions.
+- [x] Task: Verify the `SessionStart` hook successfully injects technical context and the model uses it to answer basic architectural questions. (Verified)
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Mode Selection' (Protocol in workflow.md)
 
 ## Phase 2: Double-Pass Engine & History
