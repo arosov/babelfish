@@ -10,7 +10,7 @@ Enable selecting between Single-Pass and Double-Pass modes via CLI/Configuration
 - [x] Task: Verify the `SessionStart` hook successfully injects technical context and the model uses it to answer basic architectural questions. (Verified)
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Mode Selection' (Protocol in workflow.md)
 
-## Phase 2: Double-Pass Engine & History
+## Phase 2: Double-Pass Engine & History [checkpoint: 26fa89f]
 Extend the engine and buffer management to support refinements.
 
 - [x] Task: Update `STTEngine` to support rapid preset switching (`realtime` <-> `balanced`) and context-aware `transcribe` calls. f0d5dcc
