@@ -7,6 +7,7 @@
 
 ## Technical Standards
 - **Sensible Defaults & Auto-discovery:** The initialization block must autonomously identify the best GPU (by VRAM/capability) and default microphone. These defaults must be reported to the frontend but remain active unless explicitly overridden.
+- **Structured Startup Reporting:** Every startup must present a clear "Hardware & Configuration Report" in the terminal, summarizing acceleration (GPU/CPU), VRAM, the specific STT model in use, and the selected audio input device.
 - **Standardized Messaging:** Real-time progress updates must follow a strict JSON schema to ensure the Kotlin frontend can reliably render state transitions across different pipeline configurations.
 - **Hardware Abstraction:** Code should avoid hard-coding vendor-specific logic. Hardware acceleration (NVIDIA/AMD/CPU) should be handled through an abstraction layer that allows the core logic to remain hardware-agnostic.
 - **Dependency Discipline:** As the project aims for `uv` one-liner distribution, dependencies must be carefully audited. Prefer lightweight wrappers and native libraries that can be easily bundled or auto-discovered.
