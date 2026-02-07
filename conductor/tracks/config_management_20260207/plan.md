@@ -6,7 +6,7 @@ This plan outlines the integration of a Pydantic-based configuration system with
 Establish the foundational Pydantic models and the logic for loading, saving, and validating configuration.
 
 - [x] Task: Define Pydantic models for all configuration categories (Hardware, Pipeline, Voice, UI) in `src/babelfish_stt/config.py`. 3f2b4ef
-- [ ] Task: Write tests for configuration validation, default values, and serialization.
+- [x] Task: Write tests for configuration validation, default values, and serialization. 05c3c69
 - [ ] Task: Implement atomic save/load logic in a new `ConfigManager` class.
 - [ ] Task: Write tests for configuration persistence to `config.json`.
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Core Configuration Schema & Persistence' (Protocol in workflow.md)
