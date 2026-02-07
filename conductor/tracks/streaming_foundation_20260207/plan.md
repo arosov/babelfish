@@ -6,13 +6,13 @@ This plan outlines the steps to create a modular, low-latency STT pipeline using
 Establish the project structure and configure `uv` for automatic dependency and model management.
 
 - [x] Task: Initialize `pyproject.toml` with `uv` to manage dependencies (including `parakeet-stream`). 71f8466
-- [x] Task: Create the project directory structure (`babelfish/` package and `babelfish.py` entry point). 03af513
+- [x] Task: Create the project directory structure (`babelfish_stt/` package and `babelfish.py` entry point). 03af513
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Project Scaffolding' (Protocol in workflow.md) 348da92
 
 ## Phase 2: Core STT Module Implementation
 Implement the decoupled logic for hardware detection and `parakeet-stream` orchestration.
 
-- [ ] Task: Implement `hardware.py` module for CUDA detection and basic resource reporting.
+- [x] Task: Implement `hardware.py` module for CUDA detection and basic resource reporting. 7139650
 - [ ] Task: Implement `engine.py` module to encapsulate `parakeet-stream` initialization and "Fast" preset configuration.
 - [ ] Task: Implement `audio.py` module to manage microphone streams using `parakeet-stream`'s native interface.
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Core STT Module' (Protocol in workflow.md)
