@@ -165,7 +165,7 @@ class DoublePassPipeline(Pipeline):
                 # Prepare for next ghost pass by clearing its buffer
                 # The anchor pass has covered all history
                 self.active_ghost_buffer = []
-                self.display.update(self.refined_text)
+                self.display.update(refined=self.refined_text)
         
         self.trigger.reset(now_ms)
         self.engine.set_quality('realtime')
@@ -176,12 +176,34 @@ class DoublePassPipeline(Pipeline):
             return
             
         audio = np.concatenate(self.active_ghost_buffer)
-        ghost_text = self.engine.transcribe(audio)
+        
+        # Provide audio context if we have refined text to stay aligned
+        if self.refined_text:
+            history_audio = self.history.get_all()
+            # Use up to 2 seconds of previous audio as context
+            context_samples = 32000
+            # Ensure we don't include the current ghost buffer twice if it's already in history
+            # Actually history.append(chunk) is called at the start of process_chunk, 
+            # so active_ghost_buffer is already at the end of history.
+            
+            # We want the audio BEFORE the active_ghost_buffer
+            ghost_len = len(audio)
+            available_history = history_audio[:-ghost_len]
+            context_audio = available_history[-context_samples:] if len(available_history) > context_samples else available_history
+            
+            full_audio = np.concatenate([context_audio, audio])
+            context_secs = len(context_audio) / 16000.0
+            ghost_text = self.engine.transcribe(full_audio, left_context_secs=context_secs)
+        else:
+            ghost_text = self.engine.transcribe(audio)
         
         if ghost_text:
-            # Combine anchor history with current ghost
-            full_display = (self.refined_text + " " + ghost_text).strip()
-            self.display.update(full_display)
+            # Contextual Merge: 
+            # If ghost_text starts with words that are at the end of refined_text, 
+            # we should avoid duplicating them.
+            
+            # For now, we rely on the display to handle the merge with styles
+            self.display.update(refined=self.refined_text, ghost=ghost_text)
 
     def _reset_utterance(self):
         self.is_speaking = False

@@ -19,6 +19,17 @@ class TestDisplay(unittest.TestCase):
         self.assertIn("\r", output)
 
     @patch('sys.stdout', new_callable=io.StringIO)
+    def test_update_with_styles(self, mock_stdout):
+        display = TerminalDisplay()
+        # Refined = Bold (\033[1m), Ghost = Dim (\033[2m)
+        display.update(refined="Fixed", ghost="maybe")
+        
+        output = mock_stdout.getvalue()
+        self.assertIn("\033[1mFixed", output)
+        self.assertIn("\033[2mmaybe", output)
+        self.assertIn("\033[0m", output) # Reset code
+
+    @patch('sys.stdout', new_callable=io.StringIO)
     def test_finalize(self, mock_stdout):
         display = TerminalDisplay()
         display.finalize("Hello world")
