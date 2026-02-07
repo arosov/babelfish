@@ -9,13 +9,13 @@ Establish the project structure and configure `uv` for automatic dependency and 
 - [x] Task: Create the project directory structure (`babelfish_stt/` package and `babelfish.py` entry point). 03af513
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Project Scaffolding' (Protocol in workflow.md) 348da92
 
-## Phase 2: Core STT Module Implementation
+## Phase 2: Core STT Module Implementation [checkpoint: d2c3ecf]
 Implement the decoupled logic for hardware detection and `parakeet-stream` orchestration.
 
 - [x] Task: Implement `hardware.py` module for CUDA detection and basic resource reporting. 7139650
 - [x] Task: Implement `engine.py` module to encapsulate `parakeet-stream` initialization and "Fast" preset configuration. 1b1dc2c
 - [x] Task: Implement `audio.py` module to manage microphone streams using `parakeet-stream`'s native interface. eecc6b6
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Core STT Module' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Core STT Module' (Protocol in workflow.md) d2c3ecf
 
 ## Phase 3: Orchestration & Terminal UI
 Connect the modules in `babelfish.py` and implement the real-time streaming display logic.
