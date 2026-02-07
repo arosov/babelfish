@@ -27,5 +27,5 @@
 
 ## Distribution & Orchestration
 - **Launcher:** Custom Python scripts invoked via `uv run`.
-  - **CLI Flags:** `--double-pass`, `--wakeword`, `--stopword`.
+  - **CLI Flags:** `--double-pass`, `--wakeword`, `--stopword`, `--cpu`.
 - **Service Management:** Designed for integration with Kotlin-based frontend controller.

@@ -18,12 +18,14 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 
-def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str = None):
+def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str = None, force_cpu: bool = False):
     """
     Main loop for Babelfish STT, delegating to pipeline handlers.
     """
     print("\n" + "="*50)
     print("🚀 BABELFISH STT INITIALIZING")
+    if force_cpu:
+        print("   MODE: Force CPU Execution")
     if double_pass:
         print("   MODE: Double-Pass Refinement")
     else:
@@ -37,7 +39,7 @@ def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str
     
     # 1. Hardware Detection
     hw_info = get_gpu_info()
-    device = "cuda" if hw_info['cuda_available'] else "cpu"
+    device = "cpu" if force_cpu else ("cuda" if hw_info['cuda_available'] else "cpu")
     best_mic_idx = find_best_microphone()
     
     # 2. Initialize VAD (Fast)
@@ -145,6 +147,7 @@ def main():
     
     parser = argparse.ArgumentParser(description="Babelfish STT - High-performance streaming transcription")
     parser.add_argument("--double-pass", action="store_true", help="Enable two-pass refinement system")
+    parser.add_argument("--cpu", action="store_true", help="Force CPU execution even if GPU is available")
     parser.add_argument("--wakeword", type=str, nargs='?', const='LIST_OPTIONS', help=f"Enable wake-word activation. Available: {', '.join(available_ww)}")
     parser.add_argument("--stopword", type=str, help="Enable stop-word deactivation (e.g. 'stop talking')")
     args = parser.parse_args()
@@ -161,7 +164,8 @@ def main():
     run_babelfish(
         double_pass=args.double_pass,
         wakeword=args.wakeword,
-        stopword=args.stopword
+        stopword=args.stopword,
+        force_cpu=args.cpu
     )
 
 if __name__ == "__main__":

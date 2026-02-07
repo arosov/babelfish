@@ -13,12 +13,13 @@ class STTEngine:
         self.device = device
         
         # Initialize Parakeet (loads model eagerly)
-        # We use 'realtime' for the best speed/accuracy tradeoff in live use
-        print(f"🧠 Loading STT Engine: {model_name}...")
+        # We use 'realtime' for CUDA and 'low_latency' for CPU to maintain responsiveness
+        preset = 'realtime' if device == 'cuda' else 'low_latency'
+        print(f"🧠 Loading STT Engine: {model_name} on {device} (preset: {preset})...")
         self.pk = Parakeet(
             model_name=model_name,
             device=device,
-            config='realtime'
+            config=preset
         )
 
     def set_quality(self, level: str):
