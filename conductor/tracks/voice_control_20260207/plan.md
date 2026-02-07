@@ -1,0 +1,38 @@
+# Implementation Plan: Voice-Activated Control (Wake-Word & Stop-Word)
+
+This plan outlines the steps to integrate local wake-word detection and text-based stop-word control into Babelfish.
+
+## Phase 1: Wake-Word Integration (openWakeWord)
+Integrate the `openWakeWord` engine to enable starting transcription via voice.
+
+- [x] Task: Install `openWakeWord` and necessary ONNX dependencies. d18665f
+- [ ] Task: Implement `WakeWordEngine` wrapper in `src/babelfish_stt/wakeword.py` to handle ONNX model loading and inference.
+- [ ] Task: Write Tests: Verify `WakeWordEngine` correctly detects keywords in sample audio buffers.
+- [ ] Task: Implement: Develop the `WakeWordEngine` logic.
+- [ ] Task: Conductor - User Manual Verification 'Phase 1: Wake-Word Integration' (Protocol in workflow.md)
+
+## Phase 2: Stop-Word Logic & State Management
+Implement the text-based stop-word detection and the IDLE/LISTENING state machine.
+
+- [ ] Task: Implement `StopWordDetector` in `src/babelfish_stt/pipeline.py` with strict matching logic.
+- [ ] Task: Write Tests: Verify `StopWordDetector` identifies stop phrases in various transcript strings.
+- [ ] Task: Implement: Develop the `StopWordDetector` logic.
+- [ ] Task: Update `Pipeline` base class and implementations to support an `IDLE` state.
+- [ ] Task: Conductor - User Manual Verification 'Phase 2: Stop-Word & State' (Protocol in workflow.md)
+
+## Phase 3: CLI Integration & Orchestration
+Update the main entry point to support new flags and orchestrate the state transitions.
+
+- [ ] Task: Update `main.py` to support `--wakeword` and `--stopword` flags.
+- [ ] Task: Refactor `run_babelfish` to handle the `IDLE` state (running WakeWord detection) and `LISTENING` state (running STT).
+- [ ] Task: Write Tests: Verify CLI arguments are correctly parsed and passed to the orchestration loop.
+- [ ] Task: Implement: Update `main.py` and orchestration logic.
+- [ ] Task: Conductor - User Manual Verification 'Phase 3: CLI & Orchestration' (Protocol in workflow.md)
+
+## Phase 4: Logging & E2E Verification
+Finalize the feature with detailed logging and end-to-end testing.
+
+- [ ] Task: Implement event logging for state changes, including timestamps and confidence scores.
+- [ ] Task: Write Tests: Perform E2E tests verifying the full lifecycle (Launch IDLE -> Wake-Word -> LISTENING -> Stop-Word -> IDLE).
+- [ ] Task: Implement: Finalize logging and perform E2E fixes.
+- [ ] Task: Conductor - User Manual Verification 'Phase 4: Logging & E2E' (Protocol in workflow.md)
