@@ -1,19 +1,20 @@
 # Tech Stack - Babelfish
 
 ## Core Backend
-- **Language:** Python 3.10+
-- **Package Management & Distribution:** `uv` (for high-speed dependency resolution and one-liner execution)
-- **Communication Protocol:** WebTransport (for low-latency, bidirectional streaming of pipeline progress and results)
+- **Language:** Python 3.12+
+- **Package Management & Distribution:** `uv` (for high-speed dependency resolution and service execution)
+- **Communication Protocol:** WebTransport (for ultra-low-latency bidirectional streaming)
 
 ## Pipeline Engines
-- **Voice Activity Detection (VAD):** [Silero VAD](https://github.com/snakers4/silero-vad) - High-performance, pre-trained VAD with native Python support.
-- **Speech-to-Text (STT):** [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper) - Re-implementation of OpenAI's Whisper using CTranslate2 for significant speedups and reduced memory usage.
-- **Large Language Model (LLM):** *TBD* (Requirement: Optimized for extremely low-latency token-by-token processing of incoming word streams).
+- **Speech-to-Text (Primary):** [parakeet-stream](https://github.com/maximerivest/parakeet-stream) - Utilizing NVIDIA Parakeet TDT for extreme latency tuning.
+- **Speech-to-Text (Secondary/Shadow):** *TBD* (Phase 2 integration).
+- **Voice Activity Detection (VAD):** [Silero VAD](https://github.com/snakers4/silero-vad) or [WebRTCVAD](https://github.com/wiseman/py-webrtcvad) via `RealtimeSTT` loop management.
+- **Large Language Model (LLM):** *TBD* (Phase 3 integration: optimized local models like Llama-3-8B-Instruct or Phi-3).
 
-## Hardware Abstraction & Acceleration
-- **Frameworks:** CTranslate2 (via Faster-Whisper), ONNX Runtime (for Silero).
-- **Backends:** NVIDIA (CUDA), AMD (ROCm/MIOpen), and CPU (AVX/OpenMP).
+## Hardware & OS Targets
+- **Platforms:** Windows (Windows Services), Linux (Systemd).
+- **Acceleration:** NVIDIA CUDA (Primary target).
 
-## Development & Distribution
-- **Build System:** `hatch` or `flit` (configured for `uv` compatibility).
-- **Logging:** Structured logging for high-fidelity CLI output and system health monitoring.
+## Distribution & Orchestration
+- **Launcher:** Custom Python scripts invoked via `uv run`.
+- **Service Management:** Designed for integration with Kotlin-based frontend controller.

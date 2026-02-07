@@ -5,19 +5,24 @@ The name of this project is babelfish. It's going to be a local backend server f
 # Product Definition - Babelfish
 
 ## Vision
-Babelfish is a high-performance, local backend server designed to power system-wide speech-to-text (STT) solutions. It bridges the gap between raw audio input and refined text output by orchestrating a sophisticated, modular pipeline of top-of-the-line open-source engines, all while maintaining a minimal footprint and maximum privacy.
+Babelfish is a high-performance, local backend server designed to power system-wide speech-to-text (STT) solutions, inspired by products like **BetterDictation**. It focuses on extreme low-latency, high accuracy, and fast streaming by orchestrating a modular pipeline centered around NVIDIA's Parakeet TDT.
 
 ## Target Audience
-- **Individual Power Users:** Desktop users seeking a private, low-latency alternative to cloud-based STT.
-- **Privacy-Conscious Developers:** Engineers building desktop integrations (like the Kotlin frontend) who require a reliable local bridge for speech processing.
+- **Power Users:** Seeking a private, ultra-low-latency alternative to cloud STT for real-time dictation.
+- **App Developers:** Specifically designed as the engine for a Kotlin-based frontend, provided as a background service.
+
+## Phased Implementation Plan
+1.  **Phase 1: Streaming Foundation:** Implementing a robust single-pass pipeline using `parakeet-stream` for industry-leading latency.
+2.  **Phase 2: Two-Pass Refinement:** Adding a second, high-accuracy model pass to refine the initial streaming output.
+3.  **Phase 3: LLM Optimization:** Integrating a local low-latency LLM to provide context-aware text correction and optimization.
 
 ## Core Goals
-- **Modular Pipeline Architecture:** A flexible "VAD -> STT -> LLM" chain where every component is swappable or optional.
-- **Real-time Progress Reporting:** Low-latency streaming of the processing state at every stage, allowing frontends to render partial results and pipeline status immediately.
-- **Effortless Distribution:** Packaging the entire solution for execution via a simple `uv` one-liner, ensuring portability and ease of setup for end-users.
+- **Top-of-the-Line Latency:** Prioritizing `parakeet-stream` (TDT) over Whisper for superior real-time performance.
+- **Modular Pipeline Architecture:** A flexible "VAD -> STT (Single/Two-Pass) -> LLM" chain.
+- **Service-Oriented Distribution:** Packaging the server for execution as a system service (Windows Service / Systemd) via a simple `uv` command.
+- **Real-time Progress Reporting:** High-speed streaming of processing state via WebTransport.
 
 ## Key Features
-- **Hardware Agnostic Acceleration:** Built-in support for NVIDIA (CUDA), AMD (ROCm), and CPU execution, with automated discovery of available resources.
-- **Dual STT Strategy:** Support for "Tiny STT" for immediate feedback alongside "Shadow STT" for high-accuracy refinement.
-- **Transparent Configuration:** A centralized configuration system (YAML/TOML) that allows for explicit overrides of the automated discovery and pipeline behavior.
-- **Local-First Design:** Zero external dependencies for core processing, ensuring data never leaves the user's machine.
+- **NVIDIA Parakeet Integration:** Leveraging Parakeet TDT for various quality/latency presets.
+- **Hardware Agnostic Discovery:** Primary focus on Windows and Linux with CUDA acceleration.
+- **Effortless Lifecycle Management:** Designed to be started/stopped/restarted by a companion Kotlin frontend.
