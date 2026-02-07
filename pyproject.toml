@@ -19,6 +19,7 @@ dependencies = [
     "openwakeword>=0.6.0",
     "numpy<2",
     "omegaconf",
+    "pydantic>=2.12.5",
 ]
 
 [[tool.uv.index]]

@@ -1,4 +1,4 @@
-# KVoice - Babelfish Server
+# VogonPoet - Babelfish Server
 
 Babelfish is a high-performance, low-latency Speech-to-Text (STT) backend designed to provide system-wide transcription injection (similar to BetterDictation). It serves as the core engine for a Kotlin-based frontend application.
 
