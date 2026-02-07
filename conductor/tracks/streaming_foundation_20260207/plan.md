@@ -20,7 +20,7 @@ Implement the decoupled logic for hardware detection and `parakeet-stream` orche
 ## Phase 3: Orchestration & Terminal UI
 Connect the modules in `babelfish.py` and implement the real-time streaming display logic.
 
-- [ ] Task: Implement `display.py` module for terminal-based, word-by-word streaming updates.
+- [x] Task: Implement `display.py` module for terminal-based, word-by-word streaming updates. b72d915
 - [ ] Task: Implement the main loop in `babelfish.py` to orchestrate audio capture, STT processing, and display.
 - [ ] Task: Implement graceful shutdown (Ctrl+C) and resource cleanup.
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Orchestration & UI' (Protocol in workflow.md)
