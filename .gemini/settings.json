@@ -1,0 +1,7 @@
+{
+  "includeDirectories": [
+    "/home/arosovsky/dev/kvoice/RealtimeSTT",
+    "/home/arosovsky/dev/kvoice/parakeet-stream",
+    "/home/arosovsky/dev/kvoice/speaches"
+  ]
+}
