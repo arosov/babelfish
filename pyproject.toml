@@ -1,0 +1,26 @@
+[project]
+name = "babelfish"
+version = "0.1.0"
+description = "High-performance local STT pipeline using parakeet-stream"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "parakeet-stream[microphone]",
+    "torch",
+    "torchaudio",
+]
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchaudio = { index = "pytorch" }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+]
