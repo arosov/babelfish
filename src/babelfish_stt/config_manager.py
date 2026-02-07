@@ -48,3 +48,31 @@ class ConfigManager:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
             raise
+
+    def update(self, changes: dict):
+        """
+        Updates the configuration with the provided changes.
+        Performs a deep merge and validates the result.
+        """
+        current_data = self.config.model_dump()
+        merged_data = self._deep_merge(current_data, changes)
+        
+        # Validate by creating a new model instance
+        new_config = BabelfishConfig.model_validate(merged_data)
+        
+        # If successful, apply and save
+        self.config = new_config
+        self.save()
+        logger.info("Configuration updated and saved.")
+
+    @staticmethod
+    def _deep_merge(base: dict, update: dict) -> dict:
+        """
+        Recursively merges update dict into base dict.
+        """
+        for key, value in update.items():
+            if isinstance(value, dict) and key in base and isinstance(base[key], dict):
+                ConfigManager._deep_merge(base[key], value)
+            else:
+                base[key] = value
+        return base

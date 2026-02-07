@@ -12,7 +12,7 @@ class TestEngine(unittest.TestCase):
         mock_parakeet.assert_called_once_with(
             model_name="nvidia/parakeet-tdt-0.6b-v3",
             device="cpu",
-            config='realtime'
+            config='low_latency'
         )
         self.assertEqual(engine.pk, mock_parakeet.return_value)
 

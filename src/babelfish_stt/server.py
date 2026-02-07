@@ -40,7 +40,7 @@ class BabelfishServer:
 
     async def handle_session(self, session: WebTransportSession):
         sid = session.session_id
-        logger.info(f"Client connected to /config: session_id={sid}, remote={session.remote_address}")
+        logger.info(f"Client connected to /config: session_id={sid}")
         self.sessions.add(session)
         
         async def on_stream(event: Event) -> None:
@@ -53,6 +53,8 @@ class BabelfishServer:
                         self.control_streams[sid] = stream
                         # Send initial config
                         asyncio.create_task(self.send_config_to_stream(stream))
+                        # Start reading commands
+                        asyncio.create_task(self.read_commands_from_stream(stream, sid))
 
         session.events.on(event_type=EventType.STREAM_OPENED, handler=on_stream)
         
@@ -66,6 +68,58 @@ class BabelfishServer:
             if sid in self.control_streams:
                 del self.control_streams[sid]
             logger.info(f"Client disconnected: session_id={sid}")
+
+    async def read_commands_from_stream(self, stream: WebTransportStream, sid: str):
+        buffer = b""
+        while not stream.is_closed:
+            try:
+                chunk = await stream.read(max_bytes=4096)
+                if not chunk:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    if line: # ignore empty lines
+                        await self.process_command(line, sid)
+            except Exception as e:
+                logger.error(f"Error reading from stream {stream.stream_id}: {e}")
+                break
+
+    async def process_command(self, data: bytes, sid: str):
+        try:
+            message = json.loads(data)
+            msg_type = message.get("type")
+            
+            if msg_type == "update_config":
+                changes = message.get("data", {})
+                logger.info(f"Received config update from {sid}")
+                self.config_manager.update(changes)
+                await self.broadcast_config()
+            else:
+                logger.warning(f"Unknown message type from {sid}: {msg_type}")
+                if sid in self.control_streams:
+                    await self.send_error_to_stream(self.control_streams[sid], f"Unknown message type: {msg_type}")
+                
+        except json.JSONDecodeError:
+            logger.error(f"Invalid JSON received from {sid}")
+            if sid in self.control_streams:
+                await self.send_error_to_stream(self.control_streams[sid], "Invalid JSON")
+        except Exception as e:
+            logger.error(f"Error processing command from {sid}: {e}")
+            if sid in self.control_streams:
+                await self.send_error_to_stream(self.control_streams[sid], str(e))
+
+    async def send_error_to_stream(self, stream: WebTransportStream, message: str):
+        """Sends an error message to a specific stream."""
+        error_msg = {
+            "type": "error",
+            "message": message
+        }
+        try:
+            data = json.dumps(error_msg).encode('utf-8') + b"\n"
+            await stream.write_all(data=data, end_stream=False)
+        except Exception as e:
+            logger.error(f"Failed to send error to stream {stream.stream_id}: {e}")
 
     async def send_config_to_stream(self, stream: WebTransportStream):
         """Sends the current configuration to a specific stream."""

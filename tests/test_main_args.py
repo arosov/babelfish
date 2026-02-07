@@ -9,14 +9,14 @@ class TestMainArgs(unittest.TestCase):
     def test_main_double_pass_flag(self, mock_run):
         from babelfish_stt.main import main
         main()
-        mock_run.assert_called_with(double_pass=True, wakeword=None, stopword=None)
+        mock_run.assert_called_with(double_pass=True, wakeword=None, stopword=None, force_cpu=False)
 
     @patch('babelfish_stt.main.run_babelfish')
     @patch('sys.argv', ['babelfish'])
     def test_main_no_flag(self, mock_run):
         from babelfish_stt.main import main
         main()
-        mock_run.assert_called_with(double_pass=False, wakeword=None, stopword=None)
+        mock_run.assert_called_with(double_pass=False, wakeword=None, stopword=None, force_cpu=False)
 
 if __name__ == '__main__':
     unittest.main()

@@ -3,7 +3,8 @@
         "includeDirectories": [
             "/home/arosovsky/dev/VogonPoet/RealtimeSTT",
             "/home/arosovsky/dev/VogonPoet/parakeet-stream",
-            "/home/arosovsky/dev/VogonPoet/speaches"
+            "/home/arosovsky/dev/VogonPoet/speaches",
+            "/home/arosovsky/dev/VogonPoet/pywebtransport"
         ]
     },
     "hooks": {

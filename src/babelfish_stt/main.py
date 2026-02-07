@@ -3,6 +3,8 @@ import logging
 import numpy as np
 import time
 import argparse
+import threading
+import asyncio
 from babelfish_stt.hardware import get_gpu_info, list_microphones, find_best_microphone
 from babelfish_stt.engine import STTEngine
 from babelfish_stt.audio import AudioStreamer
@@ -10,6 +12,8 @@ from babelfish_stt.display import TerminalDisplay
 from babelfish_stt.vad import SileroVAD
 from babelfish_stt.pipeline import SinglePassPipeline, DoublePassPipeline, StopWordDetector
 from babelfish_stt.wakeword import WakeWordEngine
+from babelfish_stt.config_manager import ConfigManager
+from babelfish_stt.server import BabelfishServer
 
 # Configure logging
 logging.basicConfig(
@@ -18,12 +22,39 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 
+def start_server_thread(config_manager):
+    """Starts the WebTransport server in a separate thread/loop."""
+    def run():
+        async def _serve():
+            server = BabelfishServer(config_manager)
+            await server.start()
+        
+        # New loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_serve())
+        except Exception as e:
+            logging.error(f"Server thread failed: {e}")
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    return t
+
 def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str = None, force_cpu: bool = False):
     """
     Main loop for Babelfish STT, delegating to pipeline handlers.
     """
     print("\n" + "="*50)
     print("🚀 BABELFISH STT INITIALIZING")
+    
+    # 0. Load Configuration & Start Server
+    config_manager = ConfigManager()
+    server_thread = start_server_thread(config_manager)
+    print(f"   SERVER: WebTransport running on https://{config_manager.config.server.host}:{config_manager.config.server.port}/config")
+
     if force_cpu:
         print("   MODE: Force CPU Execution")
     if double_pass:

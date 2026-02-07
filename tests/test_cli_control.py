@@ -11,7 +11,8 @@ class TestCLIControl(unittest.TestCase):
         mock_run.assert_called_with(
             double_pass=False, 
             wakeword='hey_jarvis', 
-            stopword='stop talking'
+            stopword='stop talking',
+            force_cpu=False
         )
 
 if __name__ == '__main__':

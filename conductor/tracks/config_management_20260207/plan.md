@@ -15,9 +15,9 @@ Establish the foundational Pydantic models and the logic for loading, saving, an
 Implement the communication layer for exchanging configuration data with the frontend.
 
 - [x] Task: Update the WebTransport server to send the current configuration on client connection. 5c48bb9
-- [ ] Task: Implement the `update_config` command handler in the WebTransport message loop.
-- [ ] Task: Write integration tests for sending and receiving configuration updates over WebTransport.
-- [ ] Task: Implement error reporting to the client when validation fails.
+- [x] Task: Implement the `update_config` command handler in the WebTransport message loop.
+- [x] Task: Write integration tests for sending and receiving configuration updates over WebTransport.
+- [x] Task: Implement error reporting to the client when validation fails.
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: WebTransport Configuration API' (Protocol in workflow.md)
 
 ## Phase 3: Hot-Reloading Logic
