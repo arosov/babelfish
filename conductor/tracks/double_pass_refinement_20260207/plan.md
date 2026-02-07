@@ -29,5 +29,5 @@ Implement the core refinement triggers and the contextual merge logic.
 Finalize the visual representation and ensure both modes work flawlessly.
 
 - [x] Task: Update `TerminalDisplay` to support ANSI styles (e.g., dimmed for Ghost, bold for Anchor). 9a41181
-- [ ] Task: Perform E2E tests verifying that switching modes works as expected and Double-Pass is seamless.
+- [x] Task: Perform E2E tests verifying that switching modes works as expected and Double-Pass is seamless. c2a8d69
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: UI & E2E' (Protocol in workflow.md)
