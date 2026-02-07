@@ -106,11 +106,87 @@ class SinglePassPipeline(Pipeline):
 
 class DoublePassPipeline(Pipeline):
     def __init__(self, vad, engine, display):
+        from babelfish_stt.audio import HistoryBuffer
         self.vad = vad
         self.engine = engine
         self.display = display
-        # Implementation will come in later tasks
+        
+        self.history = HistoryBuffer(maxlen_samples=64000) # 4s @ 16kHz
+        self.trigger = HybridTrigger(interval_ms=2000)
+        self.alignment = AlignmentManager(context_words=4)
+        
+        self.active_ghost_buffer = []
+        self.refined_text = ""
+        self.is_speaking = False
+        self.last_speech_time = 0
+        self.silence_threshold_ms = 700
         
     def process_chunk(self, chunk: np.ndarray, now_ms: float):
-        # Placeholder for now
-        pass
+        is_speech = self.vad.is_speech(chunk)
+        self.history.append(chunk)
+
+        if is_speech:
+            if not self.is_speaking:
+                self.is_speaking = True
+                self.trigger.start_speech(now_ms)
+                self.active_ghost_buffer = []
+            
+            self.active_ghost_buffer.append(chunk)
+            self.last_speech_time = now_ms
+
+            if self.trigger.should_trigger(now_ms, is_speaking=True):
+                self._run_anchor_pass(now_ms)
+            else:
+                self._run_ghost_pass()
+        else:
+            if self.is_speaking:
+                self.active_ghost_buffer.append(chunk)
+                
+                # Check for finalized sentence (long silence)
+                if now_ms - self.last_speech_time > self.silence_threshold_ms:
+                    self._run_anchor_pass(now_ms, finalize=True)
+                    self._reset_utterance()
+                # Check for minor pause trigger
+                elif self.trigger.should_trigger(now_ms, is_speaking=False):
+                    self._run_anchor_pass(now_ms)
+
+    def _run_anchor_pass(self, now_ms: float, finalize: bool = False):
+        """High-accuracy refinement pass."""
+        self.engine.set_quality('balanced')
+        
+        audio = self.history.get_all()
+        new_refined = self.engine.transcribe(audio)
+        
+        if new_refined:
+            self.refined_text = new_refined
+            if finalize:
+                self.display.finalize(self.refined_text)
+            else:
+                # Prepare for next ghost pass by clearing its buffer
+                # The anchor pass has covered all history
+                self.active_ghost_buffer = []
+                self.display.update(self.refined_text)
+        
+        self.trigger.reset(now_ms)
+        self.engine.set_quality('realtime')
+
+    def _run_ghost_pass(self):
+        """Fast low-latency update."""
+        if not self.active_ghost_buffer:
+            return
+            
+        audio = np.concatenate(self.active_ghost_buffer)
+        ghost_text = self.engine.transcribe(audio)
+        
+        if ghost_text:
+            # Combine anchor history with current ghost
+            full_display = (self.refined_text + " " + ghost_text).strip()
+            self.display.update(full_display)
+
+    def _reset_utterance(self):
+        self.is_speaking = False
+        self.trigger.stop_speech()
+        self.refined_text = ""
+        self.active_ghost_buffer = []
+        self.vad.reset_states()
+        self.history.clear()
