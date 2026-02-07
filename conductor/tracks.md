@@ -7,5 +7,5 @@
 
 ---
 
-- [~] **Track: Voice-Activated Control (Wake-Word & Stop-Word)**
+- [x] **Track: Voice-Activated Control (Wake-Word & Stop-Word)**
 *Link: [./tracks/voice_control_20260207/](./tracks/voice_control_20260207/)*
