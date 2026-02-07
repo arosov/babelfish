@@ -8,8 +8,12 @@
 ## Pipeline Engines
 - **Speech-to-Text (Primary):** [parakeet-stream](https://github.com/maximerivest/parakeet-stream) - Utilizing NVIDIA Parakeet TDT for extreme latency tuning.
 - **Speech-to-Text (Secondary/Shadow):** *TBD* (Phase 2 integration).
-- **Voice Activity Detection (VAD):** [Silero VAD](https://github.com/snakers4/silero-vad) or [WebRTCVAD](https://github.com/wiseman/py-webrtcvad) via `RealtimeSTT` loop management.
+- **Voice Activity Detection (VAD):** Integrated via `parakeet-stream`'s native loop (leveraging TDT's implicit VAD or explicit Silero integration).
+- **Audio Input:** `sounddevice` for real-time microphone capture.
 - **Large Language Model (LLM):** *TBD* (Phase 3 integration: optimized local models like Llama-3-8B-Instruct or Phi-3).
+
+## Known Compatibility Fixes
+- **PyArrow:** Pinned to `<19.0.0` to ensure compatibility with `datasets` 2.x used by NeMo.
 
 ## Hardware & OS Targets
 - **Platforms:** Windows (Windows Services), Linux (Systemd).

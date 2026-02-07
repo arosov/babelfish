@@ -12,7 +12,7 @@ Babelfish is a high-performance, local backend server designed to power system-w
 - **App Developers:** Specifically designed as the engine for a Kotlin-based frontend, providing an intelligent background service.
 
 ## Phased Implementation Plan
-1.  **Phase 1: Streaming Foundation:** Implementing a robust single-pass pipeline using `parakeet-stream` for industry-leading latency.
+1.  **Phase 1: Streaming Foundation (Completed):** Established a robust, modular single-pass pipeline using `parakeet-stream` and `sounddevice` for industry-leading latency, executable via `uv run babelfish`.
 2.  **Phase 2: Two-Pass Refinement:** Adding a second, high-accuracy model pass to refine the initial streaming output.
 3.  **Phase 3: LLM Optimization:** Integrating a local low-latency LLM to provide context-aware text correction and optimization.
 
