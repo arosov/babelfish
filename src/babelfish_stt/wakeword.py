@@ -18,8 +18,9 @@ class WakeWordEngine:
         if not target_paths:
             self.oww_model = Model()
         else:
+            # Use wakeword_models instead of wakeword_model_paths for 0.6.0
             self.oww_model = Model(
-                wakeword_model_paths=[target_paths[0]]
+                wakeword_models=[target_paths[0]]
             )
 
     def process_chunk(self, chunk: np.ndarray) -> Dict[str, float]:
@@ -33,8 +34,16 @@ class WakeWordEngine:
             A dictionary mapping keyword names to detection probabilities.
             Keys are normalized to remove version suffixes if they match the model name.
         """
+        # openWakeWord expects 16-bit signed integers (int16).
+        # Our streamer provides float32 normalized to [-1, 1].
+        if chunk.dtype != np.int16:
+            # Scale to int16 range
+            chunk_int16 = (chunk * 32767).astype(np.int16)
+        else:
+            chunk_int16 = chunk
+
         # The predict method returns a dictionary of probabilities
-        prediction = self.oww_model.predict(chunk)
+        prediction = self.oww_model.predict(chunk_int16)
         
         # Normalize keys: if 'hey_jarvis_v0.1' is in prediction and we asked for 'hey_jarvis', 
         # map it to 'hey_jarvis'.
@@ -45,3 +54,7 @@ class WakeWordEngine:
             else:
                 normalized[k] = v
         return normalized
+
+    def reset(self):
+        """Resets the internal state of the wake-word model."""
+        self.oww_model.reset()

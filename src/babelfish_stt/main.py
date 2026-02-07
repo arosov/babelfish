@@ -14,7 +14,8 @@ from babelfish_stt.wakeword import WakeWordEngine
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s.%(msecs)03d - %(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
 )
 
 def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str = None):
@@ -76,21 +77,41 @@ def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str
     if ww_engine:
         pipeline.set_idle(True)
         print(f"💤 IDLE: Waiting for wake-word '{wakeword}'...")
+        last_score_time = time.time()
+        max_score_recent = 0.0
     else:
         print("🎤 Listening... (Press Ctrl+C to stop)\n")
+    
+    cooldown_until = 0
     
     try:
         # Loop over 32ms chunks (512 samples)
         for chunk in streamer.stream(chunk_size=512):
-            now_ms = time.time() * 1000
+            now = time.time()
+            now_ms = now * 1000
             
+            if now < cooldown_until:
+                # In cooldown, skip processing to avoid echo/loop triggers
+                continue
+
             if pipeline.is_idle and ww_engine:
                 # In IDLE mode, only run Wake-Word detection
                 prediction = ww_engine.process_chunk(chunk)
                 score = prediction.get(wakeword, 0)
+                
+                if score > max_score_recent:
+                    max_score_recent = score
+
+                # Every 1 second, print the max score seen to give feedback
+                if now - last_score_time > 1.0:
+                    sys.stdout.write(f"\r   [Max confidence in last 1s: {max_score_recent:.2f}]   ")
+                    sys.stdout.flush()
+                    max_score_recent = 0.0
+                    last_score_time = now
+
                 if score > 0.5:
                     logging.info(f"Wake-word '{wakeword}' detected with score {score:.2f}")
-                    print(f"\n✨ WAKE-WORD DETECTED: '{wakeword}' (score: {score:.2f})")
+                    print(f"\n\n✨ WAKE-WORD DETECTED: '{wakeword}' (score: {score:.2f})")
                     print("🎤 Listening... (Press Ctrl+C to stop)\n")
                     pipeline.set_idle(False)
             else:
@@ -99,12 +120,17 @@ def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str
                 if transitioned and pipeline.is_idle:
                     logging.info(f"Stop-word '{stopword}' detected, transitioning to IDLE")
                     print(f"\n🛑 STOP-WORD DETECTED: '{stopword}'")
-                    print(f"💤 IDLE: Waiting for wake-word '{wakeword}'..." if ww_engine else "🛑 Stopped.")
-                    if not ww_engine:
-                        # If no wake-word is configured but stop-word is hit, 
-                        # maybe we should just exit or wait for user?
-                        # For now, if no WW, it stays in IDLE (silent) until Ctrl+C.
-                        pass
+                    
+                    if ww_engine:
+                        ww_engine.reset()
+                        # Draining the streamer helps clear any "stop word" audio 
+                        # that might still be in the resampler/queue.
+                        streamer.drain()
+                        # Set a 1.5s cooldown to prevent immediate re-activation
+                        cooldown_until = now + 1.5
+                        print(f"💤 IDLE: Waiting for wake-word '{wakeword}'... (1.5s cooldown)")
+                    else:
+                        print("🛑 Stopped.")
                         
     except KeyboardInterrupt:
         print("\n\n🛑 Stopping Babelfish...")
