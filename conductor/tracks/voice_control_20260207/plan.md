@@ -11,7 +11,7 @@ Integrate the `openWakeWord` engine to enable starting transcription via voice.
 - [x] Task: Implement: Develop the `WakeWordEngine` logic. 1825eda
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Wake-Word Integration' (Protocol in workflow.md)
 
-## Phase 2: Stop-Word Logic & State Management
+## Phase 2: Stop-Word Logic & State Management [checkpoint: e8f5431]
 Implement the text-based stop-word detection and the IDLE/LISTENING state machine.
 
 - [x] Task: Implement `StopWordDetector` in `src/babelfish_stt/pipeline.py` with strict matching logic. cdb29cb
