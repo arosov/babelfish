@@ -1,19 +1,22 @@
 # Tech Stack - Babelfish
 
 ## Core Backend
-- **Language:** Python 3.12+
-- **Package Management & Distribution:** `uv` (for high-speed dependency resolution and service execution)
-- **Communication Protocol:** WebTransport (for ultra-low-latency bidirectional streaming)
+- **Language:** Python 3.12 (Pinned to 3.12.*)
+- **Package Management & Distribution:** `uv`
+- **Communication Protocol:** WebTransport
 
 ## Pipeline Engines
-- **Speech-to-Text (Primary):** [parakeet-stream](https://github.com/maximerivest/parakeet-stream) - Utilizing NVIDIA Parakeet TDT for extreme latency tuning.
+- **Speech-to-Text (Primary):** [parakeet-stream](https://github.com/maximerivest/parakeet-stream)
+  - **NeMo Toolkit:** >=2.6.2 (Required for `StreamingBatchedAudioBuffer`)
+  - **PyTorch:** >=2.6.0
+  - **CUDA Python:** >=12.3 (For optimized decoding speed)
 - **Speech-to-Text (Secondary/Shadow):** *TBD* (Phase 2 integration).
-- **Voice Activity Detection (VAD):** Integrated via `parakeet-stream`'s native loop (leveraging TDT's implicit VAD or explicit Silero integration).
+- **Voice Activity Detection (VAD):** Integrated via `parakeet-stream`'s native loop.
 - **Audio Input:** `sounddevice` for real-time microphone capture.
-- **Large Language Model (LLM):** *TBD* (Phase 3 integration: optimized local models like Llama-3-8B-Instruct or Phi-3).
+- **Large Language Model (LLM):** *TBD* (Phase 3 integration).
 
 ## Known Compatibility Fixes
-- **PyArrow:** Pinned to `<19.0.0` to ensure compatibility with `datasets` 2.x used by NeMo.
+- **PyArrow:** Pinned to `<19.0.0` to ensure compatibility with `datasets` 2.14.4.
 
 ## Hardware & OS Targets
 - **Platforms:** Windows (Windows Services), Linux (Systemd).
