@@ -12,7 +12,10 @@ from babelfish_stt.pipeline import SinglePassPipeline, DoublePassPipeline, StopW
 from babelfish_stt.wakeword import WakeWordEngine
 
 # Configure logging
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str = None):
     """
@@ -84,14 +87,17 @@ def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str
             if pipeline.is_idle and ww_engine:
                 # In IDLE mode, only run Wake-Word detection
                 prediction = ww_engine.process_chunk(chunk)
-                if prediction.get(wakeword, 0) > 0.5:
-                    print(f"\n✨ WAKE-WORD DETECTED: '{wakeword}'")
+                score = prediction.get(wakeword, 0)
+                if score > 0.5:
+                    logging.info(f"Wake-word '{wakeword}' detected with score {score:.2f}")
+                    print(f"\n✨ WAKE-WORD DETECTED: '{wakeword}' (score: {score:.2f})")
                     print("🎤 Listening... (Press Ctrl+C to stop)\n")
                     pipeline.set_idle(False)
             else:
                 # In LISTENING mode, run STT pipeline
                 transitioned = pipeline.process_chunk(chunk, now_ms)
                 if transitioned and pipeline.is_idle:
+                    logging.info(f"Stop-word '{stopword}' detected, transitioning to IDLE")
                     print(f"\n🛑 STOP-WORD DETECTED: '{stopword}'")
                     print(f"💤 IDLE: Waiting for wake-word '{wakeword}'..." if ww_engine else "🛑 Stopped.")
                     if not ww_engine:
