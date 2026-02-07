@@ -7,8 +7,8 @@ Integrate the `openWakeWord` engine to enable starting transcription via voice.
 
 - [x] Task: Install `openWakeWord` and necessary ONNX dependencies. d18665f
 - [x] Task: Implement `WakeWordEngine` wrapper in `src/babelfish_stt/wakeword.py` to handle ONNX model loading and inference. 1825eda
-- [ ] Task: Write Tests: Verify `WakeWordEngine` correctly detects keywords in sample audio buffers.
-- [ ] Task: Implement: Develop the `WakeWordEngine` logic.
+- [x] Task: Write Tests: Verify `WakeWordEngine` correctly detects keywords in sample audio buffers. 1825eda
+- [x] Task: Implement: Develop the `WakeWordEngine` logic. 1825eda
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Wake-Word Integration' (Protocol in workflow.md)
 
 ## Phase 2: Stop-Word Logic & State Management

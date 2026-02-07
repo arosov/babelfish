@@ -1,0 +1,8 @@
+{
+  "track_id": "voice_control_20260207",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2026-02-07T19:30:00Z",
+  "updated_at": "2026-02-07T19:30:00Z",
+  "description": "Add an optional wakeword detection system to start the transcription and a voice command system to stop it."
+}
