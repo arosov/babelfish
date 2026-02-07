@@ -30,7 +30,7 @@ def main():
         device = config.device
         input_device_index = config.input_device_index
         wake_word = config.wake_word
-        stop_word = config.stop_word
+        realtime_model_type = config.realtime_model_type
         language = config.language
         auto_type = config.auto_type
         # Use quantization from config as primary compute option
@@ -42,7 +42,7 @@ def main():
         device = "cuda" if hw.accel_type in ["nvidia", "amd"] else "cpu"
         input_device_index = None # Will use default
         wake_word = None
-        stop_word = None
+        realtime_model_type = "tiny"
         language = ""
         auto_type = False
         compute_options = ["float16", "int8_float16", "int8", "float32"]
@@ -63,34 +63,28 @@ def main():
     def on_wakeword():
         print(f"\n[EVENT] Wake word '{wake_word}' detected! Recording...\n")
 
-    def on_stopword(word):
-        print(f"\n[EVENT] Stop word '{word}' detected! Stopping...\n")
-    
     for ctype in compute_options:
         try:
-            logger.info(f"Attempting initialization: model={selected_model}, device={device}, quantization={ctype}, input_device={input_device_index}, wake_word={wake_word}, stop_word={stop_word}, language={language}, auto_type={auto_type}")
+            logger.info(f"Attempting initialization: model={selected_model}, realtime_model_type={realtime_model_type}, device={device}, quantization={ctype}, input_device={input_device_index}, wake_word={wake_word}, language={language}, auto_type={auto_type}")
             
             recorder_args = {
                 "model": selected_model,
+                "realtime_model_type": realtime_model_type,
                 "device": device,
                 "input_device_index": input_device_index,
                 "compute_type": ctype,
                 "language": language,
                 "enable_realtime_transcription": True,
-                "use_main_model_for_realtime": True,
+                "use_main_model_for_realtime": False, # Explicitly use separate model for realtime if configured
                 "on_realtime_transcription_update": text_detected,
                 "on_realtime_transcription_stabilized": stabilized_text_detected,
                 "on_wakeword_detected": on_wakeword,
-                "on_stopword_detected": on_stopword,
                 "spinner": False
             }
 
-            if wake_word or stop_word:
+            if wake_word:
                 recorder_args["wakeword_backend"] = "pvporcupine"
-                if wake_word:
-                    recorder_args["wake_words"] = wake_word
-                if stop_word:
-                    recorder_args["stop_words"] = stop_word
+                recorder_args["wake_words"] = wake_word
 
             recorder = AudioToTextRecorder(**recorder_args)
             logger.info(f"Successfully initialized with {ctype}!")
@@ -127,9 +121,13 @@ def main():
     
     try:
         while True:
-            # recorder.text() still gives us the finalized segment
+            # recorder.text() will wait for voice activation (or wake word if configured)
+            # and then record until silence (or stop word if configured)
             text = recorder.text()
             if text:
+                # If we have wake words, recorder.text() might be called multiple times
+                # after a single wake word detection if we are in a loop.
+                # In RealtimeSTT, recorder.text() handles the "listening" state.
                 print(f"\nFinal: {text}\n", flush=True)
                 if auto_type:
                     typer.type_text(text)

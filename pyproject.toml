@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "babelfish"
 version = "0.1.0"
@@ -8,6 +12,7 @@ dependencies = [
     "parakeet-stream[microphone]",
     "torch",
     "torchaudio",
+    "pyarrow<19.0.0",
 ]
 
 [[tool.uv.index]]
@@ -19,8 +24,17 @@ explicit = true
 torch = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
 
+[project.scripts]
+babelfish = "babelfish_stt.main:run_babelfish"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

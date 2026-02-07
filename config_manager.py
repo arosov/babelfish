@@ -12,7 +12,7 @@ class ServerConfig(BaseModel):
     quantization: str  # e.g., "float16", "int8", "int8_float16"
     language: str = "" # Default to auto-detection
     wake_word: Optional[str] = None
-    stop_word: Optional[str] = None
+    realtime_model_type: str = "tiny"
     auto_type: bool = False
     input_device_index: Optional[int] = None
     enable_realtime: bool = True

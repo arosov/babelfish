@@ -28,6 +28,6 @@ Connect the modules in `babelfish.py` and implement the real-time streaming disp
 ## Phase 4: Verification & Portability
 Ensure the "uv one-liner" works as expected and the pipeline meets performance goals.
 
-- [ ] Task: Verify the `uv run babelfish.py` command downloads models and starts transcription automatically.
-- [ ] Task: Perform end-to-end testing of real-time transcription latency and terminal output accuracy.
-- [ ] Task: Conductor - User Manual Verification 'Phase 4: Verification' (Protocol in workflow.md)
+- [x] Task: Verify the `uv run babelfish.py` command downloads models and starts transcription automatically. 40158
+- [x] Task: Perform end-to-end testing of real-time transcription latency and terminal output accuracy. 40158
+- [x] Task: Conductor - User Manual Verification 'Phase 4: Verification' (Protocol in workflow.md) 40158

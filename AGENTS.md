@@ -18,6 +18,13 @@ The goal is to build a top-of-the-line low-latency pipeline by combining the bes
 *   **Frontend:** Kotlin-based UI that manages the server lifecycle (start/stop/restart).
 *   **Targets:** Windows (Windows Services) and Linux (Systemd).
 
+## 🧠 Philosophy: Server as the Brain
+
+Babelfish is designed to be the "brain" of the STT system. It doesn't just execute commands; it autonomously manages the environment to ensure optimal performance:
+*   **Hardware Auto-Discovery:** On startup, it probes for GPU availability, selects the best card, and reports VRAM capacity to optimize model loading.
+*   **Intelligent Defaults:** It automatically identifies and selects the most appropriate audio input devices if not explicitly configured.
+*   **Configuration Authority:** While the frontend provides a UI for human interaction, the server maintains the source of truth for configuration, providing sensible defaults that work out-of-the-box.
+
 ## 📦 Distribution & Orchestration
 
 The server is designed to be run as a background service. Developers and the frontend app interact with it via `uv` one-liners. All available commands and execution patterns are documented in `launcher.md`.
@@ -27,5 +34,5 @@ The server is designed to be run as a background service. Developers and the fro
 This project leverages insights and code patterns from:
 *   `RealtimeSTT`: Loop management and VAD integration.
 *   `parakeet-stream`: Streaming TDT implementation and quality presets.
-*   `speaches`: OpenAI-compatible serving and dynamic model handling.
+*   `speaches`: OpenAI-compatible serving, dynamic model handling, and hardware-aware resource management.
 

@@ -1,12 +1,12 @@
 import unittest
 from unittest.mock import patch, MagicMock
-from babelfish import run_babelfish
+from babelfish_stt.main import run_babelfish
 
 class TestBabelfish(unittest.TestCase):
-    @patch('babelfish.get_gpu_info')
-    @patch('babelfish.STTEngine')
-    @patch('babelfish.AudioStreamer')
-    @patch('babelfish.TerminalDisplay')
+    @patch('babelfish_stt.main.get_gpu_info')
+    @patch('babelfish_stt.main.STTEngine')
+    @patch('babelfish_stt.main.AudioStreamer')
+    @patch('babelfish_stt.main.TerminalDisplay')
     def test_run_babelfish(self, mock_display, mock_audio, mock_engine, mock_hardware):
         mock_hardware.return_value = {'cuda_available': True, 'name': 'Test GPU'}
         

@@ -1,0 +1,11 @@
+{
+    "model": "m-baccari/parakeet-rnnt-1.1b-ct2",
+    "device": "cuda",
+    "quantization": "float16",
+    "language": "en",
+    "wake_word": "jarvis",
+    "realtime_model_type": "m-baccari/parakeet-tdt-110m-ct2",
+    "auto_type": false,
+    "enable_realtime": true,
+    "use_main_model_for_realtime": false
+}
