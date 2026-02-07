@@ -13,7 +13,7 @@ Establish the project structure and configure `uv` for automatic dependency and 
 Implement the decoupled logic for hardware detection and `parakeet-stream` orchestration.
 
 - [x] Task: Implement `hardware.py` module for CUDA detection and basic resource reporting. 7139650
-- [ ] Task: Implement `engine.py` module to encapsulate `parakeet-stream` initialization and "Fast" preset configuration.
+- [x] Task: Implement `engine.py` module to encapsulate `parakeet-stream` initialization and "Fast" preset configuration. 1b1dc2c
 - [ ] Task: Implement `audio.py` module to manage microphone streams using `parakeet-stream`'s native interface.
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Core STT Module' (Protocol in workflow.md)
 
