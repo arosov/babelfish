@@ -25,7 +25,7 @@ Implement the core refinement triggers and the contextual merge logic.
 - [x] Task: Implement the "Catch-up" mechanism to process backlogged audio after a Pass 2 compute. d6de467
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Refinement & Alignment' (Protocol in workflow.md)
 
-## Phase 4: UI Styles & E2E Verification
+## Phase 4: UI Styles & E2E Verification [checkpoint: 6d8844a]
 Finalize the visual representation and ensure both modes work flawlessly.
 
 - [x] Task: Update `TerminalDisplay` to support ANSI styles (e.g., dimmed for Ghost, bold for Anchor). 9a41181
