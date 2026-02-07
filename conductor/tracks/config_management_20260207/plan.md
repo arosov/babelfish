@@ -7,8 +7,8 @@ Establish the foundational Pydantic models and the logic for loading, saving, an
 
 - [x] Task: Define Pydantic models for all configuration categories (Hardware, Pipeline, Voice, UI) in `src/babelfish_stt/config.py`. 3f2b4ef
 - [x] Task: Write tests for configuration validation, default values, and serialization. 05c3c69
-- [ ] Task: Implement atomic save/load logic in a new `ConfigManager` class.
-- [ ] Task: Write tests for configuration persistence to `config.json`.
+- [x] Task: Implement atomic save/load logic in a new `ConfigManager` class. 0f65456
+- [x] Task: Write tests for configuration persistence to `config.json`. 0f65456
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Core Configuration Schema & Persistence' (Protocol in workflow.md)
 
 ## Phase 2: WebTransport Configuration API
