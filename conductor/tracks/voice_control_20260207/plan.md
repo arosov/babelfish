@@ -14,10 +14,10 @@ Integrate the `openWakeWord` engine to enable starting transcription via voice.
 ## Phase 2: Stop-Word Logic & State Management
 Implement the text-based stop-word detection and the IDLE/LISTENING state machine.
 
-- [ ] Task: Implement `StopWordDetector` in `src/babelfish_stt/pipeline.py` with strict matching logic.
-- [ ] Task: Write Tests: Verify `StopWordDetector` identifies stop phrases in various transcript strings.
-- [ ] Task: Implement: Develop the `StopWordDetector` logic.
-- [ ] Task: Update `Pipeline` base class and implementations to support an `IDLE` state.
+- [x] Task: Implement `StopWordDetector` in `src/babelfish_stt/pipeline.py` with strict matching logic. cdb29cb
+- [x] Task: Write Tests: Verify `StopWordDetector` identifies stop phrases in various transcript strings. cdb29cb
+- [x] Task: Implement: Develop the `StopWordDetector` logic. cdb29cb
+- [x] Task: Update `Pipeline` base class and implementations to support an `IDLE` state. cdb29cb
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Stop-Word & State' (Protocol in workflow.md)
 
 ## Phase 3: CLI Integration & Orchestration
