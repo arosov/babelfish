@@ -5,7 +5,7 @@ This plan outlines the steps to create a modular, low-latency STT pipeline using
 ## Phase 1: Project Scaffolding & Dependency Management
 Establish the project structure and configure `uv` for automatic dependency and model management.
 
-- [~] Task: Initialize `pyproject.toml` with `uv` to manage dependencies (including `parakeet-stream`).
+- [x] Task: Initialize `pyproject.toml` with `uv` to manage dependencies (including `parakeet-stream`). 71f8466
 - [ ] Task: Create the project directory structure (`babelfish/` package and `babelfish.py` entry point).
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Project Scaffolding' (Protocol in workflow.md)
 
