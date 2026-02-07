@@ -6,6 +6,43 @@ class Pipeline:
     def process_chunk(self, chunk: np.ndarray, now_ms: float):
         raise NotImplementedError
 
+class HybridTrigger:
+    """
+    Triggers a refinement pass based on a timer or a VAD pause.
+    """
+    def __init__(self, interval_ms: int = 2000):
+        self.interval_ms = interval_ms
+        self.last_trigger_time = 0
+        self.is_speaking = False
+        self.speech_start_time = 0
+
+    def start_speech(self, now_ms: float):
+        if not self.is_speaking:
+            self.is_speaking = True
+            self.speech_start_time = now_ms
+            self.last_trigger_time = now_ms
+
+    def should_trigger(self, now_ms: float, is_speaking: bool) -> bool:
+        if not self.is_speaking:
+            return False
+
+        # Trigger on VAD pause
+        if not is_speaking:
+            return True
+
+        # Trigger on interval
+        if now_ms - self.last_trigger_time >= self.interval_ms:
+            return True
+
+        return False
+
+    def reset(self, now_ms: float):
+        self.last_trigger_time = now_ms
+        # We don't reset is_speaking here, as the caller handles that state
+
+    def stop_speech(self):
+        self.is_speaking = False
+
 class SinglePassPipeline(Pipeline):
     def __init__(self, vad, engine, display):
         self.vad = vad
