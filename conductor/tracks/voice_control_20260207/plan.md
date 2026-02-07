@@ -2,7 +2,7 @@
 
 This plan outlines the steps to integrate local wake-word detection and text-based stop-word control into Babelfish.
 
-## Phase 1: Wake-Word Integration (openWakeWord)
+## Phase 1: Wake-Word Integration (openWakeWord) [checkpoint: 3f0fb58]
 Integrate the `openWakeWord` engine to enable starting transcription via voice.
 
 - [x] Task: Install `openWakeWord` and necessary ONNX dependencies. d18665f
