@@ -19,14 +19,25 @@ class BabelfishServer:
         
         # Ensure certs exist
         if not self.server_config.cert_path or not self.server_config.key_path:
-            # Generate default ones if not provided.
-            # WebTransport spec requires max 14 days validity for hash pinning.
-            cert_path, key_path = generate_self_signed_cert(
-                hostname="127.0.0.1", 
-                validity_days=10
-            )
-            self.server_config.cert_path = cert_path
-            self.server_config.key_path = key_path
+            # Check if default files already exist to avoid regenerating on every restart
+            default_cert = "127.0.0.1.crt"
+            default_key = "127.0.0.1.key"
+            
+            import os
+            if os.path.exists(default_cert) and os.path.exists(default_key):
+                logger.info(f"Using existing self-signed certificate: {default_cert}")
+                self.server_config.cert_path = default_cert
+                self.server_config.key_path = default_key
+            else:
+                # Generate default ones if not provided.
+                # WebTransport spec requires max 14 days validity for hash pinning.
+                logger.info("Generating new self-signed certificate...")
+                cert_path, key_path = generate_self_signed_cert(
+                    hostname="127.0.0.1", 
+                    validity_days=10
+                )
+                self.server_config.cert_path = cert_path
+                self.server_config.key_path = key_path
             
         self.app = ServerApp(
             config=ServerConfig(
