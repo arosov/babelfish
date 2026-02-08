@@ -22,7 +22,7 @@ class UIConfig(BaseModel):
 
 class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
-    port: int = 4433
+    port: int = 8123
     cert_path: Optional[str] = None
     key_path: Optional[str] = None
 

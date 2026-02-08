@@ -215,3 +215,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 .llm_kb/working/
+tmp_extraction/
+localhost.crt
+localhost.key

@@ -1,4 +1,15 @@
 import sys
+import os
+
+# --- HOTFIX: Force NeMo/Parakeet extraction to disk ---
+# The default /tmp (tmpfs) is too small (16GB) for unpacking large .nemo models.
+# We redirect temporary files to a local 'tmp_extraction' folder on the physical disk.
+_project_root = os.getcwd()
+_tmp_dir = os.path.join(_project_root, "tmp_extraction")
+os.makedirs(_tmp_dir, exist_ok=True)
+os.environ["TMPDIR"] = _tmp_dir
+# ------------------------------------------------------
+
 import logging
 import numpy as np
 import time
