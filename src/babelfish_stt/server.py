@@ -19,8 +19,12 @@ class BabelfishServer:
         
         # Ensure certs exist
         if not self.server_config.cert_path or not self.server_config.key_path:
-            # Generate default ones if not provided
-            cert_path, key_path = generate_self_signed_cert(hostname="localhost")
+            # Generate default ones if not provided.
+            # WebTransport spec requires max 14 days validity for hash pinning.
+            cert_path, key_path = generate_self_signed_cert(
+                hostname="localhost", 
+                validity_days=10
+            )
             self.server_config.cert_path = cert_path
             self.server_config.key_path = key_path
             
