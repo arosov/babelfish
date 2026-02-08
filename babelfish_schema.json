@@ -1,0 +1,165 @@
+{
+  "$defs": {
+    "HardwareConfig": {
+      "properties": {
+        "device": {
+          "default": "auto",
+          "title": "Device",
+          "type": "string"
+        },
+        "vram_limit_gb": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vram Limit Gb"
+        },
+        "microphone_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Microphone Index"
+        }
+      },
+      "title": "HardwareConfig",
+      "type": "object"
+    },
+    "PipelineConfig": {
+      "properties": {
+        "double_pass": {
+          "default": false,
+          "title": "Double Pass",
+          "type": "boolean"
+        },
+        "ghost_preset": {
+          "default": "fast",
+          "title": "Ghost Preset",
+          "type": "string"
+        },
+        "anchor_preset": {
+          "default": "solid",
+          "title": "Anchor Preset",
+          "type": "string"
+        }
+      },
+      "title": "PipelineConfig",
+      "type": "object"
+    },
+    "ServerConfig": {
+      "properties": {
+        "host": {
+          "default": "127.0.0.1",
+          "title": "Host",
+          "type": "string"
+        },
+        "port": {
+          "default": 4433,
+          "title": "Port",
+          "type": "integer"
+        },
+        "cert_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cert Path"
+        },
+        "key_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key Path"
+        }
+      },
+      "title": "ServerConfig",
+      "type": "object"
+    },
+    "UIConfig": {
+      "properties": {
+        "verbose": {
+          "default": false,
+          "title": "Verbose",
+          "type": "boolean"
+        },
+        "show_timestamps": {
+          "default": true,
+          "title": "Show Timestamps",
+          "type": "boolean"
+        }
+      },
+      "title": "UIConfig",
+      "type": "object"
+    },
+    "VoiceConfig": {
+      "properties": {
+        "wakeword": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wakeword"
+        },
+        "wakeword_sensitivity": {
+          "default": 0.5,
+          "title": "Wakeword Sensitivity",
+          "type": "number"
+        },
+        "stop_words": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stop Words",
+          "type": "array"
+        }
+      },
+      "title": "VoiceConfig",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "hardware": {
+      "$ref": "#/$defs/HardwareConfig"
+    },
+    "pipeline": {
+      "$ref": "#/$defs/PipelineConfig"
+    },
+    "voice": {
+      "$ref": "#/$defs/VoiceConfig"
+    },
+    "ui": {
+      "$ref": "#/$defs/UIConfig"
+    },
+    "server": {
+      "$ref": "#/$defs/ServerConfig"
+    }
+  },
+  "title": "BabelfishConfig",
+  "type": "object"
+}
