@@ -150,6 +150,7 @@ class BabelfishServer:
             # We append a newline delimiter so the client can process messages.
             data = json.dumps(message).encode('utf-8') + b"\n"
             await stream.write_all(data=data, end_stream=False)
+            logger.info(f"Configuration sent to stream {stream.stream_id}")
         except Exception as e:
             logger.error(f"Failed to send config to stream {stream.stream_id}: {e}")
 
