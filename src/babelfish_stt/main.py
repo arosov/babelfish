@@ -32,6 +32,9 @@ logging.basicConfig(
     format='%(asctime)s.%(msecs)03d - %(levelname)s - %(message)s',
     datefmt='%H:%M:%S'
 )
+logging.getLogger("pywebtransport").setLevel(logging.DEBUG)
+logging.getLogger("babelfish_stt.server").setLevel(logging.DEBUG)
+logging.getLogger("aioquic").setLevel(logging.WARNING) # Reduce noise from low-level QUIC
 
 def start_server_thread(config_manager):
     """Starts the WebTransport server in a separate thread/loop."""
