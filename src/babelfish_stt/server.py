@@ -43,6 +43,8 @@ class BabelfishServer:
             config=ServerConfig(
                 certfile=self.server_config.cert_path,
                 keyfile=self.server_config.key_path,
+                connection_idle_timeout=10.0,
+                keep_alive=True,
             )
         )
         
