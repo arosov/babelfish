@@ -1,8 +1,10 @@
 import numpy as np
 import time
 from typing import List
+from babelfish_stt.reconfigurable import Reconfigurable
+from babelfish_stt.config import VoiceConfig, UIConfig, PipelineConfig
 
-class Pipeline:
+class Pipeline(Reconfigurable):
     def __init__(self):
         self.is_idle = False
         self.stop_detector = None
@@ -15,6 +17,10 @@ class Pipeline:
         Returns True if a state transition occurred (e.g., stop word detected).
         """
         raise NotImplementedError
+    
+    def reconfigure(self, config: PipelineConfig) -> None:
+        """Pipeline base reconfiguration (e.g., logic shifts if needed)"""
+        pass
 
 class HybridTrigger:
     """
@@ -67,12 +73,16 @@ class AlignmentManager:
             return ""
         return " ".join(words[-self.context_words:])
 
-class StopWordDetector:
+class StopWordDetector(Reconfigurable):
     """
     Detects stop phrases in transcript strings.
     """
     def __init__(self, stop_words: List[str]):
         self.stop_words = [w.lower().strip() for w in stop_words]
+
+    def reconfigure(self, config: VoiceConfig) -> None:
+        """Update stop words list."""
+        self.stop_words = [w.lower().strip() for w in config.stop_words]
 
     def detect(self, text: str) -> bool:
         """
@@ -181,6 +191,10 @@ class DoublePassPipeline(Pipeline):
         self.last_speech_time = 0
         self.silence_threshold_ms = 700
         
+    def reconfigure(self, config: PipelineConfig) -> None:
+        """Apply pipeline settings."""
+        self.trigger.interval_ms = config.anchor_trigger_interval_ms
+
     def process_chunk(self, chunk: np.ndarray, now_ms: float) -> bool:
         if self.is_idle:
             return False

@@ -10,6 +10,7 @@ class PipelineConfig(BaseModel):
     double_pass: bool = False
     ghost_preset: str = "fast"
     anchor_preset: str = "solid"
+    anchor_trigger_interval_ms: int = 2000
 
 class VoiceConfig(BaseModel):
     wakeword: Optional[str] = None

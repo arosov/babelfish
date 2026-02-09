@@ -1,8 +1,10 @@
 import torch
 import numpy as np
 from typing import Optional
+from babelfish_stt.reconfigurable import Reconfigurable
+from babelfish_stt.config import VoiceConfig
 
-class SileroVAD:
+class SileroVAD(Reconfigurable):
     """
     Lightweight wrapper for Silero VAD v5.
     """
@@ -28,6 +30,10 @@ class SileroVAD:
             self.device = 'cpu'
             
         self.reset_states()
+
+    def reconfigure(self, config: VoiceConfig) -> None:
+        """Apply new configuration to VAD."""
+        self.threshold = config.wakeword_sensitivity # Mapping sensitivity to threshold for now or similar
 
     def reset_states(self):
         """Resets the VAD model state."""

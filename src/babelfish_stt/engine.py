@@ -2,8 +2,10 @@ import torch
 import numpy as np
 from parakeet_stream import Parakeet
 from typing import Any
+from babelfish_stt.reconfigurable import Reconfigurable
+from babelfish_stt.config import PipelineConfig
 
-class STTEngine:
+class STTEngine(Reconfigurable):
     """
     Stable STT engine that transcribes complete audio buffers.
     """
@@ -21,6 +23,12 @@ class STTEngine:
             device=device,
             config=self.preset
         )
+
+    def reconfigure(self, config: PipelineConfig) -> None:
+        """Apply engine-specific settings."""
+        # For DoublePassPipeline, we switch presets on the fly, 
+        # but we can update defaults here if needed.
+        pass
 
     def set_quality(self, level: str):
         """

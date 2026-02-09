@@ -34,41 +34,83 @@ logging.basicConfig(
 )
 logging.getLogger("pywebtransport").setLevel(logging.DEBUG)
 logging.getLogger("babelfish_stt.server").setLevel(logging.DEBUG)
-logging.getLogger("aioquic").setLevel(logging.WARNING) # Reduce noise from low-level QUIC
-
-def start_server_thread(config_manager):
-    """Starts the WebTransport server in a separate thread/loop."""
-    def run():
-        async def _serve():
-            server = BabelfishServer(config_manager)
-            await server.start()
-        
-        # New loop for this thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_serve())
-        except Exception as e:
-            logging.error(f"Server thread failed: {e}")
-        finally:
-            loop.close()
-
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
-    return t
-
-def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str = None, force_cpu: bool = False):
+def run_stt_loop(streamer, pipeline, ww_engine, wakeword, stopword, shutdown_event):
     """
-    Main loop for Babelfish STT, delegating to pipeline handlers.
+    Blocking STT loop to be run in a separate thread.
     """
+    print("\n" + "-"*50)
+    print("HARDWARE & CONFIGURATION REPORT")
+    # ... (Hardware report moved here or kept in main, passing necessary info)
+    # We'll just print status here
+    print("🎤 STT Loop Started")
+    print("-"*50 + "\n")
+    
+    if ww_engine:
+        pipeline.set_idle(True)
+        print(f"💤 IDLE: Waiting for wake-word '{wakeword}'...")
+    else:
+        print("🎤 Listening... (Press Ctrl+C to stop)\n")
+    
+    last_score_time = time.time()
+    max_score_recent = 0.0
+    cooldown_until = 0
+    
+    try:
+        # Loop over 32ms chunks (512 samples)
+        for chunk in streamer.stream(chunk_size=512):
+            if shutdown_event.is_set():
+                break
+                
+            now = time.time()
+            now_ms = now * 1000
+            
+            if now < cooldown_until:
+                continue
+
+            if pipeline.is_idle and ww_engine:
+                prediction = ww_engine.process_chunk(chunk)
+                score = prediction.get(wakeword, 0)
+                
+                if score > max_score_recent:
+                    max_score_recent = score
+
+                if now - last_score_time > 1.0:
+                    sys.stdout.write(f"\r   [Max confidence in last 1s: {max_score_recent:.2f}]   ")
+                    sys.stdout.flush()
+                    max_score_recent = 0.0
+                    last_score_time = now
+
+                if score > 0.5:
+                    logging.info(f"Wake-word '{wakeword}' detected with score {score:.2f}")
+                    print(f"\n\n✨ WAKE-WORD DETECTED: '{wakeword}' (score: {score:.2f})")
+                    print("🎤 Listening... (Press Ctrl+C to stop)\n")
+                    pipeline.set_idle(False)
+            else:
+                transitioned = pipeline.process_chunk(chunk, now_ms)
+                if transitioned and pipeline.is_idle:
+                    logging.info(f"Stop-word '{stopword}' detected, transitioning to IDLE")
+                    print(f"\n🛑 STOP-WORD DETECTED: '{stopword}'")
+                    
+                    if ww_engine:
+                        ww_engine.reset()
+                        streamer.drain()
+                        cooldown_until = now + 1.5
+                        print(f"💤 IDLE: Waiting for wake-word '{wakeword}'... (1.5s cooldown)")
+                    else:
+                        print("🛑 Stopped.")
+                        
+    except Exception as e:
+        logging.error(f"Error in STT loop: {e}")
+    finally:
+        print("✅ STT Loop Shutdown.")
+
+async def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str = None, force_cpu: bool = False):
     print("\n" + "="*50)
     print("🚀 BABELFISH STT INITIALIZING")
     
-    # 0. Load Configuration & Start Server
+    # 0. Load Configuration
     config_manager = ConfigManager()
-    server_thread = start_server_thread(config_manager)
-    print(f"   SERVER: WebTransport running on https://{config_manager.config.server.host}:{config_manager.config.server.port}/config")
-
+    
     if force_cpu:
         print("   MODE: Force CPU Execution")
     if double_pass:
@@ -82,38 +124,23 @@ def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str
         print(f"   STOP-WORD: {stopword}")
     print("="*50)
     
-    # 1. Hardware Detection
+    # 1. Hardware & Engine Init (Blocking, but done once before loop)
+    # We do this in main thread for safety, then pass objects to worker thread
     hw_info = get_gpu_info()
     device = "cpu" if force_cpu else ("cuda" if hw_info['cuda_available'] else "cpu")
     best_mic_idx = find_best_microphone()
     
-    # 2. Initialize VAD (Fast)
     vad = SileroVAD()
-    
-    # 3. Initialize STT Engine (Steady)
     engine = STTEngine(device=device)
     
-    # 4. Initialize Wake-Word Engine if needed
     ww_engine = None
     if wakeword:
         ww_engine = WakeWordEngine(model_name=wakeword)
     
-    # 5. Initialize Audio & Display (Using detected best mic)
     streamer = AudioStreamer(device_index=best_mic_idx)
     display = TerminalDisplay()
     
-    # 6. Report
-    print("\n" + "-"*50)
-    print("HARDWARE & CONFIGURATION REPORT")
-    print(f"  Acceleration: {'GPU' if hw_info['cuda_available'] and not force_cpu else 'CPU'} ({device})")
-    print(f"  STT Engine:   {engine.model_name}")
-    print(f"  STT Preset:   {engine.preset}")
-    print(f"  Audio Input:  [{streamer.device_index}] {streamer.mic_name}")
-    if streamer.needs_resampling:
-        print(f"  Resampling:   {streamer.native_rate}Hz -> {streamer.target_rate}Hz (soxr)")
-    print("-"*50 + "\n")
-    
-    # 7. Initialize Pipeline
+    # Pipeline
     if double_pass:
         pipeline = DoublePassPipeline(vad, engine, display)
     else:
@@ -121,74 +148,46 @@ def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str
     
     if stopword:
         pipeline.stop_detector = StopWordDetector(stop_words=[stopword])
+
+    # Register components for hot-reloading
+    config_manager.register(vad)
+    config_manager.register(engine)
+    config_manager.register(pipeline)
+    if pipeline.stop_detector:
+        config_manager.register(pipeline.stop_detector)
+
+    # 2. Start Server (Async)
+    server = BabelfishServer(config_manager)
+    server.pipeline = pipeline
+    config_manager.register(server)
     
-    if ww_engine:
-        pipeline.set_idle(True)
-        print(f"💤 IDLE: Waiting for wake-word '{wakeword}'...")
-        last_score_time = time.time()
-        max_score_recent = 0.0
-    else:
-        print("🎤 Listening... (Press Ctrl+C to stop)\n")
+    print(f"   SERVER: WebTransport running on https://{config_manager.config.server.host}:{config_manager.config.server.port}/config")
     
-    cooldown_until = 0
+    # 3. Start STT Loop in Background Thread
+    shutdown_event = threading.Event()
+    loop = asyncio.get_running_loop()
+    
+    # We run the STT loop in a separate thread executor
+    stt_task = loop.run_in_executor(
+        None, 
+        run_stt_loop, 
+        streamer, pipeline, ww_engine, wakeword, stopword, shutdown_event
+    )
     
     try:
-        # Loop over 32ms chunks (512 samples)
-        for chunk in streamer.stream(chunk_size=512):
-            now = time.time()
-            now_ms = now * 1000
-            
-            if now < cooldown_until:
-                # In cooldown, skip processing to avoid echo/loop triggers
-                continue
-
-            if pipeline.is_idle and ww_engine:
-                # In IDLE mode, only run Wake-Word detection
-                prediction = ww_engine.process_chunk(chunk)
-                score = prediction.get(wakeword, 0)
-                
-                if score > max_score_recent:
-                    max_score_recent = score
-
-                # Every 1 second, print the max score seen to give feedback
-                if now - last_score_time > 1.0:
-                    sys.stdout.write(f"\r   [Max confidence in last 1s: {max_score_recent:.2f}]   ")
-                    sys.stdout.flush()
-                    max_score_recent = 0.0
-                    last_score_time = now
-
-                if score > 0.5:
-                    logging.info(f"Wake-word '{wakeword}' detected with score {score:.2f}")
-                    print(f"\n\n✨ WAKE-WORD DETECTED: '{wakeword}' (score: {score:.2f})")
-                    print("🎤 Listening... (Press Ctrl+C to stop)\n")
-                    pipeline.set_idle(False)
-            else:
-                # In LISTENING mode, run STT pipeline
-                transitioned = pipeline.process_chunk(chunk, now_ms)
-                if transitioned and pipeline.is_idle:
-                    logging.info(f"Stop-word '{stopword}' detected, transitioning to IDLE")
-                    print(f"\n🛑 STOP-WORD DETECTED: '{stopword}'")
-                    
-                    if ww_engine:
-                        ww_engine.reset()
-                        # Draining the streamer helps clear any "stop word" audio 
-                        # that might still be in the resampler/queue.
-                        streamer.drain()
-                        # Set a 1.5s cooldown to prevent immediate re-activation
-                        cooldown_until = now + 1.5
-                        print(f"💤 IDLE: Waiting for wake-word '{wakeword}'... (1.5s cooldown)")
-                    else:
-                        print("🛑 Stopped.")
-                        
-    except KeyboardInterrupt:
+        # Run server concurrently
+        await server.start()
+    except asyncio.CancelledError:
         print("\n\n🛑 Stopping Babelfish...")
     finally:
+        shutdown_event.set()
         streamer.stop()
+        # Wait for STT thread to finish
+        await stt_task 
         print("✅ Shutdown complete.")
 
 def main():
     import openwakeword
-    # In 0.6.0, the dictionary is upper-case MODELS in the root module
     available_ww = list(openwakeword.MODELS.keys())
     
     parser = argparse.ArgumentParser(description="Babelfish STT - High-performance streaming transcription")
@@ -207,12 +206,12 @@ def main():
         print("\nUsage example: uv run babelfish --wakeword hey_jarvis\n")
         sys.exit(0)
     
-    run_babelfish(
-        double_pass=args.double_pass,
-        wakeword=args.wakeword,
-        stopword=args.stopword,
-        force_cpu=args.cpu
-    )
-
-if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(run_babelfish(
+            double_pass=args.double_pass,
+            wakeword=args.wakeword,
+            stopword=args.stopword,
+            force_cpu=args.cpu
+        ))
+    except KeyboardInterrupt:
+        pass # Handled in run_babelfish or implicit

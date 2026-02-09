@@ -1,22 +1,24 @@
 import asyncio
 import json
 import logging
-from typing import Set
+from typing import Set, Any, Dict
 from pywebtransport import ServerApp, ServerConfig, WebTransportSession, WebTransportStream
 from pywebtransport.events import Event
 from pywebtransport.types import EventType
 from pywebtransport.utils import generate_self_signed_cert
 from babelfish_stt.config_manager import ConfigManager
+from babelfish_stt.reconfigurable import Reconfigurable
 
 logger = logging.getLogger(__name__)
 
-class BabelfishServer:
+class BabelfishServer(Reconfigurable):
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
         self.server_config = config_manager.config.server
         self.sessions: Set[WebTransportSession] = set()
         self.active_session_ids: Set[str] = set() # Track handled sessions to avoid duplicates
         self.control_streams: dict[str, WebTransportStream] = {} # Map session_id to control stream
+        self.pipeline = None # Will be set by main
         
         # Ensure certs exist
         if not self.server_config.cert_path or not self.server_config.key_path:
@@ -54,6 +56,15 @@ class BabelfishServer:
         @self.app.route(path="/config")
         async def config_handler(session: WebTransportSession) -> None:
             await self.handle_session(session)
+
+    def reconfigure(self, config: Any) -> None:
+        """
+        Handle server-level reconfiguration. 
+        Usually this just updates internal state or triggers broadcasts.
+        """
+        # Server config (host/port) usually requires restart, 
+        # but we can update other runtime flags here if any.
+        pass
 
     async def handle_session(self, session: WebTransportSession):
         sid = session.session_id

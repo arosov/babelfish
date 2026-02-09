@@ -3,7 +3,9 @@ import json
 import logging
 import tempfile
 from pathlib import Path
-from babelfish_stt.config import BabelfishConfig
+from typing import List, Dict, Any
+from babelfish_stt.config import BabelfishConfig, HardwareConfig, PipelineConfig, VoiceConfig, UIConfig, ServerConfig
+from babelfish_stt.reconfigurable import Reconfigurable
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +13,51 @@ class ConfigManager:
     def __init__(self, config_path: str = "config.json"):
         self.config_path = Path(config_path)
         self.config = self.load()
+        self._components: List[Reconfigurable] = []
+
+    def register(self, component: Reconfigurable):
+        """Register a component to receive configuration updates."""
+        if component not in self._components:
+            self._components.append(component)
+            # Immediately trigger a reconfigure with current config
+            self._propagate_to_component(component)
+
+    def _propagate_to_component(self, component: Reconfigurable):
+        """Propagate relevant sub-config to a specific component."""
+        try:
+            # We determine which sub-config to send based on common patterns 
+            # or we could let components specify. For now, we try to match.
+            # Most components care about a specific section.
+            
+            # This is a bit heuristic, but effective for our current scale
+            # We could also use type hints of the reconfigure method if needed.
+            
+            # Map of component types/instances to sections
+            from babelfish_stt.vad import SileroVAD
+            from babelfish_stt.pipeline import Pipeline, StopWordDetector
+            from babelfish_stt.engine import STTEngine
+            from babelfish_stt.server import BabelfishServer
+
+            if isinstance(component, SileroVAD):
+                component.reconfigure(self.config.voice)
+            elif isinstance(component, StopWordDetector):
+                component.reconfigure(self.config.voice)
+            elif isinstance(component, Pipeline):
+                component.reconfigure(self.config.pipeline)
+            elif isinstance(component, STTEngine):
+                component.reconfigure(self.config.pipeline)
+            elif isinstance(component, BabelfishServer):
+                component.reconfigure(self.config.server)
+            else:
+                # Fallback: send full config if we don't know the specifics
+                component.reconfigure(self.config)
+        except Exception as e:
+            logger.error(f"Failed to propagate config to {component}: {e}")
+
+    def _propagate_all(self):
+        """Propagate current config to all registered components."""
+        for component in self._components:
+            self._propagate_to_component(component)
 
     def load(self) -> BabelfishConfig:
         if not self.config_path.exists():
@@ -63,6 +110,7 @@ class ConfigManager:
         # If successful, apply and save
         self.config = new_config
         self.save()
+        self._propagate_all()
         logger.info("Configuration updated and saved.")
 
     @staticmethod
