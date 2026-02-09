@@ -1,13 +1,13 @@
 import asyncio
 import json
 import logging
-from typing import Set, Dict, Optional
+from typing import Set, Dict, Optional, Any
 
 from aioquic.asyncio import QuicConnectionProtocol, serve
 from aioquic.h3.connection import H3Connection
 from aioquic.h3.events import HeadersReceived, WebTransportStreamDataReceived, H3Event
 from aioquic.quic.configuration import QuicConfiguration
-from aioquic.quic.events import QuicEvent
+from aioquic.quic.events import QuicEvent, ConnectionTerminated
 
 from babelfish_stt.config_manager import ConfigManager
 from babelfish_stt.reconfigurable import Reconfigurable
@@ -24,6 +24,10 @@ class BabelfishH3Protocol(QuicConnectionProtocol):
     def quic_event_received(self, event: QuicEvent) -> None:
         if self._h3 is None:
             self._h3 = H3Connection(self._quic, enable_webtransport=True)
+
+        if isinstance(event, ConnectionTerminated):
+            if self.babelfish_server:
+                self.babelfish_server.on_session_closed(self)
 
         for h3_event in self._h3.handle_event(event):
             self._handle_h3_event(h3_event)
@@ -50,7 +54,7 @@ class BabelfishH3Protocol(QuicConnectionProtocol):
 
         elif isinstance(event, WebTransportStreamDataReceived):
             if self.babelfish_server:
-                self.babelfish_server.on_data_received(event.stream_id, event.data)
+                self.babelfish_server.on_data_received(self, event.stream_id, event.data)
 
     def send_data(self, stream_id: int, data: bytes) -> None:
         if self._h3:
@@ -62,8 +66,8 @@ class BabelfishServer(Reconfigurable):
         self.config_manager = config_manager
         self.initial_config = config_manager.config.model_copy(deep=True)
         self.server_config = config_manager.config.server
-        self.sessions: Set[BabelfishH3Protocol] = set()
-        self.control_streams: Dict[int, BabelfishH3Protocol] = {}  # Map stream_id to protocol
+        self.sessions: Dict[BabelfishH3Protocol, int] = {}  # Map protocol to session_id
+        self.active_streams: Dict[BabelfishH3Protocol, Set[int]] = {} # Map protocol to set of stream_ids
         self.pipeline = None
         self.restart_required = False
 
@@ -101,41 +105,51 @@ class BabelfishServer(Reconfigurable):
                 self.restart_required = False
 
     def on_session_established(self, protocol: BabelfishH3Protocol, session_id: int) -> None:
-        self.sessions.add(protocol)
+        self.sessions[protocol] = session_id
+        self.active_streams[protocol] = set()
         logger.info(f"Session established: {session_id}")
 
-    def on_data_received(self, stream_id: int, data: bytes) -> None:
-        # Assuming all data on bidirectional streams are JSON commands for now
-        # In a real impl, we'd buffer until newline
+    def on_session_closed(self, protocol: BabelfishH3Protocol) -> None:
+        if protocol in self.sessions:
+            del self.sessions[protocol]
+        if protocol in self.active_streams:
+            del self.active_streams[protocol]
+        logger.info("Session closed")
+
+    def on_data_received(self, protocol: BabelfishH3Protocol, stream_id: int, data: bytes) -> None:
         logger.debug(f"Data received on stream {stream_id}: {data}")
-        asyncio.create_task(self.process_command(data, stream_id))
+        # Track this as a potential control stream if it's the first time we see it
+        if protocol in self.active_streams:
+            if stream_id not in self.active_streams[protocol]:
+                self.active_streams[protocol].add(stream_id)
+                # Send initial config on new stream discovery
+                asyncio.create_task(self.send_config_to_stream(protocol, stream_id))
 
-    async def process_command(self, data: bytes, stream_id: int):
-        # Find which protocol instance this stream belongs to
-        # For simplicity, we'll just use the first session for now if we don't have a map
-        # Real impl should map stream_id to session/protocol
-        protocol = list(self.sessions)[0] if self.sessions else None
-        if not protocol:
-            return
+        asyncio.create_task(self.process_command(protocol, stream_id, data))
 
+    async def process_command(self, protocol: BabelfishH3Protocol, stream_id: int, data: bytes):
         try:
-            # Simple newline-delimited handling logic can be added here or in the protocol
-            # For now, let's assume it's one full JSON message for testing
-            message = json.loads(data.strip())
-            msg_type = message.get("type")
-            
-            if msg_type == "update_config":
-                changes = message.get("data", {})
-                logger.info(f"Received config update on stream {stream_id}")
-                self.config_manager.update(changes)
-                await self.broadcast_config()
-            else:
-                logger.warning(f"Unknown message type: {msg_type}")
+            # Simple newline-delimited handling logic
+            for line in data.split(b"\n"):
+                if not line.strip():
+                    continue
+                message = json.loads(line.decode("utf-8"))
+                msg_type = message.get("type")
+                
+                if msg_type == "update_config":
+                    changes = message.get("data", {})
+                    logger.info(f"Received config update on stream {stream_id}")
+                    self.config_manager.update(changes)
+                    await self.broadcast_config()
+                else:
+                    logger.warning(f"Unknown message type: {msg_type}")
                 
         except json.JSONDecodeError:
             logger.error("Invalid JSON received")
+        except Exception as e:
+            logger.error(f"Error processing command: {e}")
 
-    async def broadcast_config(self) -> None:
+    async def send_config_to_stream(self, protocol: BabelfishH3Protocol, stream_id: int):
         config_data = self.config_manager.config.model_dump()
         message = {
             "type": "config",
@@ -143,12 +157,12 @@ class BabelfishServer(Reconfigurable):
             "restart_required": self.restart_required
         }
         data = (json.dumps(message) + "\n").encode("utf-8")
-        
-        for protocol in self.sessions:
-            # In WebTransport, we need to know WHICH stream to send it on.
-            # Usually the client opens a stream and we reply.
-            # For now, just a placeholder as we need to track active streams.
-            pass
+        protocol.send_data(stream_id, data)
+
+    async def broadcast_config(self) -> None:
+        for protocol, streams in self.active_streams.items():
+            for stream_id in streams:
+                await self.send_config_to_stream(protocol, stream_id)
 
     async def start(self) -> None:
         logger.info(f"Starting aioquic server on {self.server_config.host}:{self.server_config.port}")
