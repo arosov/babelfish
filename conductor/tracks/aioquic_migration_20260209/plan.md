@@ -28,12 +28,12 @@ Migrate Babelfish server from `pywebtransport` to a raw `aioquic` implementation
     - [x] Implement a method in the protocol to send data back to the client over a specific stream.
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Core Protocol Implementation' (Protocol in workflow.md) 59b0adc
 
-## Phase 3: Server Integration and Verification
-- [ ] Task: Refactor `BabelfishServer.start` to use `aioquic.asyncio.serve`.
-    - [ ] Configure `QuicConfiguration` with the parameters specified in the migration guide (`alpn_protocols=["h3"]`, high flow control limits).
-    - [ ] Replace the `pywebtransport` server initialization with `serve(...)`.
-    - [ ] Ensure the existing `BabelfishServer` logic for `/config` is hooked into the new protocol.
-- [ ] Task: End-to-End Verification.
-    - [ ] Run the server and verify it accepts connections on the configured port.
-    - [ ] Use a test client (or `kwtransport` if available) to verify the full handshake and config exchange.
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Server Integration and Verification' (Protocol in workflow.md)
+## Phase 3: Server Integration and Verification [checkpoint: cea8992]
+- [x] Task: Refactor `BabelfishServer.start` to use `aioquic.asyncio.serve`. e22be5f
+    - [x] Configure `QuicConfiguration` with the parameters specified in the migration guide (`alpn_protocols=["h3"]`, high flow control limits).
+    - [x] Replace the `pywebtransport` server initialization with `serve(...)`.
+    - [x] Ensure the existing `BabelfishServer` logic for `/config` is hooked into the new protocol.
+- [x] Task: End-to-End Verification. 12a5865
+    - [x] Run the server and verify it accepts connections on the configured port.
+    - [x] Use a test client (or `kwtransport` if available) to verify the full handshake and config exchange.
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Server Integration and Verification' (Protocol in workflow.md) cea8992
