@@ -224,6 +224,7 @@ async def run_babelfish(
     config_manager.register(vad)
     config_manager.register(engine)
     config_manager.register(pipeline)
+    config_manager.register(streamer)
     if pipeline.stop_detector:
         config_manager.register(pipeline.stop_detector)
 

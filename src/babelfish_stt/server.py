@@ -13,6 +13,7 @@ from aioquic.buffer import encode_uint_var
 
 from babelfish_stt.config_manager import ConfigManager
 from babelfish_stt.reconfigurable import Reconfigurable
+from babelfish_stt.hardware import list_microphones
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ class BabelfishServer(Reconfigurable):
         self.restart_required = False
         self._loop = None
         self.last_bootstrap_message: Optional[dict] = None
+        self.mic_test_enabled = False  # Persisted state for race condition fix
 
         self.quic_config = QuicConfiguration(
             is_client=False,
@@ -108,6 +110,8 @@ class BabelfishServer(Reconfigurable):
     def set_pipeline(self, pipeline):
         self.pipeline = pipeline
         self.pipeline.on_state_change = self._on_pipeline_state_change
+        # Apply persisted mic test state if it was set during bootstrap
+        self.pipeline.set_test_mode(self.mic_test_enabled)
 
     def _on_pipeline_state_change(self, is_speaking: bool):
         if self._loop and self._loop.is_running():
@@ -149,11 +153,9 @@ class BabelfishServer(Reconfigurable):
         from babelfish_stt.config import BabelfishConfig
 
         if isinstance(config, BabelfishConfig):
-            hw_changed = (
-                config.hardware.device != self.initial_config.hardware.device
-                or config.hardware.microphone_index
-                != self.initial_config.hardware.microphone_index
-            )
+            # Note: microphone_index changes are handled dynamically by AudioStreamer
+            # and don't require a full restart anymore
+            hw_changed = config.hardware.device != self.initial_config.hardware.device
             server_changed = (
                 config.server.host != self.initial_config.server.host
                 or config.server.port != self.initial_config.server.port
@@ -205,6 +207,17 @@ class BabelfishServer(Reconfigurable):
 
         self.buffers[key] += data
 
+        # Process complete lines from buffer
+        buffer = self.buffers[key]
+        while b"\n" in buffer:
+            line, _, remaining = buffer.partition(b"\n")
+            if line.strip():  # Only process non-empty lines
+                asyncio.create_task(
+                    self.process_json_command(protocol, stream_id, line)
+                )
+            buffer = remaining
+        self.buffers[key] = buffer
+
     async def send_initial_state(self, protocol: BabelfishH3Protocol, stream_id: int):
         # 1. Send current bootstrap status if we are still bootstrapping
         if self.last_bootstrap_message:
@@ -215,7 +228,7 @@ class BabelfishServer(Reconfigurable):
         # 2. Send full config
         await self.send_config_to_stream(protocol, stream_id)
 
-    async def process_command(
+    async def process_json_command(
         self, protocol: BabelfishH3Protocol, stream_id: int, line: bytes
     ):
         if not line.strip():
@@ -230,6 +243,26 @@ class BabelfishServer(Reconfigurable):
                 logger.info(f"Received config update on stream {stream_id}")
                 self.config_manager.update(changes)
                 await self.broadcast_config()
+            elif msg_type == "list_microphones":
+                # Return list of available microphones
+                logger.info(f"Received list_microphones request on stream {stream_id}")
+                mics = list_microphones()
+                response = {"type": "microphones_list", "data": mics}
+                data = (json.dumps(response) + "\n").encode("utf-8")
+                protocol.send_data(stream_id, data)
+            elif msg_type == "set_mic_test":
+                # Toggle microphone test mode
+                enabled = message.get("enabled", False)
+                logger.info(
+                    f"Received set_mic_test request: enabled={enabled} on stream {stream_id}"
+                )
+                # Persist state to handle race condition during bootstrap
+                self.mic_test_enabled = enabled
+                if self.pipeline:
+                    self.pipeline.set_test_mode(enabled)
+                response = {"type": "mic_test_status", "enabled": enabled}
+                data = (json.dumps(response) + "\n").encode("utf-8")
+                protocol.send_data(stream_id, data)
             elif msg_type == "hello":
                 # Client handshake - ensures stream discovery and config push
                 logger.debug(f"Received HELLO on stream {stream_id}")

@@ -10,9 +10,14 @@ class Pipeline(Reconfigurable):
         self.is_idle = False
         self.stop_detector = None
         self.on_state_change = None  # Callback(is_speaking: bool)
+        self.test_mode = False  # When True, run VAD only and drop audio
 
     def set_idle(self, idle: bool):
         self.is_idle = idle
+
+    def set_test_mode(self, enabled: bool):
+        """Enable/disable microphone test mode. When enabled, VAD runs but audio is dropped."""
+        self.test_mode = enabled
 
     def _notify_state_change(self, is_speaking: bool):
         if self.on_state_change:
@@ -138,7 +143,25 @@ class SinglePassPipeline(Pipeline):
         if self.is_idle:
             return False
 
-        if self.vad.is_speech(chunk):
+        is_speech = self.vad.is_speech(chunk)
+
+        # Handle test mode: run VAD but don't accumulate audio or transcribe
+        if self.test_mode:
+            if is_speech:
+                if not self.is_speaking:
+                    self.is_speaking = True
+                    self._notify_state_change(True)
+                self.last_speech_time = now_ms
+            else:
+                # Silence detected in test mode
+                if self.is_speaking:
+                    if now_ms - self.last_speech_time > self.silence_threshold_ms:
+                        self.is_speaking = False
+                        self._notify_state_change(False)
+            return False
+
+        # Normal mode: accumulate audio and transcribe
+        if is_speech:
             if not self.is_speaking:
                 self.is_speaking = True
                 self._notify_state_change(True)
@@ -218,6 +241,23 @@ class DoublePassPipeline(Pipeline):
             return False
 
         is_speech = self.vad.is_speech(chunk)
+
+        # Handle test mode: run VAD but don't accumulate audio or transcribe
+        if self.test_mode:
+            if is_speech:
+                if not self.is_speaking:
+                    self.is_speaking = True
+                    self._notify_state_change(True)
+                self.last_speech_time = now_ms
+            else:
+                # Silence detected in test mode
+                if self.is_speaking:
+                    if now_ms - self.last_speech_time > self.silence_threshold_ms:
+                        self.is_speaking = False
+                        self._notify_state_change(False)
+            return False
+
+        # Normal mode: accumulate audio and transcribe
         self.history.append(chunk)
 
         if is_speech:
