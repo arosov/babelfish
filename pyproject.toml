@@ -22,7 +22,6 @@ dependencies = [
     "openwakeword",
     "pydantic>=2.12.5",
     "aiohttp>=3.13.3",
-    "pywebtransport==0.12.1",
 ]
 
 [[tool.uv.index]]

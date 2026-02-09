@@ -32,7 +32,6 @@ logging.basicConfig(
     format='%(asctime)s.%(msecs)03d - %(levelname)s - %(message)s',
     datefmt='%H:%M:%S'
 )
-logging.getLogger("pywebtransport").setLevel(logging.DEBUG)
 logging.getLogger("babelfish_stt.server").setLevel(logging.DEBUG)
 def run_stt_loop(streamer, pipeline, ww_engine, wakeword, stopword, shutdown_event):
     """
