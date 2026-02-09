@@ -12,21 +12,21 @@ Migrate Babelfish server from `pywebtransport` to a raw `aioquic` implementation
     - [x] Run `uv sync` or equivalent to update the environment.
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Environment Cleanup and Preparation' (Protocol in workflow.md) f2f0a22
 
-## Phase 2: Core Protocol Implementation
-- [ ] Task: Create `BabelfishH3Protocol` in `src/babelfish_stt/server.py`.
-    - [ ] Write tests for the protocol wrapper (mocking `aioquic` events).
-    - [ ] Implement `BabelfishH3Protocol` inheriting from `QuicConnectionProtocol`.
-    - [ ] Initialize `H3Connection` within the protocol.
-    - [ ] Implement `quic_event_received` to route events to the H3 state machine.
-- [ ] Task: Implement Extended CONNECT Handshake.
-    - [ ] Write tests for the `HeadersReceived` handling logic.
-    - [ ] Handle `HeadersReceived` in the protocol, checking for `:protocol: webtransport`.
-    - [ ] Send `200 OK` response headers with the required `sec-webtransport-http3-draft` header.
-- [ ] Task: Implement Bidirectional Stream Handling.
-    - [ ] Write tests for data exchange over bidirectional streams.
-    - [ ] Handle `WebTransportStreamFrameReceived` and route data to `BabelfishServer`.
-    - [ ] Implement a method in the protocol to send data back to the client over a specific stream.
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Core Protocol Implementation' (Protocol in workflow.md)
+## Phase 2: Core Protocol Implementation [checkpoint: 59b0adc]
+- [x] Task: Create `BabelfishH3Protocol` in `src/babelfish_stt/server.py`. b4046a1
+    - [x] Write tests for the protocol wrapper (mocking `aioquic` events).
+    - [x] Implement `BabelfishH3Protocol` inheriting from `QuicConnectionProtocol`.
+    - [x] Initialize `H3Connection` within the protocol.
+    - [x] Implement `quic_event_received` to route events to the H3 state machine.
+- [x] Task: Implement Extended CONNECT Handshake. b4046a1
+    - [x] Write tests for the `HeadersReceived` handling logic.
+    - [x] Handle `HeadersReceived` in the protocol, checking for `:protocol: webtransport`.
+    - [x] Send `200 OK` response headers with the required `sec-webtransport-http3-draft` header.
+- [x] Task: Implement Bidirectional Stream Handling. b4046a1
+    - [x] Write tests for data exchange over bidirectional streams.
+    - [x] Handle `WebTransportStreamDataReceived` and route data to `BabelfishServer`.
+    - [x] Implement a method in the protocol to send data back to the client over a specific stream.
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Core Protocol Implementation' (Protocol in workflow.md) 59b0adc
 
 ## Phase 3: Server Integration and Verification
 - [ ] Task: Refactor `BabelfishServer.start` to use `aioquic.asyncio.serve`.
