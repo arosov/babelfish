@@ -210,6 +210,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
+    { name = "aioquic" },
     { name = "cuda-python" },
     { name = "nemo-toolkit", extra = ["asr"] },
     { name = "numpy" },
@@ -219,7 +220,6 @@ dependencies = [
     { name = "parakeet-stream", extra = ["microphone"] },
     { name = "pyarrow" },
     { name = "pydantic" },
-    { name = "pywebtransport" },
     { name = "tensorflow" },
     { name = "torch" },
     { name = "torchaudio" },
@@ -235,6 +235,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
+    { name = "aioquic", specifier = ">=1.2.0" },
     { name = "cuda-python", specifier = ">=12.3" },
     { name = "nemo-toolkit", extras = ["asr"], specifier = ">=2.6.2" },
     { name = "numpy", specifier = "<2" },
@@ -244,7 +245,6 @@ requires-dist = [
     { name = "parakeet-stream", extras = ["microphone"] },
     { name = "pyarrow", specifier = "<19.0.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
-    { name = "pywebtransport", specifier = "==0.12.1" },
     { name = "tensorflow" },
     { name = "torch", specifier = ">=2.6.0", index = "https://download.pytorch.org/whl/cu124" },
     { name = "torchaudio", specifier = ">=2.6.0", index = "https://download.pytorch.org/whl/cu124" },
@@ -2399,18 +2399,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8b/ac/ebd5f6f58691cbd4f73836e43e1727f3814311b960c41f88e259606ca2b2/pytorch_lightning-2.6.1.tar.gz", hash = "sha256:ba08f8901cf226fcca473046ad9346f414e99117762dc869c76e650d5b3d7bdc", size = 665563, upload-time = "2026-01-30T14:59:11.636Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0e/93/c8c361bf0a2fe50f828f32def460e8b8a14b93955d3fd302b1a9b63b19e4/pytorch_lightning-2.6.1-py3-none-any.whl", hash = "sha256:1f8118567ec829e3055f16cf1aa320883a86a47c836951bfd9dcfa34ec7ffd59", size = 857273, upload-time = "2026-01-30T14:59:10.141Z" },
-]
-
-[[package]]
-name = "pywebtransport"
-version = "0.12.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aioquic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b3/79/44d5785d8f2de713a827e486b8909f13e3cf9d8b4d1e3bc650e048f32142/pywebtransport-0.12.1.tar.gz", hash = "sha256:d1798da13cb03db97e4a47bd97c73d7c4913c9bb0813b672a3a277b6969b4fe1", size = 771295, upload-time = "2026-02-07T02:14:10.141Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5b/e1/3d936b9a9bdfc6402f2afbc0b4feeffb72cb990a43059ad944c5a354e58b/pywebtransport-0.12.1-cp312-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:9447da5633ac5692ab36c0cc7d3a97830e33db232f699f4de09f76886fa1fffe", size = 1010709, upload-time = "2026-02-07T02:14:08.378Z" },
 ]
 
 [[package]]
