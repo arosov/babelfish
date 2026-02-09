@@ -16,7 +16,7 @@ import time
 import argparse
 import threading
 import asyncio
-from babelfish_stt.hardware import get_gpu_info, list_microphones, find_best_microphone
+from babelfish_stt.hardware import HardwareManager
 from babelfish_stt.engine import STTEngine
 from babelfish_stt.audio import AudioStreamer
 from babelfish_stt.display import TerminalDisplay
@@ -103,7 +103,7 @@ def run_stt_loop(streamer, pipeline, ww_engine, wakeword, stopword, shutdown_eve
     finally:
         print("✅ STT Loop Shutdown.")
 
-async def run_babelfish(double_pass: bool = False, wakeword: str = None, stopword: str = None, force_cpu: bool = False):
+async def run_babelfish(hw: HardwareManager, double_pass: bool = False, wakeword: str = None, stopword: str = None, force_cpu: bool = False):
     print("\n" + "="*50)
     print("🚀 BABELFISH STT INITIALIZING")
     
@@ -121,47 +121,54 @@ async def run_babelfish(double_pass: bool = False, wakeword: str = None, stopwor
         print(f"   WAKE-WORD: {wakeword}")
     if stopword:
         print(f"   STOP-WORD: {stopword}")
+    
+    # 1. Start Server Early (Async)
+    server = BabelfishServer(config_manager)
+    config_manager.register(server)
+    
+    await server.start()
+    print(f"   SERVER: WebTransport running on https://{config_manager.config.server.host}:{config_manager.config.server.port}/config")
     print("="*50)
     
-    # 1. Hardware & Engine Init (Blocking, but done once before loop)
-    # We do this in main thread for safety, then pass objects to worker thread
-    hw_info = get_gpu_info()
-    device = "cpu" if force_cpu else ("cuda" if hw_info['cuda_available'] else "cpu")
-    best_mic_idx = find_best_microphone()
-    
-    vad = SileroVAD()
-    engine = STTEngine(device=device)
-    
-    ww_engine = None
-    if wakeword:
-        ww_engine = WakeWordEngine(model_name=wakeword)
-    
-    streamer = AudioStreamer(device_index=best_mic_idx)
-    display = TerminalDisplay()
-    
-    # Pipeline
-    if double_pass:
-        pipeline = DoublePassPipeline(vad, engine, display)
-    else:
-        pipeline = SinglePassPipeline(vad, engine, display)
-    
-    if stopword:
-        pipeline.stop_detector = StopWordDetector(stop_words=[stopword])
+    # 2. Hardware & Engine Init (Heavy/Blocking)
+    def heavy_init():
+        device = "cpu" if force_cpu else ("cuda" if hw.gpu_info['cuda_available'] else "cpu")
+        best_mic_idx = hw.best_mic_index
+        
+        vad = SileroVAD()
+        engine = STTEngine(device=device)
+        
+        ww_engine = None
+        if wakeword:
+            ww_engine = WakeWordEngine(model_name=wakeword)
+        
+        streamer = AudioStreamer(device_index=best_mic_idx)
+        display = TerminalDisplay()
+        
+        # Pipeline
+        if double_pass:
+            pipeline = DoublePassPipeline(vad, engine, display)
+        else:
+            pipeline = SinglePassPipeline(vad, engine, display)
+        
+        if stopword:
+            pipeline.stop_detector = StopWordDetector(stop_words=[stopword])
+            
+        return vad, engine, ww_engine, streamer, display, pipeline
 
-    # Register components for hot-reloading
+    print("⏳ Loading engines and models (this may take a few seconds)...")
+    vad, engine, ww_engine, streamer, display, pipeline = await asyncio.to_thread(heavy_init)
+
+    # Link pipeline to server and register remaining components for hot-reloading
+    server.pipeline = pipeline
     config_manager.register(vad)
     config_manager.register(engine)
     config_manager.register(pipeline)
     if pipeline.stop_detector:
         config_manager.register(pipeline.stop_detector)
 
-    # 2. Start Server (Async)
-    server = BabelfishServer(config_manager)
-    server.pipeline = pipeline
-    config_manager.register(server)
-    
-    print(f"   SERVER: WebTransport running on https://{config_manager.config.server.host}:{config_manager.config.server.port}/config")
-    
+    print("✅ Initialization complete.")
+
     # 3. Start STT Loop in Background Thread
     shutdown_event = threading.Event()
     loop = asyncio.get_running_loop()
@@ -174,9 +181,10 @@ async def run_babelfish(double_pass: bool = False, wakeword: str = None, stopwor
     )
     
     try:
-        # Run server concurrently
-        await server.start()
-    except asyncio.CancelledError:
+        # Keep the main task alive while the server and STT loop run
+        # Since server.start() no longer blocks, we block here.
+        await asyncio.Future()
+    except (asyncio.CancelledError, KeyboardInterrupt):
         print("\n\n🛑 Stopping Babelfish...")
     finally:
         shutdown_event.set()
@@ -186,31 +194,67 @@ async def run_babelfish(double_pass: bool = False, wakeword: str = None, stopwor
         print("✅ Shutdown complete.")
 
 def main():
+
     import openwakeword
+
     available_ww = list(openwakeword.MODELS.keys())
+
     
+
     parser = argparse.ArgumentParser(description="Babelfish STT - High-performance streaming transcription")
+
     parser.add_argument("--double-pass", action="store_true", help="Enable two-pass refinement system")
+
     parser.add_argument("--cpu", action="store_true", help="Force CPU execution even if GPU is available")
+
     parser.add_argument("--wakeword", type=str, nargs='?', const='LIST_OPTIONS', help=f"Enable wake-word activation. Available: {', '.join(available_ww)}")
+
     parser.add_argument("--stopword", type=str, help="Enable stop-word deactivation (e.g. 'stop talking')")
+
     args = parser.parse_args()
+
     
+
+    # 1. Hardware First Probe
+
+    hw = HardwareManager().probe()
+
+
+
     if args.wakeword == 'LIST_OPTIONS' or (args.wakeword and args.wakeword not in available_ww):
+
         if args.wakeword != 'LIST_OPTIONS' and args.wakeword is not None:
+
             print(f"\n❌ Error: '{args.wakeword}' is not a valid wake-word.")
+
         print("\n📋 Available wake-words:")
+
         for ww in available_ww:
+
             print(f"  - {ww}")
+
         print("\nUsage example: uv run babelfish --wakeword hey_jarvis\n")
+
         sys.exit(0)
+
     
+
     try:
+
         asyncio.run(run_babelfish(
+
+            hw=hw,
+
             double_pass=args.double_pass,
+
             wakeword=args.wakeword,
+
             stopword=args.stopword,
+
             force_cpu=args.cpu
+
         ))
+
     except KeyboardInterrupt:
+
         pass # Handled in run_babelfish or implicit
