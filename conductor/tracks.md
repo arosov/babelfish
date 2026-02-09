@@ -7,5 +7,5 @@
 
 ---
 
-- [ ] **Track: Migrate Babelfish server from pywebtransport to a raw aioquic implementation for better stability and control.**
+- [x] **Track: Migrate Babelfish server from pywebtransport to a raw aioquic implementation for better stability and control.**
 *Link: [./tracks/aioquic_migration_20260209/](./tracks/aioquic_migration_20260209/)*
