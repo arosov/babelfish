@@ -11,14 +11,14 @@ Establish the foundational Pydantic models and the logic for loading, saving, an
 - [x] Task: Write tests for configuration persistence to `config.json`. 0f65456
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Core Configuration Schema & Persistence' (Protocol in workflow.md) eaec2b3
 
-## Phase 2: WebTransport Configuration API
+## Phase 2: WebTransport Configuration API [checkpoint: d606e06]
 Implement the communication layer for exchanging configuration data with the frontend.
 
 - [x] Task: Update the WebTransport server to send the current configuration on client connection. 5c48bb9
-- [x] Task: Implement the `update_config` command handler in the WebTransport message loop.
-- [x] Task: Write integration tests for sending and receiving configuration updates over WebTransport.
-- [x] Task: Implement error reporting to the client when validation fails.
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: WebTransport Configuration API' (Protocol in workflow.md)
+- [x] Task: Implement the `update_config` command handler in the WebTransport message loop. 7b6edf4
+- [x] Task: Write integration tests for sending and receiving configuration updates over WebTransport. 7b6edf4
+- [x] Task: Implement error reporting to the client when validation fails. 7b6edf4
+- [x] Task: Conductor - User Manual Verification 'Phase 2: WebTransport Configuration API' (Protocol in workflow.md) d606e06
 
 ## Phase 3: Hot-Reloading Logic
 Integrate the configuration system with the STT pipeline to apply changes dynamically.
