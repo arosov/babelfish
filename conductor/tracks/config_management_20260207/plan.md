@@ -20,11 +20,11 @@ Implement the communication layer for exchanging configuration data with the fro
 - [x] Task: Implement error reporting to the client when validation fails. 7b6edf4
 - [x] Task: Conductor - User Manual Verification 'Phase 2: WebTransport Configuration API' (Protocol in workflow.md) d606e06
 
-## Phase 3: Hot-Reloading Logic
+## Phase 3: Hot-Reloading Logic [checkpoint: 1e6e2d4]
 Integrate the configuration system with the STT pipeline to apply changes dynamically.
 
-- [ ] Task: Implement a "Reconfigurable" interface or mixin for pipeline components.
-- [ ] Task: Wire up hot-reloadable settings (presets, VAD, UI) to update components in real-time.
-- [ ] Task: Implement the "Restart Required" signaling logic for critical hardware changes.
-- [ ] Task: Write tests for dynamic setting updates without process restart.
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Hot-Reloading Logic' (Protocol in workflow.md)
+- [x] Task: Implement a "Reconfigurable" interface or mixin for pipeline components. 6f6d100
+- [x] Task: Wire up hot-reloadable settings (presets, VAD, UI) to update components in real-time. aa99543
+- [x] Task: Implement the "Restart Required" signaling logic for critical hardware changes. 8f7c96f
+- [x] Task: Write tests for dynamic setting updates without process restart. 8f7c96f
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Hot-Reloading Logic' (Protocol in workflow.md) 1e6e2d4
