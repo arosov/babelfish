@@ -28,9 +28,9 @@ Implement the logic to validate `config.json` against current hardware and gener
 ## Phase 3: Orchestration Refactoring
 Reorganize the main startup sequence to follow the refined flow.
 
-- [ ] Task: Create integration test for the new startup sequence
-    - [ ] Verify execution order: Hardware -> Config -> WebServer -> Pipeline
-- [ ] Task: Refactor `Server` and `main.py` for sequential startup
-    - [ ] Ensure `ServerApp` (WebTransport) starts and is ready before `AudioPipeline` initialization
-    - [ ] Update logging to provide clear feedback on each phase of startup
-- [ ] Task: Conductor - User Manual Verification 'Orchestration Refactoring' (Protocol in workflow.md)
+- [x] Task: Create integration test for the new startup sequence
+    - [x] Verify execution order: Hardware -> Config -> WebServer -> Pipeline
+- [x] Task: Refactor `Server` and `main.py` for sequential startup
+    - [x] Ensure `ServerApp` (WebTransport) starts and is ready before `AudioPipeline` initialization
+    - [x] Update logging to provide clear feedback on each phase of startup
+- [x] Task: Conductor - User Manual Verification 'Orchestration Refactoring' (Protocol in workflow.md)

@@ -107,22 +107,39 @@ async def run_babelfish(hw: HardwareManager, double_pass: bool = False, wakeword
     print("\n" + "="*50)
     print("🚀 BABELFISH STT INITIALIZING")
     
-    # 0. Load Configuration
+    # 2. Config Load & Validation
     config_manager = ConfigManager()
-    
-    if force_cpu:
-        print("   MODE: Force CPU Execution")
-    if double_pass:
-        print("   MODE: Double-Pass Refinement")
+    if not config_manager.is_valid(hw):
+        print("⚠️ Configuration is invalid or missing. Generating optimal defaults...")
+        config_manager.generate_optimal_defaults(hw)
     else:
-        print("   MODE: Single-Pass (Default)")
+        print("✅ Configuration validated against hardware.")
+
+    # Override config with CLI flags if provided
+    if force_cpu:
+        config_manager.config.hardware.device = "cpu"
+        print("   MODE: Force CPU Execution (CLI Override)")
+    
+    # We prioritize CLI flags for mode/wakeword/stopword if they are explicitly set
+    if double_pass:
+        config_manager.config.pipeline.double_pass = True
     
     if wakeword:
-        print(f"   WAKE-WORD: {wakeword}")
+        config_manager.config.voice.wakeword = wakeword
     if stopword:
-        print(f"   STOP-WORD: {stopword}")
+        if stopword not in config_manager.config.voice.stop_words:
+            config_manager.config.voice.stop_words.append(stopword)
+
+    print(f"   MODE: {'Double-Pass Refinement' if config_manager.config.pipeline.double_pass else 'Single-Pass'}")
+    print(f"   DEVICE: {config_manager.config.hardware.device.upper()}")
     
-    # 1. Start Server Early (Async)
+    if config_manager.config.voice.wakeword:
+        print(f"   WAKE-WORD: {config_manager.config.voice.wakeword}")
+    if config_manager.config.voice.stop_words:
+        print(f"   STOP-WORDS: {', '.join(config_manager.config.voice.stop_words)}")
+    
+    # 3. Start Server Early (Async)
+    # This allows the frontend to connect and see the initialization logs/state
     server = BabelfishServer(config_manager)
     config_manager.register(server)
     
@@ -130,29 +147,29 @@ async def run_babelfish(hw: HardwareManager, double_pass: bool = False, wakeword
     print(f"   SERVER: WebTransport running on https://{config_manager.config.server.host}:{config_manager.config.server.port}/config")
     print("="*50)
     
-    # 2. Hardware & Engine Init (Heavy/Blocking)
+    # 4. Initialize Audio Pipeline (Heavy/Blocking)
     def heavy_init():
-        device = "cpu" if force_cpu else ("cuda" if hw.gpu_info['cuda_available'] else "cpu")
-        best_mic_idx = hw.best_mic_index
+        device = config_manager.config.hardware.device
+        best_mic_idx = config_manager.config.hardware.microphone_index
         
         vad = SileroVAD()
         engine = STTEngine(device=device)
         
         ww_engine = None
-        if wakeword:
-            ww_engine = WakeWordEngine(model_name=wakeword)
+        if config_manager.config.voice.wakeword:
+            ww_engine = WakeWordEngine(model_name=config_manager.config.voice.wakeword)
         
         streamer = AudioStreamer(device_index=best_mic_idx)
         display = TerminalDisplay()
         
         # Pipeline
-        if double_pass:
+        if config_manager.config.pipeline.double_pass:
             pipeline = DoublePassPipeline(vad, engine, display)
         else:
             pipeline = SinglePassPipeline(vad, engine, display)
         
-        if stopword:
-            pipeline.stop_detector = StopWordDetector(stop_words=[stopword])
+        if config_manager.config.voice.stop_words:
+            pipeline.stop_detector = StopWordDetector(stop_words=config_manager.config.voice.stop_words)
             
         return vad, engine, ww_engine, streamer, display, pipeline
 
