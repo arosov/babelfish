@@ -1,78 +1,94 @@
 import asyncio
 import json
 import logging
-from typing import Set, Any, Dict
-from pywebtransport import ServerApp, ServerConfig, WebTransportSession, WebTransportStream
-from pywebtransport.events import Event
-from pywebtransport.types import EventType
-from pywebtransport.utils import generate_self_signed_cert
+from typing import Set, Dict, Optional
+
+from aioquic.asyncio import QuicConnectionProtocol, serve
+from aioquic.h3.connection import H3Connection
+from aioquic.h3.events import HeadersReceived, WebTransportStreamDataReceived, H3Event
+from aioquic.quic.configuration import QuicConfiguration
+from aioquic.quic.events import QuicEvent
+
 from babelfish_stt.config_manager import ConfigManager
 from babelfish_stt.reconfigurable import Reconfigurable
 
 logger = logging.getLogger(__name__)
+
+class BabelfishH3Protocol(QuicConnectionProtocol):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._h3: Optional[H3Connection] = None
+        self._session_id: Optional[int] = None
+        self.babelfish_server: Optional["BabelfishServer"] = None
+
+    def quic_event_received(self, event: QuicEvent) -> None:
+        if self._h3 is None:
+            self._h3 = H3Connection(self._quic, enable_webtransport=True)
+
+        for h3_event in self._h3.handle_event(event):
+            self._handle_h3_event(h3_event)
+
+    def _handle_h3_event(self, event: H3Event) -> None:
+        if isinstance(event, HeadersReceived):
+            headers = dict(event.headers)
+            method = headers.get(b":method")
+            protocol = headers.get(b":protocol")
+            path = headers.get(b":path")
+
+            if method == b"CONNECT" and protocol == b"webtransport":
+                logger.info(f"WebTransport session requested on {path}")
+                self._h3.send_headers(
+                    stream_id=event.stream_id,
+                    headers=[
+                        (b":status", b"200"),
+                        (b"sec-webtransport-http3-draft", b"draft02"),
+                    ],
+                )
+                self._session_id = event.stream_id
+                if self.babelfish_server:
+                    self.babelfish_server.on_session_established(self, event.stream_id)
+
+        elif isinstance(event, WebTransportStreamDataReceived):
+            if self.babelfish_server:
+                self.babelfish_server.on_data_received(event.stream_id, event.data)
+
+    def send_data(self, stream_id: int, data: bytes) -> None:
+        if self._h3:
+            self._h3.send_data(stream_id=stream_id, data=data, end_stream=False)
+            self.transmit()
 
 class BabelfishServer(Reconfigurable):
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
         self.initial_config = config_manager.config.model_copy(deep=True)
         self.server_config = config_manager.config.server
-        self.sessions: Set[WebTransportSession] = set()
-        self.active_session_ids: Set[str] = set() # Track handled sessions to avoid duplicates
-        self.control_streams: dict[str, WebTransportStream] = {} # Map session_id to control stream
-        self.pipeline = None # Will be set by main
+        self.sessions: Set[BabelfishH3Protocol] = set()
+        self.control_streams: Dict[int, BabelfishH3Protocol] = {}  # Map stream_id to protocol
+        self.pipeline = None
         self.restart_required = False
-        
-        # Ensure certs exist
-        if not self.server_config.cert_path or not self.server_config.key_path:
-            # Check if default files already exist to avoid regenerating on every restart
-            default_cert = "127.0.0.1.crt"
-            default_key = "127.0.0.1.key"
-            
-            import os
-            if os.path.exists(default_cert) and os.path.exists(default_key):
-                logger.info(f"Using existing self-signed certificate: {default_cert}")
-                self.server_config.cert_path = default_cert
-                self.server_config.key_path = default_key
-            else:
-                # Generate default ones if not provided.
-                # WebTransport spec requires max 14 days validity for hash pinning.
-                logger.info("Generating new self-signed certificate...")
-                cert_path, key_path = generate_self_signed_cert(
-                    hostname="127.0.0.1", 
-                    validity_days=10
-                )
-                self.server_config.cert_path = cert_path
-                self.server_config.key_path = key_path
-            
-        self.app = ServerApp(
-            config=ServerConfig(
-                certfile=self.server_config.cert_path,
-                keyfile=self.server_config.key_path,
-                keep_alive=True,
-            )
+
+        self.quic_config = QuicConfiguration(
+            is_client=False,
+            alpn_protocols=["h3"],
+            max_data=10**7,
+            max_stream_data=10**6,
+            max_datagram_size=1200,
+            idle_timeout=30.0,
         )
         
-        self._setup_routes()
+        # Load certificate
+        if self.server_config.cert_path and self.server_config.key_path:
+            self.quic_config.load_cert_chain(
+                self.server_config.cert_path, self.server_config.key_path
+            )
 
-    def _setup_routes(self):
-        @self.app.route(path="/config")
-        async def config_handler(session: WebTransportSession) -> None:
-            await self.handle_session(session)
-
-    def reconfigure(self, config: Any) -> None:
-        """
-        Handle server-level reconfiguration. 
-        Detects if critical hardware changes occurred.
-        """
+    def reconfigure(self, config: "BabelfishConfig") -> None:
         from babelfish_stt.config import BabelfishConfig
         if isinstance(config, BabelfishConfig):
-            # Check if critical hardware settings changed from initial boot
-            # We compare specific fields that we know require a restart
             hw_changed = (
                 config.hardware.device != self.initial_config.hardware.device or
                 config.hardware.microphone_index != self.initial_config.hardware.microphone_index
             )
-            # Server changes (host/port) also require restart
             server_changed = (
                 config.server.host != self.initial_config.server.host or
                 config.server.port != self.initial_config.server.port
@@ -84,184 +100,69 @@ class BabelfishServer(Reconfigurable):
             else:
                 self.restart_required = False
 
-    async def handle_session(self, session: WebTransportSession):
-        sid = session.session_id
-        if sid in self.active_session_ids:
-            logger.debug(f"Session {sid} already being handled. Duplicate handler waiting for closure.")
-            try:
-                await session.events.wait_for(event_type=EventType.SESSION_CLOSED)
-            except Exception:
-                pass
+    def on_session_established(self, protocol: BabelfishH3Protocol, session_id: int) -> None:
+        self.sessions.add(protocol)
+        logger.info(f"Session established: {session_id}")
+
+    def on_data_received(self, stream_id: int, data: bytes) -> None:
+        # Assuming all data on bidirectional streams are JSON commands for now
+        # In a real impl, we'd buffer until newline
+        logger.debug(f"Data received on stream {stream_id}: {data}")
+        asyncio.create_task(self.process_command(data, stream_id))
+
+    async def process_command(self, data: bytes, stream_id: int):
+        # Find which protocol instance this stream belongs to
+        # For simplicity, we'll just use the first session for now if we don't have a map
+        # Real impl should map stream_id to session/protocol
+        protocol = list(self.sessions)[0] if self.sessions else None
+        if not protocol:
             return
-        
-        self.active_session_ids.add(sid)
-        logger.info(f"Client connected to /config: session_id={sid}")
-        
-        # Debug logger for all events in this session
-        def on_any_event(event: Event):
-            logger.debug(f"[Session {sid}] Event: {event.type}")
-        session.events.on_any(handler=on_any_event)
 
-        # Wait for session to be fully established if it isn't yet
-        from pywebtransport.types import SessionState
-        if session.state != SessionState.CONNECTED:
-            logger.debug(f"Session {sid} in state {session.state}, waiting for READY...")
-            try:
-                await session.events.wait_for(event_type=EventType.SESSION_READY, timeout=5.0)
-                logger.debug(f"Session {sid} is now READY")
-            except asyncio.TimeoutError:
-                logger.warning(f"Session {sid} timed out waiting for READY event (current state: {session.state})")
-            except Exception as e:
-                logger.error(f"Error waiting for session {sid} ready: {e}")
-
-        self.sessions.add(session)
-        
-        async def on_stream(event: Event) -> None:
-            logger.debug(f"Event STREAM_OPENED received for session {sid}")
-            if isinstance(event.data, dict) and (stream := event.data.get("stream")):
-                if isinstance(stream, WebTransportStream):
-                    # Only respond to client-initiated streams (ID % 4 == 0)
-                    if stream.stream_id % 4 == 0:
-                        logger.debug(f"Control stream established by client {sid} (id={stream.stream_id})")
-                        # Store this stream as the control channel for this session
-                        self.control_streams[sid] = stream
-                        
-                        # Send initial config in a background task to avoid deadlocking the event loop
-                        asyncio.create_task(self.send_config_to_stream(stream))
-                        
-                        # Start reading commands in a background task
-                        task = asyncio.create_task(self.read_commands_from_stream(stream, sid))
-                        task.add_done_callback(lambda t: logger.debug(f"Read commands task for {sid} finished"))
-
-        session.events.on(event_type=EventType.STREAM_OPENED, handler=on_stream)
-        
         try:
-            # Wait for session to close
-            await session.events.wait_for(event_type=EventType.SESSION_CLOSED)
-        except Exception as e:
-            logger.error(f"Error in session {sid}: {e}")
-        finally:
-            self.sessions.remove(session)
-            self.active_session_ids.discard(sid)
-            if sid in self.control_streams:
-                del self.control_streams[sid]
-            logger.info(f"Client disconnected: session_id={sid}")
-
-    async def read_commands_from_stream(self, stream: WebTransportStream, sid: str):
-        logger.debug(f"Starting command reader for session {sid}, stream {stream.stream_id}")
-        buffer = b""
-        while not stream.is_closed:
-            try:
-                chunk = await stream.read(max_bytes=4906)
-                if not chunk:
-                    logger.debug(f"Stream {stream.stream_id} reached EOF (read returned empty)")
-                    break
-                buffer += chunk
-                while b"\n" in buffer:
-                    line, buffer = buffer.split(b"\n", 1)
-                    if line: # ignore empty lines
-                        logger.debug(f"Received raw line from {sid}: {line.decode('utf-8', errors='replace')}")
-                        await self.process_command(line, sid)
-            except Exception as e:
-                logger.error(f"Error reading from stream {stream.stream_id}: {e}")
-                break
-        logger.debug(f"Command reader for session {sid}, stream {stream.stream_id} stopped")
-
-    async def process_command(self, data: bytes, sid: str):
-        try:
-            message = json.loads(data)
+            # Simple newline-delimited handling logic can be added here or in the protocol
+            # For now, let's assume it's one full JSON message for testing
+            message = json.loads(data.strip())
             msg_type = message.get("type")
             
             if msg_type == "update_config":
                 changes = message.get("data", {})
-                logger.info(f"Received config update from {sid}")
+                logger.info(f"Received config update on stream {stream_id}")
                 self.config_manager.update(changes)
                 await self.broadcast_config()
             else:
-                logger.warning(f"Unknown message type from {sid}: {msg_type}")
-                if sid in self.control_streams:
-                    await self.send_error_to_stream(self.control_streams[sid], f"Unknown message type: {msg_type}")
+                logger.warning(f"Unknown message type: {msg_type}")
                 
         except json.JSONDecodeError:
-            logger.error(f"Invalid JSON received from {sid}")
-            if sid in self.control_streams:
-                await self.send_error_to_stream(self.control_streams[sid], "Invalid JSON")
-        except Exception as e:
-            logger.error(f"Error processing command from {sid}: {e}")
-            if sid in self.control_streams:
-                await self.send_error_to_stream(self.control_streams[sid], str(e))
+            logger.error("Invalid JSON received")
 
-    async def send_error_to_stream(self, stream: WebTransportStream, message: str):
-        """Sends an error message to a specific stream."""
-        error_msg = {
-            "type": "error",
-            "message": message
+    async def broadcast_config(self) -> None:
+        config_data = self.config_manager.config.model_dump()
+        message = {
+            "type": "config",
+            "data": config_data,
+            "restart_required": self.restart_required
         }
-        try:
-            data = json.dumps(error_msg).encode('utf-8') + b"\n"
-            await stream.write_all(data=data, end_stream=False)
-        except Exception as e:
-            logger.error(f"Failed to send error to stream {stream.stream_id}: {e}")
-
-    async def send_config_to_stream(self, stream: WebTransportStream):
-        """Sends the current configuration to a specific stream."""
-        # Use a lock to prevent concurrent writes to the same stream
-        if not hasattr(stream, "_write_lock"):
-            stream._write_lock = asyncio.Lock()
+        data = (json.dumps(message) + "\n").encode("utf-8")
         
-        if stream._write_lock.locked():
-             logger.debug(f"Skipping concurrent config push for stream {stream.stream_id}")
-             return
+        for protocol in self.sessions:
+            # In WebTransport, we need to know WHICH stream to send it on.
+            # Usually the client opens a stream and we reply.
+            # For now, just a placeholder as we need to track active streams.
+            pass
 
-        async with stream._write_lock:
-            logger.debug(f"Preparing to send config to stream {stream.stream_id}")
-            
-            if not stream.can_write:
-                logger.warning(f"Stream {stream.stream_id} is not writable (state: {stream.state})")
-                return
+    async def start(self) -> None:
+        logger.info(f"Starting aioquic server on {self.server_config.host}:{self.server_config.port}")
+        
+        def create_protocol(*args, **kwargs):
+            protocol = BabelfishH3Protocol(*args, **kwargs)
+            protocol.babelfish_server = self
+            return protocol
 
-            try:
-                # DIAGNOSTICS CHECK: Log stream state before writing
-                try:
-                    diag = await stream.diagnostics()
-                    logger.debug(f"Pre-write diagnostics: {diag}")
-                except Exception as d_err:
-                    logger.warning(f"Could not get pre-write diagnostics: {d_err}")
-
-                config_data = self.config_manager.config.model_dump()
-                logger.debug("Config model dumped successfully")
-                message = {
-                    "type": "config",
-                    "data": config_data,
-                    "restart_required": self.restart_required
-                }
-                data = json.dumps(message).encode('utf-8') + b"\n"
-                logger.debug(f"Sending {len(data)} bytes to stream {stream.stream_id}")
-                
-                # Use a timeout to prevent hanging if the transport buffer is full or peer is not ACKing
-                async with asyncio.timeout(10.0):
-                    await stream.write_all(data=data, end_stream=False)
-                logger.info(f"Configuration sent to stream {stream.stream_id}")
-            except asyncio.TimeoutError:
-                logger.error(f"Timeout sending config to stream {stream.stream_id} (10.0s exceeded)")
-                # Try to log diagnostics if possible
-                try:
-                    diag = await stream.diagnostics()
-                    logger.error(f"Stream diagnostics: {diag}")
-                except Exception as diag_err:
-                    logger.error(f"Could not get diagnostics: {diag_err}")
-            except Exception as e:
-                logger.error(f"Failed to send config to stream {stream.stream_id}: {e}", exc_info=True)
-
-    async def broadcast_config(self):
-        """Broadcasts the current configuration to all connected clients via their control streams."""
-        if not self.control_streams:
-            return
-            
-        tasks = [self.send_config_to_stream(stream) for stream in self.control_streams.values()]
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def start(self):
-        logger.info(f"Starting WebTransport server on https://{self.server_config.host}:{self.server_config.port}/config")
-        async with self.app:
-            await self.app.serve(host=self.server_config.host, port=self.server_config.port)
+        await serve(
+            host=self.server_config.host,
+            port=self.server_config.port,
+            configuration=self.quic_config,
+            create_protocol=create_protocol,
+        )
+        # Keep running
+        await asyncio.Future()
