@@ -14,15 +14,15 @@ Refactor the hardware discovery logic to be the first point of entry and enforce
 ## Phase 2: Enhanced Config Validation & Optimal Defaults
 Implement the logic to validate `config.json` against current hardware and generate resource-aware defaults.
 
-- [ ] Task: Create tests for config validation and default generation
-    - [ ] Write test to verify invalid JSON triggers default generation
-    - [ ] Write test to verify missing hardware sections trigger default generation
-    - [ ] Write test to verify 6GB VRAM threshold for CUDA vs. CPU mode selection
-    - [ ] Write test to verify generated config is saved to disk immediately
-- [ ] Task: Refactor `ConfigManager` validation logic
-    - [ ] Implement integrity checks for JSON and Pydantic models
-    - [ ] Implement hardware-to-config cross-referencing (mic ID and GPU availability)
-    - [ ] Implement `generate_optimal_defaults` logic with 6GB VRAM logic and 1-pass mode
+- [x] Task: Create tests for config validation and default generation
+    - [x] Write test to verify invalid JSON triggers default generation
+    - [x] Write test to verify missing hardware sections trigger default generation
+    - [x] Write test to verify 6GB VRAM threshold for CUDA vs. CPU mode selection
+    - [x] Write test to verify generated config is saved to disk immediately
+- [x] Task: Refactor `ConfigManager` validation logic
+    - [x] Implement integrity checks for JSON and Pydantic models
+    - [x] Implement hardware-to-config cross-referencing (mic ID and GPU availability)
+    - [x] Implement `generate_optimal_defaults` logic with 6GB VRAM logic and 1-pass mode
 - [ ] Task: Conductor - User Manual Verification 'Enhanced Config Validation & Optimal Defaults' (Protocol in workflow.md)
 
 ## Phase 3: Orchestration Refactoring

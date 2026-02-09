@@ -72,6 +72,64 @@ class ConfigManager:
             logger.warning(f"Failed to load config from {self.config_path}: {e}. Using defaults.")
             return BabelfishConfig()
 
+    def is_valid(self, hw: 'HardwareManager' = None) -> bool:
+        """
+        Validates the current configuration.
+        If HardwareManager is provided, also validates hardware availability.
+        """
+        if not self.config_path.exists():
+            return False
+            
+        try:
+            with open(self.config_path, "r") as f:
+                data = json.load(f)
+            config = BabelfishConfig.model_validate(data)
+            
+            if hw:
+                # Validate microphone index
+                if config.hardware.microphone_index is not None:
+                    valid_indices = [m['index'] for m in hw.microphones]
+                    if config.hardware.microphone_index not in valid_indices:
+                        logger.warning(f"Configured microphone index {config.hardware.microphone_index} not found.")
+                        return False
+                
+                # Validate GPU availability if set to cuda
+                if config.hardware.device == "cuda" and not hw.gpu_info['cuda_available']:
+                    logger.warning("Configured for CUDA but no GPU detected.")
+                    return False
+                    
+            return True
+        except Exception as e:
+            logger.warning(f"Configuration validation failed: {e}")
+            return False
+
+    def generate_optimal_defaults(self, hw: 'HardwareManager'):
+        """
+        Generates and saves optimal defaults based on detected hardware.
+        """
+        logger.info("Generating optimal default configuration...")
+        
+        # Determine device based on VRAM (6GB threshold)
+        device = "cpu"
+        if hw.gpu_info['cuda_available']:
+            if hw.gpu_info['vram_gb'] >= 6.0:
+                device = "cuda"
+                logger.info(f"VRAM is {hw.gpu_info['vram_gb']:.2f}GB (>= 6GB). Selecting CUDA mode.")
+            else:
+                logger.info(f"VRAM is {hw.gpu_info['vram_gb']:.2f}GB (< 6GB). Selecting CPU mode for stability.")
+        
+        self.config = BabelfishConfig(
+            hardware=HardwareConfig(
+                device=device,
+                microphone_index=hw.best_mic_index
+            ),
+            pipeline=PipelineConfig(
+                double_pass=False # Optimal defaults prioritize 1-pass for speed
+            )
+        )
+        self.save()
+        logger.info(f"Optimal defaults saved to {self.config_path}.")
+
     def save(self):
         """
         Atomic save using a temporary file.
