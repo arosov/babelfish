@@ -47,7 +47,7 @@ class ConfigManager:
             elif isinstance(component, STTEngine):
                 component.reconfigure(self.config.pipeline)
             elif isinstance(component, BabelfishServer):
-                component.reconfigure(self.config.server)
+                component.reconfigure(self.config)
             else:
                 # Fallback: send full config if we don't know the specifics
                 component.reconfigure(self.config)

@@ -14,11 +14,13 @@ logger = logging.getLogger(__name__)
 class BabelfishServer(Reconfigurable):
     def __init__(self, config_manager: ConfigManager):
         self.config_manager = config_manager
+        self.initial_config = config_manager.config.model_copy(deep=True)
         self.server_config = config_manager.config.server
         self.sessions: Set[WebTransportSession] = set()
         self.active_session_ids: Set[str] = set() # Track handled sessions to avoid duplicates
         self.control_streams: dict[str, WebTransportStream] = {} # Map session_id to control stream
         self.pipeline = None # Will be set by main
+        self.restart_required = False
         
         # Ensure certs exist
         if not self.server_config.cert_path or not self.server_config.key_path:
@@ -60,11 +62,27 @@ class BabelfishServer(Reconfigurable):
     def reconfigure(self, config: Any) -> None:
         """
         Handle server-level reconfiguration. 
-        Usually this just updates internal state or triggers broadcasts.
+        Detects if critical hardware changes occurred.
         """
-        # Server config (host/port) usually requires restart, 
-        # but we can update other runtime flags here if any.
-        pass
+        from babelfish_stt.config import BabelfishConfig
+        if isinstance(config, BabelfishConfig):
+            # Check if critical hardware settings changed from initial boot
+            # We compare specific fields that we know require a restart
+            hw_changed = (
+                config.hardware.device != self.initial_config.hardware.device or
+                config.hardware.microphone_index != self.initial_config.hardware.microphone_index
+            )
+            # Server changes (host/port) also require restart
+            server_changed = (
+                config.server.host != self.initial_config.server.host or
+                config.server.port != self.initial_config.server.port
+            )
+            
+            if hw_changed or server_changed:
+                logger.info("Critical configuration change detected. Restart required.")
+                self.restart_required = True
+            else:
+                self.restart_required = False
 
     async def handle_session(self, session: WebTransportSession):
         sid = session.session_id
@@ -214,7 +232,8 @@ class BabelfishServer(Reconfigurable):
                 logger.debug("Config model dumped successfully")
                 message = {
                     "type": "config",
-                    "data": config_data
+                    "data": config_data,
+                    "restart_required": self.restart_required
                 }
                 data = json.dumps(message).encode('utf-8') + b"\n"
                 logger.debug(f"Sending {len(data)} bytes to stream {stream.stream_id}")
