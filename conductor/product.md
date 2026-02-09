@@ -24,6 +24,7 @@ Babelfish is a high-performance, local backend server designed to power system-w
 - **Modular Pipeline Architecture:** A flexible "VAD -> STT (Single/Two-Pass) -> LLM" chain.
 - **Service-Oriented Distribution:** Packaging the server for execution as a system service (Windows Service / Systemd) via a simple `uv` command.
 - **Real-time Progress Reporting:** High-speed streaming of processing state via WebTransport.
+- **Proactive Initialization:** The server pushes the full configuration source-of-truth immediately upon client connection to minimize initialization latency.
 
 ## Key Features
 - **NVIDIA Parakeet Integration:** Leveraging Parakeet TDT for various quality/latency presets.
