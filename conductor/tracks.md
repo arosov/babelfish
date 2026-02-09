@@ -7,5 +7,5 @@
 
 ---
 
-- [~] **Track: The server should send the current configuration upon connection establishment**
+- [x] **Track: The server should send the current configuration upon connection establishment**
 *Link: [./tracks/push_config_on_connect_20260209/](./tracks/push_config_on_connect_20260209/)*
