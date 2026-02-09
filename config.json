@@ -1,11 +1,28 @@
 {
-    "model": "m-baccari/parakeet-rnnt-1.1b-ct2",
-    "device": "cuda",
-    "quantization": "float16",
-    "language": "en",
-    "wake_word": "jarvis",
-    "realtime_model_type": "m-baccari/parakeet-tdt-110m-ct2",
-    "auto_type": false,
-    "enable_realtime": true,
-    "use_main_model_for_realtime": false
+    "hardware": {
+        "device": "cuda",
+        "vram_limit_gb": null,
+        "microphone_index": null
+    },
+    "pipeline": {
+        "double_pass": false,
+        "ghost_preset": "fast",
+        "anchor_preset": "solid",
+        "anchor_trigger_interval_ms": 2000
+    },
+    "voice": {
+        "wakeword": null,
+        "wakeword_sensitivity": 0.5,
+        "stop_words": []
+    },
+    "ui": {
+        "verbose": false,
+        "show_timestamps": true
+    },
+    "server": {
+        "host": "127.0.0.1",
+        "port": 8123,
+        "cert_path": "127.0.0.1.crt",
+        "key_path": "127.0.0.1.key"
+    }
 }

@@ -34,6 +34,7 @@ explicit = true
 torch = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
 openwakeword = { git = "https://github.com/dscripka/openWakeWord.git" }
+pywebtransport = { path = "../pywebtransport", editable = true }
 
 [project.scripts]
 babelfish = "babelfish_stt.main:main"

@@ -70,6 +70,7 @@ class BabelfishServer(Reconfigurable):
         self.server_config = config_manager.config.server
         self.sessions: Dict[BabelfishH3Protocol, int] = {}  # Map protocol to session_id
         self.active_streams: Dict[BabelfishH3Protocol, Set[int]] = {} # Map protocol to set of stream_ids
+        self.first_stream_sent: Set[BabelfishH3Protocol] = set()
         self.buffers: Dict[tuple[BabelfishH3Protocol, int], bytes] = {} # Map (protocol, stream_id) to buffer
         self.pipeline = None
         self.restart_required = False
@@ -117,6 +118,8 @@ class BabelfishServer(Reconfigurable):
             del self.sessions[protocol]
         if protocol in self.active_streams:
             del self.active_streams[protocol]
+        if protocol in self.first_stream_sent:
+            self.first_stream_sent.remove(protocol)
         
         # Clean up buffers
         keys_to_del = [k for k in self.buffers.keys() if k[0] == protocol]
@@ -134,8 +137,11 @@ class BabelfishServer(Reconfigurable):
             if protocol in self.active_streams:
                 self.active_streams[protocol].add(stream_id)
                 logger.info(f"Discovered control stream {stream_id} for session {self.sessions[protocol]}")
-                # Send initial config immediately upon stream discovery
-                asyncio.create_task(self.send_config_to_stream(protocol, stream_id))
+                
+                # Send initial config immediately upon stream discovery ONLY ONCE per session
+                if protocol not in self.first_stream_sent:
+                    self.first_stream_sent.add(protocol)
+                    asyncio.create_task(self.send_config_to_stream(protocol, stream_id))
 
         self.buffers[key] += data
         
