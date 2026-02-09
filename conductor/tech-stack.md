@@ -4,6 +4,7 @@
 - **Language:** Python 3.12 (Pinned to 3.12.*)
 - **Package Management & Distribution:** `uv`
 - **Communication Protocol:** WebTransport
+- **Configuration Schema & Validation:** Pydantic (v2)
 
 ## Pipeline Engines
 - **Speech-to-Text (Primary):** [parakeet-stream](https://github.com/maximerivest/parakeet-stream)

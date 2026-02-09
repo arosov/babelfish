@@ -15,7 +15,8 @@ Babelfish is a high-performance, local backend server designed to power system-w
 1.  **Phase 1: Streaming Foundation (Completed):** Established a robust, modular single-pass pipeline using `parakeet-stream` and `sounddevice` for industry-leading latency, executable via `uv run babelfish`.
 2.  **Phase 2: Two-Pass Refinement (Completed):** Integrated a dual-pass orchestration system (Fast Ghost + Solid Anchor) that combines ultra-low latency updates with high-accuracy refinements.
 3.  **Phase 3: Voice-Activated Control (Completed):** Implemented hands-free operation using `openWakeWord` for activation and text-based stop-word detection for deactivation.
-4.  **Phase 4: LLM Optimization:** Integrating a local low-latency LLM to provide context-aware text correction and optimization.
+4.  **Phase 4: Configuration & Remote Control (Completed):** Integrated a Pydantic-based configuration system with WebTransport support for real-time frontend interaction and hot-reloading.
+5.  **Phase 5: LLM Optimization:** Integrating a local low-latency LLM to provide context-aware text correction and optimization.
 
 ## Core Goals
 - **Top-of-the-Line Latency:** Prioritizing `parakeet-stream` (TDT) over Whisper for superior real-time performance.
