@@ -1,4 +1,4 @@
-from babelfish_stt.main import run_babelfish
+from babelfish_stt.main import main
 
 if __name__ == "__main__":
-    run_babelfish()
+    main()

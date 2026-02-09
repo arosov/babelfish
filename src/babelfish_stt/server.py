@@ -87,6 +87,8 @@ class BabelfishServer(Reconfigurable):
         ] = {}  # Map (protocol, stream_id) to buffer
         self.pipeline = None
         self.restart_required = False
+        self._loop = None
+        self.last_bootstrap_message: Optional[dict] = None
 
         self.quic_config = QuicConfiguration(
             is_client=False,
@@ -94,7 +96,7 @@ class BabelfishServer(Reconfigurable):
             max_data=10**7,
             max_stream_data=10**6,
             max_datagram_frame_size=65536,
-            idle_timeout=30.0,
+            idle_timeout=3.0,
         )
 
         # Load certificate
@@ -102,6 +104,46 @@ class BabelfishServer(Reconfigurable):
             self.quic_config.load_cert_chain(
                 self.server_config.cert_path, self.server_config.key_path
             )
+
+    def set_pipeline(self, pipeline):
+        self.pipeline = pipeline
+        self.pipeline.on_state_change = self._on_pipeline_state_change
+
+    def _on_pipeline_state_change(self, is_speaking: bool):
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self.broadcast_status(is_speaking), self._loop
+            )
+
+    async def broadcast_status(self, is_speaking: bool) -> None:
+        status_msg = {
+            "type": "status",
+            "vad_state": "listening" if is_speaking else "idle",
+            "engine_state": "ready",
+        }
+        await self.broadcast_message(status_msg)
+
+    async def broadcast_bootstrap_status(self, message: str) -> None:
+        status_msg = {
+            "type": "status",
+            "message": message,
+            "vad_state": "bootstrapping",
+        }
+        self.last_bootstrap_message = status_msg
+        await self.broadcast_message(status_msg)
+
+    async def broadcast_message(self, message: dict) -> None:
+        data = (json.dumps(message) + "\n").encode("utf-8")
+
+        for protocol, streams in self.active_streams.items():
+            for stream_id in streams:
+                try:
+                    protocol.send_data(stream_id, data)
+                except Exception as e:
+                    logger.error(f"Failed to send message to stream {stream_id}: {e}")
+
+        # Give the event loop a chance to actually send the data
+        await asyncio.sleep(0)
 
     def reconfigure(self, config: "BabelfishConfig") -> None:
         from babelfish_stt.config import BabelfishConfig
@@ -159,19 +201,19 @@ class BabelfishServer(Reconfigurable):
                     )
 
                     # Send initial config immediately upon stream discovery
-                    asyncio.create_task(self.send_config_to_stream(protocol, stream_id))
+                    asyncio.create_task(self.send_initial_state(protocol, stream_id))
 
         self.buffers[key] += data
 
-        if b"\n" in self.buffers[key]:
-            lines = self.buffers[key].split(b"\n")
-            # Keep the last partial line in buffer
-            self.buffers[key] = lines.pop()
+    async def send_initial_state(self, protocol: BabelfishH3Protocol, stream_id: int):
+        # 1. Send current bootstrap status if we are still bootstrapping
+        if self.last_bootstrap_message:
+            data = (json.dumps(self.last_bootstrap_message) + "\n").encode("utf-8")
+            protocol.send_data(stream_id, data)
+            await asyncio.sleep(0)
 
-            for line in lines:
-                # We process even empty lines if they were intended as pings,
-                # but process_command will likely ignore them.
-                asyncio.create_task(self.process_command(protocol, stream_id, line))
+        # 2. Send full config
+        await self.send_config_to_stream(protocol, stream_id)
 
     async def process_command(
         self, protocol: BabelfishH3Protocol, stream_id: int, line: bytes
@@ -188,6 +230,9 @@ class BabelfishServer(Reconfigurable):
                 logger.info(f"Received config update on stream {stream_id}")
                 self.config_manager.update(changes)
                 await self.broadcast_config()
+            elif msg_type == "hello":
+                # Client handshake - ensures stream discovery and config push
+                logger.debug(f"Received HELLO on stream {stream_id}")
             else:
                 logger.warning(f"Unknown message type: {msg_type}")
 
@@ -224,6 +269,7 @@ class BabelfishServer(Reconfigurable):
                 await self.send_config_to_stream(protocol, stream_id)
 
     async def start(self) -> None:
+        self._loop = asyncio.get_running_loop()
         logger.info(
             f"Starting aioquic server on {self.server_config.host}:{self.server_config.port}"
         )

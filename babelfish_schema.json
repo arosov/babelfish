@@ -51,6 +51,11 @@
           "default": "solid",
           "title": "Anchor Preset",
           "type": "string"
+        },
+        "anchor_trigger_interval_ms": {
+          "default": 2000,
+          "title": "Anchor Trigger Interval Ms",
+          "type": "integer"
         }
       },
       "title": "PipelineConfig",
