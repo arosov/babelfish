@@ -5,17 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "babelfish"
 version = "0.1.0"
-description = "High-performance local STT pipeline using parakeet-stream"
+description = "High-performance local STT pipeline using unified ONNX"
 readme = "README.md"
 requires-python = ">=3.12, <3.13"
 dependencies = [
-    "parakeet-stream[microphone]",
     "torch>=2.6.0",
     "torchaudio>=2.6.0",
     "pyarrow<19.0.0",
-    "nemo_toolkit[asr]>=2.6.2",
-    "cuda-python>=12.3",
-    "onnxruntime-gpu",
     "numpy<2",
     "omegaconf",
     "tensorflow",
@@ -23,12 +19,36 @@ dependencies = [
     "pydantic>=2.12.5",
     "aiohttp>=3.13.3",
     "websockets>=14.2",
-    "pyrnnoise>=0.2.0",
+    "onnx-asr",
+    "huggingface-hub",
+    "sounddevice",
+    "soxr",
+    "onnxruntime==1.23.2",
+]
+
+[project.optional-dependencies]
+# Unified Windows acceleration (AMD/Intel/NVIDIA)
+windows-gpu = [
+    "onnxruntime-directml",
+]
+# Native performance for NVIDIA on Linux
+nvidia-linux = [
+    "onnxruntime-gpu==1.23.2",
+]
+# Native performance for AMD on Linux
+amd-linux = [
+    "onnxruntime-rocm",
+]
+# Native performance for Intel on Linux
+intel-linux = [
+    "onnxruntime-openvino",
 ]
 
 [[tool.uv.index]]
+# Default to CPU index for base install size reduction.
+# The bootstrapper will override UV_INDEX_PYTORCH_URL if a GPU is detected.
 name = "pytorch"
-url = "https://download.pytorch.org/whl/cu124"
+url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.uv.sources]

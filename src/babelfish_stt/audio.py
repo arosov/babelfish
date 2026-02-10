@@ -2,21 +2,17 @@ import queue
 import sounddevice as sd
 import numpy as np
 import soxr
+import logging
 from typing import Generator, Optional
 from babelfish_stt.reconfigurable import Reconfigurable
-from babelfish_stt.config import BabelfishConfig, HardwareConfig
+from babelfish_stt.config import BabelfishConfig
 
-try:
-    import pyrnnoise
-
-    HAS_RNNOISE = True
-except ImportError:
-    HAS_RNNOISE = False
+logger = logging.getLogger(__name__)
 
 
 class AudioStreamer(Reconfigurable):
     """
-    Hardware-aware audio capture with low-latency resampling and noise suppression.
+    Hardware-aware audio capture with low-latency resampling.
     """
 
     def __init__(self, sample_rate: int = 16000, device_index: Optional[int] = None):
@@ -36,13 +32,6 @@ class AudioStreamer(Reconfigurable):
         # Only resample if hardware rate differs from target
         self.needs_resampling = self.native_rate != self.target_rate
 
-        # Initialize noise suppressor at native capture rate (higher quality)
-        if HAS_RNNOISE:
-            self._noise_suppressor = pyrnnoise.RNNoise(self.native_rate)
-            print(f"🔇 RNNoise suppression enabled at {self.native_rate}Hz (native)")
-        else:
-            self._noise_suppressor = None
-
         # Buffer for accumulating audio to ensure consistent chunk sizes
         self._chunk_buffer = np.array([], dtype=np.float32)
 
@@ -56,21 +45,14 @@ class AudioStreamer(Reconfigurable):
     def _audio_callback(self, indata, frames, time_info, status):
         """Callback for sounddevice to capture audio."""
         if status:
-            # Silence internal overflows/underflows for now
-            pass
+            logger.warning(f"Audio callback status: {status}")
 
         data = indata.copy().flatten()
 
-        # Apply noise suppression at native rate for higher quality (before resampling)
-        if self._noise_suppressor is not None:
-            # denoise_chunk processes audio and returns iterator of (prob, frame) tuples
-            denoised_frames = []
-            for _, frame in self._noise_suppressor.denoise_chunk(
-                data.astype(np.float32)
-            ):
-                denoised_frames.append(frame.flatten())
-            if denoised_frames:
-                data = np.concatenate(denoised_frames)
+        # Debug: check RMS
+        rms = np.sqrt(np.mean(data**2))
+        if rms > 0.001:
+            logger.debug(f"Audio captured: RMS={rms:.6f}")
 
         # Resample if needed (to 16kHz target rate)
         if self.needs_resampling:
@@ -158,11 +140,6 @@ class AudioStreamer(Reconfigurable):
 
             # Update resampling flag
             self.needs_resampling = self.native_rate != self.target_rate
-
-            # Recreate noise suppressor at new native rate
-            if HAS_RNNOISE and self._noise_suppressor is not None:
-                self._noise_suppressor = pyrnnoise.RNNoise(self.native_rate)
-                print(f"🔇 RNNoise recreated at {self.native_rate}Hz (native)")
 
             print(f"🎤 New microphone: {self.mic_name} @ {self.native_rate}Hz")
 
