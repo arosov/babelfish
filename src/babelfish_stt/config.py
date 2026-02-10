@@ -4,8 +4,12 @@ from pydantic import BaseModel, Field
 
 class HardwareConfig(BaseModel):
     device: str = "auto"
-    vram_limit_gb: Optional[float] = None
     microphone_index: Optional[int] = None
+    onnx_model_dir: Optional[str] = None
+    onnx_execution_provider: Optional[str] = None
+    quantization: Optional[str] = (
+        None  # None means auto/highest for GPU, default int8 for CPU in engine
+    )
 
 
 class PipelineConfig(BaseModel):

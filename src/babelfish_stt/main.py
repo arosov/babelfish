@@ -1,15 +1,6 @@
 import sys
 import os
 
-# --- HOTFIX: Force NeMo/Parakeet extraction to disk ---
-# The default /tmp (tmpfs) is too small (16GB) for unpacking large .nemo models.
-# We redirect temporary files to a local 'tmp_extraction' folder on the physical disk.
-_project_root = os.getcwd()
-_tmp_dir = os.path.join(_project_root, "tmp_extraction")
-os.makedirs(_tmp_dir, exist_ok=True)
-os.environ["TMPDIR"] = _tmp_dir
-# ------------------------------------------------------
-
 import logging
 import numpy as np
 import time
@@ -62,7 +53,12 @@ def run_stt_loop(streamer, pipeline, ww_engine, wakeword, stopword, shutdown_eve
 
     try:
         # Loop over 32ms chunks (512 samples)
+        chunk_count = 0
         for chunk in streamer.stream(chunk_size=512):
+            chunk_count += 1
+            if chunk_count % 100 == 0:
+                logging.debug(f"Processed {chunk_count} chunks")
+
             if shutdown_event.is_set():
                 break
 
@@ -188,9 +184,10 @@ async def run_babelfish(
         vad = await asyncio.to_thread(SileroVAD)
 
         await server.broadcast_bootstrap_status(f"Loading STT Engine ({device})...")
-        engine = await asyncio.to_thread(STTEngine, device=device)
+        engine = await asyncio.to_thread(STTEngine, config=config_manager.config)
 
         ww_engine = None
+
         if config_manager.config.voice.wakeword:
             await server.broadcast_bootstrap_status(
                 f"Loading WakeWord ({config_manager.config.voice.wakeword})..."
@@ -201,7 +198,10 @@ async def run_babelfish(
 
         await server.broadcast_bootstrap_status("Initializing Audio Stream...")
         streamer = await asyncio.to_thread(AudioStreamer, device_index=best_mic_idx)
-        display = TerminalDisplay()
+
+        from babelfish_stt.display import TerminalDisplay, ServerDisplay, MultiDisplay
+
+        display = MultiDisplay(TerminalDisplay(), ServerDisplay(server))
 
         # Pipeline
         if config_manager.config.pipeline.double_pass:

@@ -41,17 +41,6 @@
           "title": "Device",
           "type": "string"
         },
-        "vram_limit_gb": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Vram Limit Gb"
-        },
         "microphone_index": {
           "anyOf": [
             {
@@ -63,6 +52,42 @@
           ],
           "default": null,
           "title": "Microphone Index"
+        },
+        "onnx_model_dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Onnx Model Dir"
+        },
+        "onnx_execution_provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Onnx Execution Provider"
+        },
+        "quantization": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantization"
         }
       },
       "title": "HardwareConfig",

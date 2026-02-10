@@ -1,55 +1,92 @@
-import torch
+import onnx_asr
 import numpy as np
-from parakeet_stream import Parakeet
-from typing import Any
+import logging
+from pathlib import Path
+from typing import Any, Optional, List
 from babelfish_stt.reconfigurable import Reconfigurable
-from babelfish_stt.config import PipelineConfig
+from babelfish_stt.config import PipelineConfig, BabelfishConfig
+
+logger = logging.getLogger(__name__)
+
 
 class STTEngine(Reconfigurable):
     """
-    Stable STT engine that transcribes complete audio buffers.
+    Unified STT engine using onnx-asr for hardware-accelerated inference
+    on AMD, Intel, and NVIDIA GPUs across Windows and Linux.
     """
-    
-    def __init__(self, device: str = "cpu", model_name: str = "nvidia/parakeet-tdt-0.6b-v3"):
-        self.model_name = model_name
-        self.device = device
-        
-        # Initialize Parakeet (loads model eagerly)
-        # We use 'realtime' for CUDA and 'low_latency' for CPU to maintain responsiveness
-        self.preset = 'realtime' if device == 'cuda' else 'low_latency'
-        print(f"🧠 Loading STT Engine: {model_name} on {device} (preset: {self.preset})...")
-        self.pk = Parakeet(
-            model_name=model_name,
-            device=device,
-            config=self.preset
-        )
+
+    def __init__(self, config: BabelfishConfig):
+        self.device_type = config.hardware.device
+
+        # Default model search
+        base_dir = Path(__file__).resolve().parent.parent.parent
+        models_dir = base_dir / "models"
+
+        # We expect bootstrap.py to have provisioned the model here
+        model_name = "nemo-parakeet-tdt-0.6b-v3"
+        model_path = models_dir / model_name
+
+        # Quantization Policy:
+        # GPU: Force highest (None)
+        # CPU: Allow config or default to int8
+        if self.device_type != "cpu":
+            quantization = None
+            logger.info("🚀 GPU mode: Forcing highest precision quantization.")
+        else:
+            quantization = config.hardware.quantization or "int8"
+            logger.info(f"🐌 CPU mode: Using quantization={quantization}")
+
+        # Map Babelfish device to ONNX Runtime providers
+        providers = self._get_providers(self.device_type)
+
+        logger.info(f"🚀 Initializing onnx-asr (Providers: {providers})...")
+
+        try:
+            self.model = onnx_asr.load_model(
+                model_name,
+                path=str(model_path) if model_path.exists() else None,
+                quantization=quantization,
+                providers=providers,
+            )
+        except Exception as e:
+            logger.error(f"Failed to load onnx-asr model: {e}")
+            # Fallback to CPU if GPU fails
+            if self.device_type != "cpu":
+                logger.warning("Retrying with CPU provider...")
+                self.model = onnx_asr.load_model(
+                    model_name,
+                    path=str(model_path) if model_path.exists() else None,
+                    quantization="int8",
+                    providers=["CPUExecutionProvider"],
+                )
+            else:
+                raise
+
+    def _get_providers(self, device: str) -> List[Any]:
+        if device == "cuda":
+            return [("CUDAExecutionProvider", {"device_id": 0}), "CPUExecutionProvider"]
+        elif device == "dml":
+            return ["DmlExecutionProvider", "CPUExecutionProvider"]
+        elif device == "rocm":
+            return ["ROCMExecutionProvider", "CPUExecutionProvider"]
+        elif device == "openvino":
+            return ["OpenVINOExecutionProvider", "CPUExecutionProvider"]
+        return ["CPUExecutionProvider"]
 
     def reconfigure(self, config: PipelineConfig) -> None:
-        """Apply engine-specific settings."""
-        # For DoublePassPipeline, we switch presets on the fly, 
-        # but we can update defaults here if needed.
         pass
 
     def set_quality(self, level: str):
-        """
-        Switch model quality/latency preset instantly.
-        Supports quality levels ('max', 'high', 'good', 'low', 'realtime') 
-        and preset names ('balanced', 'ultra_realtime', etc.)
-        """
-        self.pk.with_config(level)
+        pass
 
-    def transcribe(self, audio_buffer: np.ndarray, left_context_secs: float = 0.0) -> str:
-        """
-        Transcribes a complete buffer of audio with optional left context for accuracy.
-        """
+    def transcribe(
+        self, audio_buffer: np.ndarray, left_context_secs: float = 0.0
+    ) -> str:
         if len(audio_buffer) == 0:
             return ""
-            
-        # Parakeet.transcribe is very robust for variable length audio
-        # Using with_params to inject context if provided
-        if left_context_secs > 0:
-            result = self.pk.with_params(left_context_secs=left_context_secs).transcribe(audio_buffer, _quiet=True)
-        else:
-            result = self.pk.transcribe(audio_buffer, _quiet=True)
-            
-        return result.text.strip()
+
+        # onnx-asr handles the stream/context internally or we can just pass the buffer
+        # For parakeet-tdt, it's an offline model in onnx-asr wrapper
+        result = self.model.recognize(audio_buffer, sample_rate=16000)
+
+        return result.strip() if result else ""
