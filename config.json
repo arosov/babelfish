@@ -2,13 +2,15 @@
     "hardware": {
         "device": "cuda",
         "vram_limit_gb": null,
-        "microphone_index": null
+        "microphone_index": 20
     },
     "pipeline": {
         "double_pass": false,
+        "preset": "balanced",
         "ghost_preset": "fast",
         "anchor_preset": "solid",
-        "anchor_trigger_interval_ms": 2000
+        "anchor_trigger_interval_ms": 2000,
+        "silence_threshold_ms": 700
     },
     "voice": {
         "wakeword": null,
@@ -17,12 +19,21 @@
     },
     "ui": {
         "verbose": false,
-        "show_timestamps": true
+        "show_timestamps": true,
+        "shortcuts": {
+            "toggle_listening": "Ctrl+Shift+S",
+            "force_listen": "Ctrl+Shift+L"
+        },
+        "activation_detection": {
+            "icon_only": false,
+            "overlay_mode": false
+        }
     },
     "server": {
         "host": "127.0.0.1",
-        "port": 8123,
-        "cert_path": "127.0.0.1.crt",
-        "key_path": "127.0.0.1.key"
+        "port": 8123
+    },
+    "cache": {
+        "cache_dir": null
     }
 }

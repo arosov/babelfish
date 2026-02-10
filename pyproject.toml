@@ -22,7 +22,8 @@ dependencies = [
     "openwakeword",
     "pydantic>=2.12.5",
     "aiohttp>=3.13.3",
-    "aioquic>=1.2.0",
+    "websockets>=14.2",
+    "pyrnnoise>=0.2.0",
 ]
 
 [[tool.uv.index]]
@@ -34,7 +35,6 @@ explicit = true
 torch = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
 openwakeword = { git = "https://github.com/dscripka/openWakeWord.git" }
-pywebtransport = { path = "../pywebtransport", editable = true }
 
 [project.scripts]
 babelfish = "babelfish_stt.main:main"

@@ -1,5 +1,39 @@
 {
   "$defs": {
+    "ActivationDetectionConfig": {
+      "properties": {
+        "icon_only": {
+          "default": false,
+          "title": "Icon Only",
+          "type": "boolean"
+        },
+        "overlay_mode": {
+          "default": false,
+          "title": "Overlay Mode",
+          "type": "boolean"
+        }
+      },
+      "title": "ActivationDetectionConfig",
+      "type": "object"
+    },
+    "CacheConfig": {
+      "properties": {
+        "cache_dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Dir"
+        }
+      },
+      "title": "CacheConfig",
+      "type": "object"
+    },
     "HardwareConfig": {
       "properties": {
         "device": {
@@ -16,7 +50,6 @@
               "type": "null"
             }
           ],
-          "default": null,
           "title": "Vram Limit Gb"
         },
         "microphone_index": {
@@ -42,6 +75,11 @@
           "title": "Double Pass",
           "type": "boolean"
         },
+        "preset": {
+          "default": "balanced",
+          "title": "Preset",
+          "type": "string"
+        },
         "ghost_preset": {
           "default": "fast",
           "title": "Ghost Preset",
@@ -55,6 +93,11 @@
         "anchor_trigger_interval_ms": {
           "default": 2000,
           "title": "Anchor Trigger Interval Ms",
+          "type": "integer"
+        },
+        "silence_threshold_ms": {
+          "default": 700,
+          "title": "Silence Threshold Ms",
           "type": "integer"
         }
       },
@@ -72,33 +115,25 @@
           "default": 8123,
           "title": "Port",
           "type": "integer"
-        },
-        "cert_path": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Cert Path"
-        },
-        "key_path": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Key Path"
         }
       },
       "title": "ServerConfig",
+      "type": "object"
+    },
+    "ShortcutsConfig": {
+      "properties": {
+        "toggle_listening": {
+          "default": "Ctrl+Shift+S",
+          "title": "Toggle Listening",
+          "type": "string"
+        },
+        "force_listen": {
+          "default": "Ctrl+Shift+L",
+          "title": "Force Listen",
+          "type": "string"
+        }
+      },
+      "title": "ShortcutsConfig",
       "type": "object"
     },
     "UIConfig": {
@@ -112,6 +147,12 @@
           "default": true,
           "title": "Show Timestamps",
           "type": "boolean"
+        },
+        "shortcuts": {
+          "$ref": "#/$defs/ShortcutsConfig"
+        },
+        "activation_detection": {
+          "$ref": "#/$defs/ActivationDetectionConfig"
         }
       },
       "title": "UIConfig",
@@ -132,7 +173,6 @@
           "title": "Wakeword"
         },
         "wakeword_sensitivity": {
-          "default": 0.5,
           "title": "Wakeword Sensitivity",
           "type": "number"
         },
@@ -163,6 +203,9 @@
     },
     "server": {
       "$ref": "#/$defs/ServerConfig"
+    },
+    "cache": {
+      "$ref": "#/$defs/CacheConfig"
     }
   },
   "title": "BabelfishConfig",

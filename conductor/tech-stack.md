@@ -3,7 +3,7 @@
 ## Core Backend
 - **Language:** Python 3.12 (Pinned to 3.12.*)
 - **Package Management & Distribution:** `uv`
-- **Communication Protocol:** WebTransport (Direct implementation via `aioquic`)
+- **Communication Protocol:** WebSockets (via `websockets` library)
 - **Configuration Schema & Validation:** Pydantic (v2)
 
 ## Pipeline Engines

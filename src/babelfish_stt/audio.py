@@ -6,10 +6,17 @@ from typing import Generator, Optional
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import BabelfishConfig, HardwareConfig
 
+try:
+    import pyrnnoise
+
+    HAS_RNNOISE = True
+except ImportError:
+    HAS_RNNOISE = False
+
 
 class AudioStreamer(Reconfigurable):
     """
-    Hardware-aware audio capture with low-latency resampling.
+    Hardware-aware audio capture with low-latency resampling and noise suppression.
     """
 
     def __init__(self, sample_rate: int = 16000, device_index: Optional[int] = None):
@@ -29,6 +36,16 @@ class AudioStreamer(Reconfigurable):
         # Only resample if hardware rate differs from target
         self.needs_resampling = self.native_rate != self.target_rate
 
+        # Initialize noise suppressor at native capture rate (higher quality)
+        if HAS_RNNOISE:
+            self._noise_suppressor = pyrnnoise.RNNoise(self.native_rate)
+            print(f"🔇 RNNoise suppression enabled at {self.native_rate}Hz (native)")
+        else:
+            self._noise_suppressor = None
+
+        # Buffer for accumulating audio to ensure consistent chunk sizes
+        self._chunk_buffer = np.array([], dtype=np.float32)
+
         if self.needs_resampling:
             print(
                 f"🔄 Resampling enabled: {self.native_rate}Hz -> {self.target_rate}Hz (via soxr)"
@@ -44,12 +61,22 @@ class AudioStreamer(Reconfigurable):
 
         data = indata.copy().flatten()
 
+        # Apply noise suppression at native rate for higher quality (before resampling)
+        if self._noise_suppressor is not None:
+            # denoise_chunk processes audio and returns iterator of (prob, frame) tuples
+            denoised_frames = []
+            for _, frame in self._noise_suppressor.denoise_chunk(
+                data.astype(np.float32)
+            ):
+                denoised_frames.append(frame.flatten())
+            if denoised_frames:
+                data = np.concatenate(denoised_frames)
+
+        # Resample if needed (to 16kHz target rate)
         if self.needs_resampling:
-            # Low-latency resampling via soxr
-            resampled = soxr.resample(data, self.native_rate, self.target_rate)
-            self.audio_queue.put(resampled)
-        else:
-            self.audio_queue.put(data)
+            data = soxr.resample(data, self.native_rate, self.target_rate)
+
+        self.audio_queue.put(data)
 
     def stream(self, chunk_size: int = 512) -> Generator[np.ndarray, None, None]:
         """
@@ -73,8 +100,17 @@ class AudioStreamer(Reconfigurable):
         ):
             while self.is_running:
                 try:
-                    chunk = self.audio_queue.get(timeout=0.1)
-                    yield chunk
+                    # Get audio from queue and accumulate in buffer
+                    audio_chunk = self.audio_queue.get(timeout=0.1)
+                    self._chunk_buffer = np.concatenate(
+                        [self._chunk_buffer, audio_chunk]
+                    )
+
+                    # Yield fixed-size chunks while we have enough data
+                    while len(self._chunk_buffer) >= chunk_size:
+                        yield self._chunk_buffer[:chunk_size]
+                        self._chunk_buffer = self._chunk_buffer[chunk_size:]
+
                 except queue.Empty:
                     continue
 
@@ -83,12 +119,14 @@ class AudioStreamer(Reconfigurable):
         self.is_running = False
 
     def drain(self):
-        """Clears any pending audio in the queue."""
+        """Clears any pending audio in the queue and internal buffer."""
         while not self.audio_queue.empty():
             try:
                 self.audio_queue.get_nowait()
             except queue.Empty:
                 break
+        # Clear the internal chunk buffer
+        self._chunk_buffer = np.array([], dtype=np.float32)
 
     def reconfigure(self, config: BabelfishConfig) -> None:
         """Reconfigure audio stream with new hardware settings."""
@@ -120,6 +158,11 @@ class AudioStreamer(Reconfigurable):
 
             # Update resampling flag
             self.needs_resampling = self.native_rate != self.target_rate
+
+            # Recreate noise suppressor at new native rate
+            if HAS_RNNOISE and self._noise_suppressor is not None:
+                self._noise_suppressor = pyrnnoise.RNNoise(self.native_rate)
+                print(f"🔇 RNNoise recreated at {self.native_rate}Hz (native)")
 
             print(f"🎤 New microphone: {self.mic_name} @ {self.native_rate}Hz")
 
