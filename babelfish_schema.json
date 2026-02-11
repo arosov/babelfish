@@ -41,17 +41,17 @@
           "title": "Device",
           "type": "string"
         },
-        "microphone_index": {
+        "microphone_name": {
           "anyOf": [
             {
-              "type": "integer"
+              "type": "string"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "title": "Microphone Index"
+          "title": "Microphone Name"
         },
         "onnx_model_dir": {
           "anyOf": [

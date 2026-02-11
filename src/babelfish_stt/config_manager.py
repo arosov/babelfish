@@ -86,6 +86,23 @@ class ConfigManager:
         try:
             with open(self.config_path, "r") as f:
                 data = json.load(f)
+
+            # --- Migration: microphone_index -> microphone_name ---
+            hardware = data.get("hardware", {})
+            if "microphone_index" in hardware and "microphone_name" not in hardware:
+                index = hardware.pop("microphone_index")
+                try:
+                    import sounddevice as sd
+
+                    devices = sd.query_devices()
+                    if index is not None and 0 <= index < len(devices):
+                        hardware["microphone_name"] = devices[index]["name"]
+                        logger.info(
+                            f"Migrated microphone index {index} to name '{hardware['microphone_name']}'"
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to migrate microphone index to name: {e}")
+
             return BabelfishConfig.model_validate(data)
         except (json.JSONDecodeError, Exception) as e:
             logger.warning(
@@ -107,12 +124,12 @@ class ConfigManager:
             config = BabelfishConfig.model_validate(data)
 
             if hw:
-                # Validate microphone index
-                if config.hardware.microphone_index is not None:
-                    valid_indices = [m["index"] for m in hw.microphones]
-                    if config.hardware.microphone_index not in valid_indices:
+                # Validate microphone name
+                if config.hardware.microphone_name is not None:
+                    valid_names = [m["name"] for m in hw.microphones]
+                    if config.hardware.microphone_name not in valid_names:
                         logger.warning(
-                            f"Configured microphone index {config.hardware.microphone_index} not found."
+                            f"Configured microphone '{config.hardware.microphone_name}' not found."
                         )
                         return False
 
@@ -174,8 +191,18 @@ class ConfigManager:
             device = "openvino"
             logger.info("OpenVINO provider detected. Selecting OpenVINO mode.")
 
+        # Find name for best microphone
+        best_mic_name = None
+        if hw.best_mic_index is not None:
+            try:
+                import sounddevice as sd
+
+                best_mic_name = sd.query_devices(hw.best_mic_index, "input")["name"]
+            except Exception:
+                pass
+
         self.config = BabelfishConfig(
-            hardware=HardwareConfig(device=device, microphone_index=hw.best_mic_index),
+            hardware=HardwareConfig(device=device, microphone_name=best_mic_name),
             pipeline=PipelineConfig(),
         )
         self.save()

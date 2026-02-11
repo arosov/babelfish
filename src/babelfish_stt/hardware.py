@@ -315,6 +315,15 @@ def _get_windows_memory() -> Dict[str, float]:
     return {"total": 0.0, "used": 0.0}
 
 
+def find_microphone_index_by_name(name: str) -> Optional[int]:
+    """Resolves a microphone name to its current PortAudio index."""
+    devices = sd.query_devices()
+    for i, dev in enumerate(devices):
+        if dev["max_input_channels"] > 0 and dev["name"] == name:
+            return i
+    return None
+
+
 def list_microphones() -> List[Dict]:
     """Lists all available audio input devices."""
     devices = sd.query_devices()

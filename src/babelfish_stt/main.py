@@ -125,7 +125,6 @@ async def run_babelfish(
     # 4. Initialize Audio Pipeline (Heavy/Blocking)
     async def heavy_init():
         device = config_manager.config.hardware.device
-        best_mic_idx = config_manager.config.hardware.microphone_index
 
         await server.broadcast_bootstrap_status("Loading Silero VAD...")
         vad = await asyncio.to_thread(SileroVAD)
@@ -151,7 +150,10 @@ async def run_babelfish(
             )
 
         await server.broadcast_bootstrap_status("Initializing Audio Stream...")
-        streamer = await asyncio.to_thread(AudioStreamer, device_index=best_mic_idx)
+        streamer = await asyncio.to_thread(
+            AudioStreamer,
+            microphone_name=config_manager.config.hardware.microphone_name,
+        )
 
         display = MultiDisplay(TerminalDisplay(), ServerDisplay(server))
         pipeline = StandardPipeline(vad, engine, display)

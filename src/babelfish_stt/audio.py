@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import BabelfishConfig
 
+from babelfish_stt.hardware import find_microphone_index_by_name
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,8 +18,18 @@ class AudioStreamer(Reconfigurable):
     Hardware-aware audio capture with low-latency resampling.
     """
 
-    def __init__(self, sample_rate: int = 16000, device_index: Optional[int] = None):
+    def __init__(self, sample_rate: int = 16000, microphone_name: Optional[str] = None):
         self.target_rate = sample_rate
+
+        # Resolve name to index
+        device_index = None
+        if microphone_name:
+            device_index = find_microphone_index_by_name(microphone_name)
+            if device_index is None:
+                logger.warning(
+                    f"Microphone '{microphone_name}' not found. Falling back to default."
+                )
+
         self.device_index = (
             device_index if device_index is not None else sd.default.device[0]
         )
@@ -120,11 +132,15 @@ class AudioStreamer(Reconfigurable):
         if not isinstance(config, BabelfishConfig):
             return
 
-        new_device_index = (
-            config.hardware.microphone_index
-            if config.hardware.microphone_index is not None
-            else sd.default.device[0]
-        )
+        microphone_name = config.hardware.microphone_name
+
+        # Resolve name to index
+        new_device_index = None
+        if microphone_name:
+            new_device_index = find_microphone_index_by_name(microphone_name)
+
+        if new_device_index is None:
+            new_device_index = sd.default.device[0]
 
         if new_device_index != self.device_index:
             print(f"🎤 Switching microphone: {self.device_index} -> {new_device_index}")

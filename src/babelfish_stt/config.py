@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 class HardwareConfig(BaseModel):
     device: str = "auto"
-    microphone_index: Optional[int] = None
+    microphone_name: Optional[str] = None
     onnx_model_dir: Optional[str] = None
     onnx_execution_provider: Optional[str] = None
     quantization: Optional[str] = (
