@@ -3,7 +3,51 @@ import numpy as np
 import subprocess
 import shutil
 import sys
+import os
+import ctypes
+import ctypes.util
 from typing import Dict, Optional, List
+
+
+def detect_nvidia() -> bool:
+    """Detects NVIDIA GPU presence by checking for libcuda/nvcuda libraries."""
+    lib_name = "nvcuda.dll" if sys.platform == "win32" else "libcuda.so.1"
+    try:
+        # 1. Try direct loading
+        ctypes.CDLL(lib_name)
+        return True
+    except:
+        pass
+    # 2. Try finding via util
+    found_path = ctypes.util.find_library(lib_name)
+    if found_path:
+        try:
+            ctypes.CDLL(found_path)
+            return True
+        except:
+            pass
+    return False
+
+
+def detect_amd_linux() -> bool:
+    """Detects AMD GPU on Linux by checking for ROCm devices or libraries."""
+    if sys.platform != "linux":
+        return False
+    if os.path.exists("/dev/kfd"):
+        return True
+    try:
+        if ctypes.util.find_library("libhsa-runtime64.so.1"):
+            return True
+    except:
+        pass
+    return False
+
+
+def detect_metal() -> bool:
+    """Detects Apple Silicon / Metal support."""
+    if sys.platform != "darwin":
+        return False
+    return os.path.exists("/System/Library/Frameworks/Metal.framework")
 
 
 def is_cuda_available() -> bool:
@@ -52,6 +96,146 @@ def get_gpu_info() -> Dict:
         "name": "NVIDIA GPU",
         "vram_gb": 4.0,
     }  # Assume 4GB if detection fails
+
+
+def get_memory_usage(device_type: str = "cpu") -> Dict[str, float]:
+    """
+    Generic dispatcher to get memory usage for the active device type.
+    Supported: cuda, rocm, dml (Windows), metal (macOS).
+    Returns {"total": 0.0, "used": 0.0} if not available.
+    """
+    if device_type.startswith("cuda"):
+        device_id = 0
+        if ":" in device_type:
+            try:
+                device_id = int(device_type.split(":")[1])
+            except ValueError:
+                pass
+        return _get_nvidia_memory(device_id)
+
+    if device_type == "rocm":
+        return _get_rocm_memory()
+
+    if device_type == "dml" and sys.platform == "win32":
+        return _get_windows_memory()
+
+    if device_type == "metal" and sys.platform == "darwin":
+        return _get_macos_memory()
+
+    return {"total": 0.0, "used": 0.0}
+
+
+def _get_nvidia_memory(device_index: int = 0) -> Dict[str, float]:
+    """NVIDIA specific memory query."""
+    if not shutil.which("nvidia-smi"):
+        return {"total": 0.0, "used": 0.0}
+
+    try:
+        output = (
+            subprocess.check_output(
+                [
+                    "nvidia-smi",
+                    f"--id={device_index}",
+                    "--query-gpu=memory.total,memory.used",
+                    "--format=csv,noheader,nounits",
+                ],
+                stderr=subprocess.STDOUT,
+            )
+            .decode("utf-8")
+            .strip()
+            .split("\n")[0]
+        )
+        total_mb, used_mb = output.split(",")
+        return {
+            "total": float(total_mb.strip()) / 1024.0,
+            "used": float(used_mb.strip()) / 1024.0,
+        }
+    except Exception:
+        return {"total": 0.0, "used": 0.0}
+
+
+def _get_rocm_memory() -> Dict[str, float]:
+    """AMD ROCm (Linux) specific memory query."""
+    # Try common locations if not in PATH
+    smi_path = shutil.which("rocm-smi") or "/opt/rocm/bin/rocm-smi"
+    if not os.path.exists(smi_path):
+        return {"total": 0.0, "used": 0.0}
+
+    try:
+        # Get JSON output for easier parsing
+        output = subprocess.check_output(
+            [smi_path, "--showmeminfo", "vram", "--json"], stderr=subprocess.STDOUT
+        ).decode("utf-8")
+        import json
+
+        data = json.loads(output)
+        # rocm-smi JSON structure can vary, but usually it's keyed by 'cardX'
+        for card in data.values():
+            total = float(card.get("VRAM Total Memory (B)", 0)) / (1024**3)
+            used = float(card.get("VRAM Total Used (B)", 0)) / (1024**3)
+            if total > 0:
+                return {"total": total, "used": used}
+    except Exception:
+        pass
+    return {"total": 0.0, "used": 0.0}
+
+
+def _get_macos_memory() -> Dict[str, float]:
+    """Apple Silicon Unified Memory query."""
+    try:
+        # Total RAM
+        total_bytes = int(
+            subprocess.check_output(["sysctl", "-n", "hw.memsize"]).strip()
+        )
+        total_gb = total_bytes / (1024**3)
+
+        # Used RAM (Heuristic using vm_stat)
+        # Pages active + Pages wired is a good proxy for 'Used' in the context of AI models
+        vm_output = subprocess.check_output(["vm_stat"]).decode("utf-8")
+        lines = vm_output.split("\n")
+        page_size = 4096  # Default
+        active = 0
+        wired = 0
+        for line in lines:
+            if "page size of" in line:
+                page_size = int(line.split()[-2])
+            elif "Pages active:" in line:
+                active = int(line.split()[-1].strip("."))
+            elif "Pages wired down:" in line:
+                wired = int(line.split()[-1].strip("."))
+
+        used_gb = ((active + wired) * page_size) / (1024**3)
+        return {"total": total_gb, "used": used_gb}
+    except Exception:
+        return {"total": 0.0, "used": 0.0}
+
+
+def _get_windows_memory() -> Dict[str, float]:
+    """Windows generic (DirectML/AMD/Intel) memory query via PowerShell."""
+    try:
+        # 1. Get Total VRAM via PowerShell (CimInstance is more reliable than WMIC for large values)
+        ps_total_cmd = 'powershell -Command "(Get-CimInstance Win32_VideoController | Measure-Object -Property AdapterRam -Maximum).Maximum"'
+        total_bytes = int(
+            subprocess.check_output(ps_total_cmd, shell=True).decode().strip()
+        )
+        total_gb = total_bytes / (1024**3)
+
+        # 2. Get Used VRAM via PowerShell Performance Counters
+        # Dedicated Usage is the standard counter for VRAM (not shared system RAM)
+        ps_used_cmd = (
+            "powershell -Command \"(Get-Counter '\\GPU Adapter Memory(*)\\Dedicated Usage').CounterSamples "
+            '| Sort-Object CookedValue -Descending | Select-Object -First 1 -ExpandProperty CookedValue"'
+        )
+        used_bytes = float(
+            subprocess.check_output(ps_used_cmd, shell=True).decode().strip()
+        )
+        used_gb = used_bytes / (1024**3)
+
+        if total_gb > 0:
+            return {"total": total_gb, "used": used_gb}
+    except Exception:
+        pass
+    return {"total": 0.0, "used": 0.0}
 
 
 def list_microphones() -> List[Dict]:
@@ -104,9 +288,6 @@ def find_best_microphone() -> Optional[int]:
             return i
 
     return None
-
-
-import sys
 
 
 class HardwareManager:
@@ -232,43 +413,37 @@ def _get_nvidia_gpus() -> List[Dict]:
 
 
 def list_hardware() -> List[Dict]:
-    """Lists all supported hardware acceleration devices."""
+    """Lists all supported hardware acceleration devices, including physically detected ones."""
     devices = [{"id": "cpu", "name": "CPU"}]
 
-    try:
-        import onnxruntime as ort
+    # 1. NVIDIA (CUDA)
+    nvidia_physical = _get_nvidia_gpus()
+    if nvidia_physical:
+        devices.extend(nvidia_physical)
+    elif detect_nvidia():
+        devices.append({"id": "cuda", "name": "NVIDIA GPU"})
 
-        available = ort.get_available_providers()
+    # 2. AMD (ROCm)
+    if detect_amd_linux():
+        devices.append({"id": "rocm", "name": "AMD GPU (ROCm)"})
 
-        if "CUDAExecutionProvider" in available:
-            # Detect actual GPUs
-            nvidia_gpus = _get_nvidia_gpus()
-            if nvidia_gpus:
-                devices.extend(nvidia_gpus)
-            else:
-                # Fallback generic if nvidia-smi failed but CUDA is available
-                devices.append({"id": "cuda", "name": "NVIDIA GPU (Generic)"})
+    # 3. Apple Metal
+    if detect_metal():
+        devices.append({"id": "metal", "name": "Apple Metal"})
 
-        if "ROCMExecutionProvider" in available:
-            devices.append({"id": "rocm", "name": "AMD GPU (ROCm)"})
-
-        if "DmlExecutionProvider" in available:
-            # On Windows, DirectML is the unified provider.
-            # We try to fetch the actual GPU name to be more user-friendly.
-            name = "DirectML (Windows)"
-            gpu_names = get_windows_gpu_names()
-            if gpu_names:
-                # Join multiple GPUs if present, or just take the first one
-                # Usually users care about the primary one or just want to see their card name
-                pretty_names = ", ".join(gpu_names)
-                name = f"{pretty_names} (DirectML)"
-
+    # 4. Windows DirectML / Intel OpenVINO
+    if sys.platform == "win32":
+        gpu_names = get_windows_gpu_names()
+        if gpu_names:
+            name = ", ".join(gpu_names) + " (DirectML)"
             devices.append({"id": "dml", "name": name})
 
-        if "OpenVINOExecutionProvider" in available:
-            devices.append({"id": "openvino", "name": "Intel Graphics (OpenVINO)"})
+    # Deduplicate by ID
+    seen_ids = set()
+    unique_devices = []
+    for d in devices:
+        if d["id"] not in seen_ids:
+            unique_devices.append(d)
+            seen_ids.add(d["id"])
 
-    except Exception:
-        pass
-
-    return devices
+    return unique_devices

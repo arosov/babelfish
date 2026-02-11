@@ -11,6 +11,12 @@ class HardwareConfig(BaseModel):
         None  # None means auto/highest for GPU, default int8 for CPU in engine
     )
 
+    # Runtime Status Fields (Populated by Engine)
+    active_device: Optional[str] = None
+    vram_total_gb: float = 0.0
+    vram_used_baseline_gb: float = 0.0
+    vram_used_model_gb: float = 0.0
+
 
 class PerformanceProfile(BaseModel):
     ghost_throttle_ms: int = 100

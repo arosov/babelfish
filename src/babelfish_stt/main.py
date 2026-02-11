@@ -103,7 +103,6 @@ async def run_babelfish(
         if stopword not in config_manager.config.voice.stop_words:
             config_manager.config.voice.stop_words.append(stopword)
 
-    print("   MODE: Standard Recital")
     print(f"   DEVICE: {config_manager.config.hardware.device.upper()}")
 
     if config_manager.config.voice.wakeword:
@@ -169,6 +168,14 @@ async def run_babelfish(
 
     # Link pipeline to server and register remaining components for hot-reloading
     server.set_pipeline(pipeline)
+
+    # Update server's internal initial_config to include runtime stats (active_device, VRAM)
+    # This prevents unnecessary restarts when switching from 'auto' to the detected device.
+    server.initial_config = config_manager.config.model_copy(deep=True)
+
+    # Broadcast updated config (with VRAM stats and active device) to clients
+    await server.send_initial_state(None)
+
     config_manager.register(vad)
     config_manager.register(engine)
     config_manager.register(pipeline)

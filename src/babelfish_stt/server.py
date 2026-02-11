@@ -4,6 +4,7 @@ import logging
 from typing import Set, Dict, Optional, Any
 
 import websockets
+from pydantic import BaseModel
 
 from babelfish_stt.config_manager import ConfigManager
 from babelfish_stt.reconfigurable import Reconfigurable
@@ -71,19 +72,50 @@ class BabelfishServer(Reconfigurable):
                 logger.error(f"Failed to send message to websocket: {e}")
                 self.active_connections.discard(websocket)
 
-    def reconfigure(self, config: BabelfishConfig) -> None:
+    def reconfigure(self, config: BaseModel) -> None:
         if isinstance(config, BabelfishConfig):
+            # Resolve requested device (if auto, we need to know what it would be)
+            # But more simply: if the new requested device is 'auto' and we are already running on a GPU,
+            # or if the new requested device matches our CURRENT active device, no restart.
+
+            new_device = config.hardware.device
+            current_active = self.initial_config.hardware.active_device
+
+            # If the user explicitly selects the device we are already using,
+            # or if they switch to 'auto' and we are already on a non-cpu device (heuristic)
+            # we can potentially skip restart.
+            # However, switching TO auto usually means the user wants the system to decide.
+
+            is_same_device = (
+                (new_device == current_active)
+                or (new_device == "auto" and current_active and current_active != "cpu")
+                or (new_device != "auto" and current_active == "auto")
+            )  # This one is tricky
+
+            # Let's be more precise. We only restart if the actual target hardware type changes.
             hw_changed = config.hardware.device != self.initial_config.hardware.device
+
+            # Fix: If we were in 'auto' and we are now selecting the device 'auto' actually picked, skip restart.
+            if (
+                self.initial_config.hardware.device == "auto"
+                and config.hardware.device == current_active
+            ):
+                hw_changed = False
+
             server_changed = (
                 config.server.host != self.initial_config.server.host
                 or config.server.port != self.initial_config.server.port
             )
 
             if hw_changed or server_changed:
-                logger.info("Critical configuration change detected. Restart required.")
+                logger.info(
+                    f"Critical configuration change detected ({self.initial_config.hardware.device} -> {config.hardware.device}). Restart required."
+                )
                 self.restart_required = True
             else:
                 self.restart_required = False
+                # Update initial_config so subsequent changes are compared against this new state
+                self.initial_config = config.model_copy(deep=True)
 
     async def handle_connection(self, websocket):
         logger.info(
@@ -106,10 +138,13 @@ class BabelfishServer(Reconfigurable):
         finally:
             self.active_connections.discard(websocket)
 
-    async def send_initial_state(self, websocket):
+    async def send_initial_state(self, websocket=None):
         # 1. Send current bootstrap status if we are still bootstrapping
         if self.last_bootstrap_message:
-            await websocket.send(json.dumps(self.last_bootstrap_message))
+            if websocket:
+                await websocket.send(json.dumps(self.last_bootstrap_message))
+            else:
+                await self.broadcast_message(self.last_bootstrap_message)
 
         # 2. Send full config
         config_data = self.config_manager.config.model_dump()
@@ -118,7 +153,10 @@ class BabelfishServer(Reconfigurable):
             "data": config_data,
             "restart_required": self.restart_required,
         }
-        await websocket.send(json.dumps(message))
+        if websocket:
+            await websocket.send(json.dumps(message))
+        else:
+            await self.broadcast_message(message)
 
     async def process_json_command(self, websocket, message_str: str):
         if not message_str.strip():

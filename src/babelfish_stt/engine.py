@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any, Optional, List
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import PipelineConfig, BabelfishConfig
+from babelfish_stt.hardware import get_memory_usage
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +19,7 @@ class STTEngine(Reconfigurable):
 
     def __init__(self, config: BabelfishConfig):
         self.device_type = self._resolve_device(config.hardware.device)
+        self.config_ref = config  # Keep reference to update status
 
         # Default model search
         base_dir = Path(__file__).resolve().parent.parent.parent
@@ -41,6 +44,9 @@ class STTEngine(Reconfigurable):
 
         logger.info(f"🚀 Initializing onnx-asr (Providers: {providers})...")
 
+        # Measure Baseline Memory (Before loading model)
+        mem_before = get_memory_usage(self.device_type)
+
         try:
             self.model = onnx_asr.load_model(
                 model_name,
@@ -53,6 +59,7 @@ class STTEngine(Reconfigurable):
             # Fallback to CPU if GPU fails
             if self.device_type != "cpu":
                 logger.warning("Retrying with CPU provider...")
+                self.device_type = "cpu"  # Update device type to cpu
                 self.model = onnx_asr.load_model(
                     model_name,
                     path=str(model_path) if model_path.exists() else None,
@@ -61,6 +68,14 @@ class STTEngine(Reconfigurable):
                 )
             else:
                 raise
+
+        # Measure Memory After loading and update config
+        mem_after = get_memory_usage(self.device_type)
+
+        self.config_ref.hardware.active_device = self.device_type
+        self.config_ref.hardware.vram_total_gb = mem_after["total"]
+        self.config_ref.hardware.vram_used_baseline_gb = mem_before["used"]
+        self.config_ref.hardware.vram_used_model_gb = mem_after["used"]
 
     def _resolve_device(self, device: str) -> str:
         if device != "auto":
@@ -107,6 +122,12 @@ class STTEngine(Reconfigurable):
         elif device == "openvino":
             return ["OpenVINOExecutionProvider", "CPUExecutionProvider"]
         return ["CPUExecutionProvider"]
+
+    def reconfigure(self, config: BaseModel) -> None:
+        """STTEngine reconfigure (called by ConfigManager)."""
+        # Currently STTEngine doesn't have much to hot-reload from PipelineConfig
+        # as most hardware settings require a restart which is handled by BabelfishServer.
+        pass
 
     def transcribe(
         self,

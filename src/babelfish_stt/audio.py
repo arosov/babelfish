@@ -4,6 +4,7 @@ import numpy as np
 import soxr
 import logging
 from typing import Generator, Optional
+from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import BabelfishConfig
 
@@ -114,8 +115,11 @@ class AudioStreamer(Reconfigurable):
         # Clear the internal chunk buffer
         self._chunk_buffer = np.array([], dtype=np.float32)
 
-    def reconfigure(self, config: BabelfishConfig) -> None:
+    def reconfigure(self, config: BaseModel) -> None:
         """Reconfigure audio stream with new hardware settings."""
+        if not isinstance(config, BabelfishConfig):
+            return
+
         new_device_index = (
             config.hardware.microphone_index
             if config.hardware.microphone_index is not None
