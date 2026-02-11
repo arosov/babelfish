@@ -84,6 +84,22 @@ class STTEngine(Reconfigurable):
     def _get_providers(self, device: str) -> List[Any]:
         if device == "cuda":
             return [("CUDAExecutionProvider", {"device_id": 0}), "CPUExecutionProvider"]
+        elif device.startswith("cuda:"):
+            try:
+                # Extract device ID from string "cuda:1" -> 1
+                dev_id = int(device.split(":")[1])
+                return [
+                    ("CUDAExecutionProvider", {"device_id": dev_id}),
+                    "CPUExecutionProvider",
+                ]
+            except ValueError:
+                logger.warning(
+                    f"Invalid CUDA device format '{device}', falling back to device 0"
+                )
+                return [
+                    ("CUDAExecutionProvider", {"device_id": 0}),
+                    "CPUExecutionProvider",
+                ]
         elif device == "dml":
             return ["DmlExecutionProvider", "CPUExecutionProvider"]
         elif device == "rocm":

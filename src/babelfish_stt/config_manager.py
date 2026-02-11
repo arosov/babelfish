@@ -21,7 +21,15 @@ logger = logging.getLogger(__name__)
 
 
 class ConfigManager:
-    def __init__(self, config_path: str = "config.json"):
+    def __init__(self, config_path: Optional[str] = None):
+        if config_path is None:
+            # Check for Vogon app data dir environment variable
+            app_data_dir = os.environ.get("VOGON_APP_DATA_DIR")
+            if app_data_dir:
+                config_path = os.path.join(app_data_dir, "babelfish.config.json")
+            else:
+                config_path = "babelfish.config.json"
+
         self.config_path = Path(config_path)
         self.config = self.load()
         self._components: List[Reconfigurable] = []
@@ -116,24 +124,21 @@ class ConfigManager:
                     logger.warning("Configured for CUDA but no GPU detected.")
                     return False
 
-                # If explicitly on CPU but a good GPU is available, we might want to regenerate
-                # but only if it seems like a default config.
-                if config.hardware.device == "cpu" or config.hardware.device == "auto":
+                # If set to auto, we can check if a better option is available and regenerate
+                if config.hardware.device == "auto":
                     if (
                         "CUDAExecutionProvider" in hw.available_providers
                         and hw.gpu_info["vram_gb"] >= 6.0
                     ):
-                        if config.hardware.device == "cpu":
-                            logger.info(
-                                "GPU with >= 6GB VRAM detected but config is set to CPU. Force regenerating defaults to enable acceleration."
-                            )
-                            return False
+                        logger.info(
+                            "GPU with >= 6GB VRAM detected but config is set to auto. Regenerating defaults to enable acceleration."
+                        )
+                        return False
                     elif "ROCMExecutionProvider" in hw.available_providers:
-                        if config.hardware.device == "cpu":
-                            logger.info(
-                                "ROCm GPU detected but config is set to CPU. Force regenerating defaults."
-                            )
-                            return False
+                        logger.info(
+                            "ROCm GPU detected but config is set to auto. Regenerating defaults."
+                        )
+                        return False
 
             return True
         except Exception as e:

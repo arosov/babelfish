@@ -165,6 +165,72 @@ class HardwareManager:
         return self
 
 
+def get_windows_gpu_names() -> List[str]:
+    """Retrieves GPU names on Windows using WMIC."""
+    names = []
+    if sys.platform != "win32":
+        return names
+    try:
+        output = (
+            subprocess.check_output(
+                "wmic path win32_VideoController get name", shell=True
+            )
+            .decode()
+            .strip()
+            .split("\n")
+        )
+        # Skip header
+        for line in output[1:]:
+            name = line.strip()
+            if name:
+                names.append(name)
+    except Exception:
+        pass
+    return names
+
+
+def _get_nvidia_gpus() -> List[Dict]:
+    """
+    Returns a list of detected NVIDIA GPUs using nvidia-smi.
+    Returns empty list if tool is missing or fails.
+    """
+    gpus = []
+    if not shutil.which("nvidia-smi"):
+        return gpus
+
+    try:
+        output = (
+            subprocess.check_output(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=name,memory.total",
+                    "--format=csv,noheader,nounits",
+                ],
+                stderr=subprocess.STDOUT,
+            )
+            .decode("utf-8")
+            .strip()
+            .split("\n")
+        )
+
+        for i, line in enumerate(output):
+            parts = line.split(",")
+            if len(parts) >= 2:
+                name = parts[0].strip()
+                vram_mb = parts[1].strip()
+                try:
+                    vram_gb = float(vram_mb) / 1024.0
+                    display_name = f"{name} ({vram_gb:.1f} GB)"
+                except ValueError:
+                    display_name = name
+
+                gpus.append({"id": f"cuda:{i}", "name": display_name})
+    except Exception:
+        pass
+
+    return gpus
+
+
 def list_hardware() -> List[Dict]:
     """Lists all supported hardware acceleration devices."""
     devices = [{"id": "cpu", "name": "CPU"}]
@@ -175,14 +241,29 @@ def list_hardware() -> List[Dict]:
         available = ort.get_available_providers()
 
         if "CUDAExecutionProvider" in available:
-            gpu = get_gpu_info()
-            devices.append({"id": "cuda", "name": gpu["name"] or "NVIDIA GPU"})
+            # Detect actual GPUs
+            nvidia_gpus = _get_nvidia_gpus()
+            if nvidia_gpus:
+                devices.extend(nvidia_gpus)
+            else:
+                # Fallback generic if nvidia-smi failed but CUDA is available
+                devices.append({"id": "cuda", "name": "NVIDIA GPU (Generic)"})
 
         if "ROCMExecutionProvider" in available:
             devices.append({"id": "rocm", "name": "AMD GPU (ROCm)"})
 
         if "DmlExecutionProvider" in available:
-            devices.append({"id": "dml", "name": "DirectML (Windows)"})
+            # On Windows, DirectML is the unified provider.
+            # We try to fetch the actual GPU name to be more user-friendly.
+            name = "DirectML (Windows)"
+            gpu_names = get_windows_gpu_names()
+            if gpu_names:
+                # Join multiple GPUs if present, or just take the first one
+                # Usually users care about the primary one or just want to see their card name
+                pretty_names = ", ".join(gpu_names)
+                name = f"{pretty_names} (DirectML)"
+
+            devices.append({"id": "dml", "name": name})
 
         if "OpenVINOExecutionProvider" in available:
             devices.append({"id": "openvino", "name": "Intel Graphics (OpenVINO)"})
