@@ -214,6 +214,11 @@ async def run_babelfish(
 def main():
     import openwakeword
 
+    # Configure logging early to ensure probe() output is visible
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s", force=True
+    )
+
     available_ww = list(openwakeword.MODELS.keys())
 
     parser = argparse.ArgumentParser(
