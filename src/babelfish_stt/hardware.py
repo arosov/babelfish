@@ -325,21 +325,44 @@ def find_microphone_index_by_name(name: str) -> Optional[int]:
 
 
 def list_microphones() -> List[Dict]:
-    """Lists all available audio input devices."""
+    """
+    Lists all available audio input devices, filtered to remove virtual/internal noise.
+    """
     devices = sd.query_devices()
     input_devices = []
     best_mic_index = find_best_microphone()
+
+    # Keywords that typically indicate internal/virtual devices we want to hide on Linux
+    noise_keywords = [
+        "monitor",
+        "samplerate",
+        "null",
+        "dmix",
+        "dsnoop",
+        "softvol",
+        "vdata",
+        "equalizer",
+        "output",
+        "ladspa",
+    ]
+
     for i, dev in enumerate(devices):
+        name = dev["name"].lower()
         if dev["max_input_channels"] > 0:
-            input_devices.append(
-                {
-                    "index": i,
-                    "name": dev["name"],
-                    "channels": dev["max_input_channels"],
-                    "sample_rate": dev["default_samplerate"],
-                    "is_default": (i == best_mic_index),
-                }
-            )
+            # Filter logic: if any noise keyword is in the name, skip it
+            # UNLESS it's the current default or specifically prioritized (like USB)
+            is_noise = any(kw in name for kw in noise_keywords)
+
+            if not is_noise or i == best_mic_index:
+                input_devices.append(
+                    {
+                        "index": i,
+                        "name": dev["name"],
+                        "channels": dev["max_input_channels"],
+                        "sample_rate": dev["default_samplerate"],
+                        "is_default": (i == best_mic_index),
+                    }
+                )
     return input_devices
 
 
@@ -350,6 +373,9 @@ def find_best_microphone() -> Optional[int]:
     Returns None if no input device is found.
     """
     devices = sd.query_devices()
+
+    # Keywords that typically indicate internal/virtual devices we want to avoid
+    noise_keywords = ["monitor", "samplerate", "null", "dmix", "dsnoop", "softvol"]
 
     # Priority list (keywords ordered by preference)
     priority_keywords = [
@@ -362,13 +388,22 @@ def find_best_microphone() -> Optional[int]:
         "siberia",
     ]
 
-    # Find the first device that matches the highest priority keyword
+    # 1. Try to find a high-priority device that is NOT noise
     for keyword in priority_keywords:
         for i, dev in enumerate(devices):
-            if dev["max_input_channels"] > 0 and keyword in dev["name"].lower():
+            name = dev["name"].lower()
+            if dev["max_input_channels"] > 0 and keyword in name:
+                if not any(nk in name for nk in noise_keywords):
+                    return i
+
+    # 2. Fallback to first non-noise input device
+    for i, dev in enumerate(devices):
+        name = dev["name"].lower()
+        if dev["max_input_channels"] > 0:
+            if not any(nk in name for nk in noise_keywords):
                 return i
 
-    # Fallback: First input device
+    # 3. Last resort: First input device (even if it might be noise)
     for i, dev in enumerate(devices):
         if dev["max_input_channels"] > 0:
             return i
