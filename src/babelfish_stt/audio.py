@@ -52,13 +52,17 @@ class AudioStreamer(Reconfigurable):
         # Debug: check RMS
         rms = np.sqrt(np.mean(data**2))
         if rms > 0.001:
-            logger.debug(f"Audio captured: RMS={rms:.6f}")
+            # logger.debug(f"Audio captured: RMS={rms:.6f}")
+            pass
 
         # Resample if needed (to 16kHz target rate)
         if self.needs_resampling:
             data = soxr.resample(data, self.native_rate, self.target_rate)
 
-        self.audio_queue.put(data)
+        if len(data) > 0:
+            self.audio_queue.put(data)
+        else:
+            logger.warning("Captured empty audio data")
 
     def stream(self, chunk_size: int = 512) -> Generator[np.ndarray, None, None]:
         """

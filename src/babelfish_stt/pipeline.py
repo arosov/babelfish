@@ -1,6 +1,6 @@
 import numpy as np
 import time
-from typing import List
+from typing import List, Optional
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import VoiceConfig, UIConfig, PipelineConfig
 
@@ -8,7 +8,7 @@ from babelfish_stt.config import VoiceConfig, UIConfig, PipelineConfig
 class Pipeline(Reconfigurable):
     def __init__(self):
         self.is_idle = False
-        self.stop_detector = None
+        self.stop_detector: Optional[StopWordDetector] = None
         self.on_state_change = None  # Callback(is_speaking: bool)
         self.test_mode = False  # When True, run VAD only and drop audio
 
@@ -135,8 +135,8 @@ class SinglePassPipeline(Pipeline):
         self.active_buffer = []
         self.last_speech_time = 0
         self.is_speaking = False
-        self.silence_threshold_ms = 700
-        self.update_interval_samples = 3200
+        self.silence_threshold_ms = 400
+        self.update_interval_samples = 1600  # 100ms @ 16kHz
         self.last_update_size = 0
 
     def process_chunk(self, chunk: np.ndarray, now_ms: float) -> bool:
@@ -230,7 +230,10 @@ class DoublePassPipeline(Pipeline):
         self.refined_text = ""
         self.is_speaking = False
         self.last_speech_time = 0
-        self.silence_threshold_ms = 700
+        self.silence_threshold_ms = 400
+        self.last_ghost_time = 0
+        self.ghost_throttle_ms = 100
+        # self.min_ghost_audio_ms removed, handled by STTEngine padding
 
     def reconfigure(self, config: PipelineConfig) -> None:
         """Apply pipeline settings."""
@@ -274,8 +277,10 @@ class DoublePassPipeline(Pipeline):
                 if self._run_anchor_pass(now_ms):
                     return True
             else:
-                if self._run_ghost_pass():
-                    return True
+                if now_ms - self.last_ghost_time >= self.ghost_throttle_ms:
+                    if self._run_ghost_pass():
+                        return True
+                    self.last_ghost_time = now_ms
         else:
             if self.is_speaking:
                 self.active_ghost_buffer.append(chunk)

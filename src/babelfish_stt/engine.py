@@ -16,7 +16,7 @@ class STTEngine(Reconfigurable):
     """
 
     def __init__(self, config: BabelfishConfig):
-        self.device_type = config.hardware.device
+        self.device_type = self._resolve_device(config.hardware.device)
 
         # Default model search
         base_dir = Path(__file__).resolve().parent.parent.parent
@@ -62,6 +62,25 @@ class STTEngine(Reconfigurable):
             else:
                 raise
 
+    def _resolve_device(self, device: str) -> str:
+        if device != "auto":
+            return device
+
+        try:
+            import onnxruntime as ort
+
+            available = ort.get_available_providers()
+            if "CUDAExecutionProvider" in available:
+                return "cuda"
+            if "ROCMExecutionProvider" in available:
+                return "rocm"
+            if "DmlExecutionProvider" in available:
+                return "dml"
+        except Exception:
+            pass
+
+        return "cpu"
+
     def _get_providers(self, device: str) -> List[Any]:
         if device == "cuda":
             return [("CUDAExecutionProvider", {"device_id": 0}), "CPUExecutionProvider"]
@@ -85,8 +104,31 @@ class STTEngine(Reconfigurable):
         if len(audio_buffer) == 0:
             return ""
 
+        # Performance Optimization:
+        # The model has high overhead for short clips but is very fast for long ones.
+        # Force a minimum of 2 seconds of audio by padding with silence if needed.
+        min_samples = 32000  # 2 seconds
+        if len(audio_buffer) < min_samples:
+            padding = np.zeros(min_samples - len(audio_buffer), dtype=np.float32)
+            # Add padding to the BEGINNING so it doesn't interfere with the end-of-speech detection
+            # but provides the necessary input volume for GPU kernels to run at full speed.
+            input_audio = np.concatenate([padding, audio_buffer])
+        else:
+            input_audio = audio_buffer
+
+        import time
+
+        start_t = time.perf_counter()
+
         # onnx-asr handles the stream/context internally or we can just pass the buffer
-        # For parakeet-tdt, it's an offline model in onnx-asr wrapper
-        result = self.model.recognize(audio_buffer, sample_rate=16000)
+        result = self.model.recognize(input_audio, sample_rate=16000)
+
+        end_t = time.perf_counter()
+        duration_ms = (end_t - start_t) * 1000
+        audio_duration_s = len(input_audio) / 16000.0
+
+        logger.debug(
+            f"Inference: {duration_ms:.2f}ms for {audio_duration_s:.2f}s audio (RTF: {duration_ms / (audio_duration_s * 1000):.3f})"
+        )
 
         return result.strip() if result else ""

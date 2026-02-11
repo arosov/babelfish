@@ -1,11 +1,13 @@
 {
     "hardware": {
         "device": "cuda",
-        "vram_limit_gb": null,
-        "microphone_index": 20
+        "microphone_index": 17,
+        "onnx_model_dir": null,
+        "onnx_execution_provider": null,
+        "quantization": null
     },
     "pipeline": {
-        "double_pass": false,
+        "double_pass": true,
         "preset": "balanced",
         "ghost_preset": "fast",
         "anchor_preset": "solid",
@@ -34,6 +36,6 @@
         "port": 8123
     },
     "cache": {
-        "cache_dir": null
+        "cache_dir": "/home/arosovsky/.local/share/vogonpoet/uv"
     }
 }

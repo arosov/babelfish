@@ -7,6 +7,7 @@ import time
 import argparse
 import threading
 import asyncio
+from typing import Optional
 from babelfish_stt.hardware import HardwareManager
 from babelfish_stt.engine import STTEngine
 from babelfish_stt.audio import AudioStreamer
@@ -53,12 +54,7 @@ def run_stt_loop(streamer, pipeline, ww_engine, wakeword, stopword, shutdown_eve
 
     try:
         # Loop over 32ms chunks (512 samples)
-        chunk_count = 0
         for chunk in streamer.stream(chunk_size=512):
-            chunk_count += 1
-            if chunk_count % 100 == 0:
-                logging.debug(f"Processed {chunk_count} chunks")
-
             if shutdown_event.is_set():
                 break
 
@@ -119,12 +115,12 @@ def run_stt_loop(streamer, pipeline, ww_engine, wakeword, stopword, shutdown_eve
 async def run_babelfish(
     hw: HardwareManager,
     double_pass: bool = False,
-    wakeword: str = None,
-    stopword: str = None,
+    wakeword: Optional[str] = None,
+    stopword: Optional[str] = None,
     force_cpu: bool = False,
 ):
-    print("\n" + "=" * 50)
-    print("🚀 BABELFISH STT INITIALIZING")
+    print("\n" + "=" * 50, flush=True)
+    print("🚀 BABELFISH STT INITIALIZING", flush=True)
 
     # 2. Config Load & Validation
     config_manager = ConfigManager()
@@ -216,7 +212,7 @@ async def run_babelfish(
 
         return vad, engine, ww_engine, streamer, display, pipeline
 
-    print("⏳ Loading engines and models (this may take a few seconds)...")
+    print("⏳ Loading engines and models (this may take a few seconds)...", flush=True)
     vad, engine, ww_engine, streamer, display, pipeline = await heavy_init()
 
     # Link pipeline to server and register remaining components for hot-reloading
@@ -229,7 +225,7 @@ async def run_babelfish(
         config_manager.register(pipeline.stop_detector)
 
     await server.broadcast_bootstrap_status("Engine Ready!")
-    print("✅ Initialization complete.")
+    print("✅ Initialization complete.", flush=True)
 
     # 3. Start STT Loop in Background Thread
     shutdown_event = threading.Event()

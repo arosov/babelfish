@@ -182,7 +182,6 @@ class BabelfishServer(Reconfigurable):
             f"Starting WebSocket server on {self.server_config.host}:{self.server_config.port}"
         )
 
-        async with websockets.serve(
+        self._server = await websockets.serve(
             self.handle_connection, self.server_config.host, self.server_config.port
-        ):
-            await asyncio.Future()  # run forever
+        )

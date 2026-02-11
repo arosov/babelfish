@@ -3,11 +3,22 @@ import json
 import logging
 import tempfile
 from pathlib import Path
-from typing import List, Dict, Any
-from babelfish_stt.config import BabelfishConfig, HardwareConfig, PipelineConfig, VoiceConfig, UIConfig, ServerConfig
+from typing import List, Dict, Any, TYPE_CHECKING, Optional
+from babelfish_stt.config import (
+    BabelfishConfig,
+    HardwareConfig,
+    PipelineConfig,
+    VoiceConfig,
+    UIConfig,
+    ServerConfig,
+)
 from babelfish_stt.reconfigurable import Reconfigurable
 
+if TYPE_CHECKING:
+    from babelfish_stt.hardware import HardwareManager
+
 logger = logging.getLogger(__name__)
+
 
 class ConfigManager:
     def __init__(self, config_path: str = "config.json"):
@@ -25,13 +36,13 @@ class ConfigManager:
     def _propagate_to_component(self, component: Reconfigurable):
         """Propagate relevant sub-config to a specific component."""
         try:
-            # We determine which sub-config to send based on common patterns 
+            # We determine which sub-config to send based on common patterns
             # or we could let components specify. For now, we try to match.
             # Most components care about a specific section.
-            
+
             # This is a bit heuristic, but effective for our current scale
             # We could also use type hints of the reconfigure method if needed.
-            
+
             # Map of component types/instances to sections
             from babelfish_stt.vad import SileroVAD
             from babelfish_stt.pipeline import Pipeline, StopWordDetector
@@ -63,69 +74,106 @@ class ConfigManager:
         if not self.config_path.exists():
             logger.info(f"Config file {self.config_path} not found. Using defaults.")
             return BabelfishConfig()
-        
+
         try:
             with open(self.config_path, "r") as f:
                 data = json.load(f)
             return BabelfishConfig.model_validate(data)
         except (json.JSONDecodeError, Exception) as e:
-            logger.warning(f"Failed to load config from {self.config_path}: {e}. Using defaults.")
+            logger.warning(
+                f"Failed to load config from {self.config_path}: {e}. Using defaults."
+            )
             return BabelfishConfig()
 
-    def is_valid(self, hw: 'HardwareManager' = None) -> bool:
+    def is_valid(self, hw: Optional["HardwareManager"] = None) -> bool:
         """
         Validates the current configuration.
         If HardwareManager is provided, also validates hardware availability.
         """
         if not self.config_path.exists():
             return False
-            
+
         try:
             with open(self.config_path, "r") as f:
                 data = json.load(f)
             config = BabelfishConfig.model_validate(data)
-            
+
             if hw:
                 # Validate microphone index
                 if config.hardware.microphone_index is not None:
-                    valid_indices = [m['index'] for m in hw.microphones]
+                    valid_indices = [m["index"] for m in hw.microphones]
                     if config.hardware.microphone_index not in valid_indices:
-                        logger.warning(f"Configured microphone index {config.hardware.microphone_index} not found.")
+                        logger.warning(
+                            f"Configured microphone index {config.hardware.microphone_index} not found."
+                        )
                         return False
-                
+
                 # Validate GPU availability if set to cuda
-                if config.hardware.device == "cuda" and not hw.gpu_info['cuda_available']:
+                if (
+                    config.hardware.device == "cuda"
+                    and not hw.gpu_info["cuda_available"]
+                ):
                     logger.warning("Configured for CUDA but no GPU detected.")
                     return False
-                    
+
+                # If explicitly on CPU but a good GPU is available, we might want to regenerate
+                # but only if it seems like a default config.
+                if config.hardware.device == "cpu" or config.hardware.device == "auto":
+                    if (
+                        "CUDAExecutionProvider" in hw.available_providers
+                        and hw.gpu_info["vram_gb"] >= 6.0
+                    ):
+                        if config.hardware.device == "cpu":
+                            logger.info(
+                                "GPU with >= 6GB VRAM detected but config is set to CPU. Force regenerating defaults to enable acceleration."
+                            )
+                            return False
+                    elif "ROCMExecutionProvider" in hw.available_providers:
+                        if config.hardware.device == "cpu":
+                            logger.info(
+                                "ROCm GPU detected but config is set to CPU. Force regenerating defaults."
+                            )
+                            return False
+
             return True
         except Exception as e:
             logger.warning(f"Configuration validation failed: {e}")
             return False
 
-    def generate_optimal_defaults(self, hw: 'HardwareManager'):
+    def generate_optimal_defaults(self, hw: "HardwareManager"):
         """
         Generates and saves optimal defaults based on detected hardware.
         """
         logger.info("Generating optimal default configuration...")
-        
-        # Determine device based on VRAM (6GB threshold)
+
+        # Determine device based on priority and VRAM
         device = "cpu"
-        if hw.gpu_info['cuda_available']:
-            if hw.gpu_info['vram_gb'] >= 6.0:
+
+        if "CUDAExecutionProvider" in hw.available_providers:
+            if hw.gpu_info["vram_gb"] >= 6.0:
                 device = "cuda"
-                logger.info(f"VRAM is {hw.gpu_info['vram_gb']:.2f}GB (>= 6GB). Selecting CUDA mode.")
+                logger.info(
+                    f"VRAM is {hw.gpu_info['vram_gb']:.2f}GB (>= 6GB). Selecting CUDA mode."
+                )
             else:
-                logger.info(f"VRAM is {hw.gpu_info['vram_gb']:.2f}GB (< 6GB). Selecting CPU mode for stability.")
-        
+                logger.info(
+                    f"VRAM is {hw.gpu_info['vram_gb']:.2f}GB (< 6GB). Selecting CPU mode for stability."
+                )
+        elif "ROCMExecutionProvider" in hw.available_providers:
+            device = "rocm"
+            logger.info("ROCm provider detected. Selecting ROCm mode.")
+        elif "DmlExecutionProvider" in hw.available_providers:
+            device = "dml"
+            logger.info("DirectML provider detected. Selecting DML mode.")
+        elif "OpenVINOExecutionProvider" in hw.available_providers:
+            device = "openvino"
+            logger.info("OpenVINO provider detected. Selecting OpenVINO mode.")
+
         self.config = BabelfishConfig(
-            hardware=HardwareConfig(
-                device=device,
-                microphone_index=hw.best_mic_index
-            ),
+            hardware=HardwareConfig(device=device, microphone_index=hw.best_mic_index),
             pipeline=PipelineConfig(
-                double_pass=False # Optimal defaults prioritize 1-pass for speed
-            )
+                double_pass=False  # Optimal defaults prioritize 1-pass for speed
+            ),
         )
         self.save()
         logger.info(f"Optimal defaults saved to {self.config_path}.")
@@ -135,17 +183,16 @@ class ConfigManager:
         Atomic save using a temporary file.
         """
         data = self.config.model_dump()
-        
+
         # Ensure directory exists
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Atomic save: write to temp file then rename
         fd, temp_path = tempfile.mkstemp(
-            dir=self.config_path.parent, 
-            prefix=self.config_path.name + ".tmp"
+            dir=self.config_path.parent, prefix=self.config_path.name + ".tmp"
         )
         try:
-            with os.fdopen(fd, 'w') as f:
+            with os.fdopen(fd, "w") as f:
                 json.dump(data, f, indent=4)
             os.replace(temp_path, self.config_path)
         except Exception as e:
@@ -161,10 +208,10 @@ class ConfigManager:
         """
         current_data = self.config.model_dump()
         merged_data = self._deep_merge(current_data, changes)
-        
+
         # Validate by creating a new model instance
         new_config = BabelfishConfig.model_validate(merged_data)
-        
+
         # If successful, apply and save
         self.config = new_config
         self.save()

@@ -1,12 +1,19 @@
-import torch
 import sounddevice as sd
 import numpy as np
+import subprocess
+import shutil
+import sys
 from typing import Dict, Optional, List
 
 
 def is_cuda_available() -> bool:
-    """Checks if CUDA acceleration is available."""
-    return torch.cuda.is_available()
+    """Checks if CUDA acceleration is available via ONNX Runtime."""
+    try:
+        import onnxruntime as ort
+
+        return "CUDAExecutionProvider" in ort.get_available_providers()
+    except ImportError:
+        return False
 
 
 def get_gpu_info() -> Dict:
@@ -14,14 +21,37 @@ def get_gpu_info() -> Dict:
     if not is_cuda_available():
         return {"cuda_available": False, "name": None, "vram_gb": 0.0}
 
+    # Since torch might be CPU-only, we use nvidia-smi as a fallback for metadata
+    # or just return generic info if available.
     try:
-        device_name = torch.cuda.get_device_name(0)
-        total_memory = torch.cuda.get_device_properties(0).total_memory
-        vram_gb = total_memory / (1024**3)
-
-        return {"cuda_available": True, "name": device_name, "vram_gb": vram_gb}
+        if shutil.which("nvidia-smi"):
+            output = (
+                subprocess.check_output(
+                    [
+                        "nvidia-smi",
+                        "--query-gpu=name,memory.total",
+                        "--format=csv,noheader,nounits",
+                    ],
+                    stderr=subprocess.STDOUT,
+                )
+                .decode("utf-8")
+                .strip()
+                .split("\n")[0]
+            )
+            name, vram = output.split(",")
+            return {
+                "cuda_available": True,
+                "name": name.strip(),
+                "vram_gb": float(vram.strip()) / 1024.0,
+            }
     except Exception:
-        return {"cuda_available": True, "name": "Unknown GPU", "vram_gb": 0.0}
+        pass
+
+    return {
+        "cuda_available": True,
+        "name": "NVIDIA GPU",
+        "vram_gb": 4.0,
+    }  # Assume 4GB if detection fails
 
 
 def list_microphones() -> List[Dict]:
@@ -87,6 +117,7 @@ class HardwareManager:
 
     def __init__(self):
         self.gpu_info = {"cuda_available": False, "name": None, "vram_gb": 0.0}
+        self.available_providers = []
         self.microphones = []
         self.best_mic_index = None
 
@@ -96,9 +127,11 @@ class HardwareManager:
         Should be called early in the startup sequence.
         """
         import logging
+        import onnxruntime as ort
 
         logging.info("Probing hardware...")
 
+        self.available_providers = ort.get_available_providers()
         self.gpu_info = get_gpu_info()
         self.microphones = list_microphones()
         self.best_mic_index = find_best_microphone()
@@ -107,8 +140,14 @@ class HardwareManager:
             logging.info(
                 f"GPU Detected: {self.gpu_info['name']} ({self.gpu_info['vram_gb']:.2f} GB VRAM)"
             )
+        elif "ROCMExecutionProvider" in self.available_providers:
+            logging.info("AMD GPU (ROCm) detected via ONNX Runtime.")
+        elif "DmlExecutionProvider" in self.available_providers:
+            logging.info("DirectML support detected via ONNX Runtime.")
         else:
-            logging.info("No CUDA GPU detected. Falling back to CPU mode.")
+            logging.info(
+                "No supported GPU acceleration detected. Falling back to CPU mode."
+            )
 
         logging.info(f"Found {len(self.microphones)} input device(s).")
         if self.best_mic_index is not None:
@@ -129,7 +168,26 @@ class HardwareManager:
 def list_hardware() -> List[Dict]:
     """Lists all supported hardware acceleration devices."""
     devices = [{"id": "cpu", "name": "CPU"}]
-    if is_cuda_available():
-        gpu = get_gpu_info()
-        devices.append({"id": "cuda", "name": gpu["name"] or "NVIDIA GPU"})
+
+    try:
+        import onnxruntime as ort
+
+        available = ort.get_available_providers()
+
+        if "CUDAExecutionProvider" in available:
+            gpu = get_gpu_info()
+            devices.append({"id": "cuda", "name": gpu["name"] or "NVIDIA GPU"})
+
+        if "ROCMExecutionProvider" in available:
+            devices.append({"id": "rocm", "name": "AMD GPU (ROCm)"})
+
+        if "DmlExecutionProvider" in available:
+            devices.append({"id": "dml", "name": "DirectML (Windows)"})
+
+        if "OpenVINOExecutionProvider" in available:
+            devices.append({"id": "openvino", "name": "Intel Graphics (OpenVINO)"})
+
+    except Exception:
+        pass
+
     return devices

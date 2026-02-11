@@ -18,7 +18,7 @@ class PipelineConfig(BaseModel):
     ghost_preset: str = "fast"
     anchor_preset: str = "solid"
     anchor_trigger_interval_ms: int = 2000
-    silence_threshold_ms: int = 700
+    silence_threshold_ms: int = 400
 
 
 class ShortcutsConfig(BaseModel):

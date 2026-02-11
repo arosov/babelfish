@@ -23,10 +23,12 @@ dependencies = [
     "huggingface-hub",
     "sounddevice",
     "soxr",
-    "onnxruntime==1.23.2",
 ]
 
 [project.optional-dependencies]
+cpu = [
+    "onnxruntime==1.23.2",
+]
 # Unified Windows acceleration (AMD/Intel/NVIDIA)
 windows-gpu = [
     "onnxruntime-directml",
@@ -34,6 +36,12 @@ windows-gpu = [
 # Native performance for NVIDIA on Linux
 nvidia-linux = [
     "onnxruntime-gpu==1.23.2",
+    "nvidia-cuda-runtime-cu12",
+    "nvidia-cublas-cu12",
+    "nvidia-cudnn-cu12",
+    "nvidia-cufft-cu12",
+    "nvidia-curand-cu12",
+    "nvidia-cuda-nvrtc-cu12",
 ]
 # Native performance for AMD on Linux
 amd-linux = [
@@ -55,6 +63,13 @@ explicit = true
 torch = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
 openwakeword = { git = "https://github.com/dscripka/openWakeWord.git" }
+
+[tool.uv]
+environments = [
+    "sys_platform == 'linux'",
+    "sys_platform == 'win32'",
+    "sys_platform == 'darwin'",
+]
 
 [project.scripts]
 babelfish = "babelfish_stt.main:main"
