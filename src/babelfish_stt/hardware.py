@@ -98,6 +98,83 @@ def get_gpu_info() -> Dict:
     }  # Assume 4GB if detection fails
 
 
+def get_device_name(device_type: str = "cpu") -> str:
+    """
+    Returns a human-readable name for the active device type.
+    """
+    if device_type == "cpu":
+        return "CPU"
+
+    if device_type.startswith("cuda"):
+        device_id = 0
+        if ":" in device_type:
+            try:
+                device_id = int(device_type.split(":")[1])
+            except ValueError:
+                pass
+
+        # Try to get real name via nvidia-smi
+        if shutil.which("nvidia-smi"):
+            try:
+                output = (
+                    subprocess.check_output(
+                        [
+                            "nvidia-smi",
+                            f"--id={device_id}",
+                            "--query-gpu=name",
+                            "--format=csv,noheader",
+                        ],
+                        stderr=subprocess.STDOUT,
+                    )
+                    .decode("utf-8")
+                    .strip()
+                )
+                if output:
+                    return output
+            except Exception:
+                pass
+        return f"NVIDIA GPU (CUDA:{device_id})"
+
+    if device_type == "rocm":
+        # Try to get name via rocm-smi
+        smi_path = shutil.which("rocm-smi") or "/opt/rocm/bin/rocm-smi"
+        if os.path.exists(smi_path):
+            try:
+                output = subprocess.check_output(
+                    [smi_path, "--showproductname", "--json"]
+                ).decode("utf-8")
+                import json
+
+                data = json.loads(output)
+                for card in data.values():
+                    name = card.get("Card series", card.get("Product Name"))
+                    if name:
+                        return name
+            except Exception:
+                pass
+        return "AMD GPU (ROCm)"
+
+    if device_type == "dml" and sys.platform == "win32":
+        names = get_windows_gpu_names()
+        return names[0] if names else "DirectML GPU"
+
+    if device_type == "metal" and sys.platform == "darwin":
+        # For Mac, actual hardware name can be found via system_profiler or sysctl
+        try:
+            output = (
+                subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"])
+                .decode("utf-8")
+                .strip()
+            )
+            if output:
+                return output
+        except Exception:
+            pass
+        return "Apple Silicon"
+
+    return device_type.upper()
+
+
 def get_memory_usage(device_type: str = "cpu") -> Dict[str, float]:
     """
     Generic dispatcher to get memory usage for the active device type.

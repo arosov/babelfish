@@ -13,6 +13,7 @@ class HardwareConfig(BaseModel):
 
     # Runtime Status Fields (Populated by Engine)
     active_device: Optional[str] = None
+    active_device_name: Optional[str] = None
     vram_total_gb: float = 0.0
     vram_used_baseline_gb: float = 0.0
     vram_used_model_gb: float = 0.0

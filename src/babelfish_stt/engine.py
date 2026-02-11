@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Optional, List
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import PipelineConfig, BabelfishConfig
-from babelfish_stt.hardware import get_memory_usage
+from babelfish_stt.hardware import get_memory_usage, get_device_name
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,7 @@ class STTEngine(Reconfigurable):
         mem_after = get_memory_usage(self.device_type)
 
         self.config_ref.hardware.active_device = self.device_type
+        self.config_ref.hardware.active_device_name = get_device_name(self.device_type)
         self.config_ref.hardware.vram_total_gb = mem_after["total"]
         self.config_ref.hardware.vram_used_baseline_gb = mem_before["used"]
         self.config_ref.hardware.vram_used_model_gb = mem_after["used"]
