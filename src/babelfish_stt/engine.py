@@ -93,15 +93,18 @@ class STTEngine(Reconfigurable):
         return ["CPUExecutionProvider"]
 
     def transcribe(
-        self, audio_buffer: np.ndarray, left_context_secs: float = 0.0
+        self,
+        audio_buffer: np.ndarray,
+        left_context_secs: float = 0.0,
+        padding_s: float = 2.0,
     ) -> str:
         if len(audio_buffer) == 0:
             return ""
 
         # Performance Optimization:
         # The model has high overhead for short clips but is very fast for long ones.
-        # Force a minimum of 2 seconds of audio by padding with silence if needed.
-        min_samples = 32000  # 2 seconds
+        # Force a minimum duration of audio by padding with silence if needed.
+        min_samples = int(padding_s * 16000)
         if len(audio_buffer) < min_samples:
             padding = np.zeros(min_samples - len(audio_buffer), dtype=np.float32)
             # Add padding to the BEGINNING so it doesn't interfere with the end-of-speech detection
@@ -126,3 +129,67 @@ class STTEngine(Reconfigurable):
         )
 
         return result.strip() if result else ""
+
+    def benchmark(self) -> dict:
+        """
+        Runs dummy inferences to measure hardware performance and determine optimal tiers.
+        Returns a PerformanceProfile dictionary.
+        """
+        logger.info("⏱️ Starting hardware self-calibration...")
+
+        # Warmup
+        warmup_audio = np.zeros(16000 * 2, dtype=np.float32)  # 2s
+        for _ in range(3):
+            self.transcribe(warmup_audio, padding_s=2.0)
+
+        import time
+
+        # Test 1: Ghost pass (2.5s window)
+        test_audio = np.zeros(int(16000 * 2.5), dtype=np.float32)
+        measurements = []
+        for _ in range(5):
+            start = time.perf_counter()
+            self.transcribe(test_audio, padding_s=2.0)
+            measurements.append((time.perf_counter() - start) * 1000)
+
+        avg_latency = sum(measurements) / len(measurements)
+        logger.info(f"⏱️ Calibration: Avg Ghost Latency = {avg_latency:.2f}ms")
+
+        # Tier logic
+        if avg_latency < 40:
+            tier = "ultra"
+            throttle = 100
+            window = 3.0
+            padding = 2.0
+        elif avg_latency < 80:
+            tier = "high"
+            throttle = 150
+            window = 2.5
+            padding = 2.0
+        elif avg_latency < 150:
+            tier = "medium"
+            throttle = 250
+            window = 2.0
+            padding = 1.5
+        else:
+            tier = "low_power"
+            throttle = 400
+            window = 1.5
+            padding = 1.0
+
+        if self.device_type == "cpu":
+            tier = "cpu"
+            throttle = 300
+            window = 0  # Full buffer
+            padding = 0
+
+        logger.info(
+            f"⏱️ Calibration complete: Tier={tier.upper()}, Throttle={throttle}ms, Window={window}s"
+        )
+
+        return {
+            "tier": tier,
+            "ghost_throttle_ms": throttle,
+            "ghost_window_s": window,
+            "min_padding_s": padding,
+        }

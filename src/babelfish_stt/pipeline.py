@@ -2,7 +2,12 @@ import numpy as np
 import time
 from typing import List, Optional
 from babelfish_stt.reconfigurable import Reconfigurable
-from babelfish_stt.config import VoiceConfig, UIConfig, PipelineConfig
+from babelfish_stt.config import (
+    VoiceConfig,
+    UIConfig,
+    PipelineConfig,
+    PerformanceProfile,
+)
 
 
 class Pipeline(Reconfigurable):
@@ -89,9 +94,33 @@ class StandardPipeline(Pipeline):
         self.update_interval_ms = 100
         self.last_update_time = 0
 
+        # Performance Profile (Self-Calibration)
+        self.perf = PerformanceProfile()
+        self.dynamic_throttle_ms = 100
+        self.inference_history = []
+
     def reconfigure(self, config: PipelineConfig) -> None:
         self.silence_threshold_ms = config.silence_threshold_ms
         self.update_interval_ms = config.update_interval_ms
+        self.perf = config.performance
+        self.dynamic_throttle_ms = self.perf.ghost_throttle_ms
+
+    def _apply_dynamic_backoff(self, inference_ms: float):
+        """Adjusts the ghost update throttle based on real-time inference latency."""
+        self.inference_history.append(inference_ms)
+        if len(self.inference_history) > 5:
+            self.inference_history.pop(0)
+
+        avg_latency = sum(self.inference_history) / len(self.inference_history)
+
+        # If inference is taking more than 80% of our throttle budget, back off
+        target_throttle = max(self.perf.ghost_throttle_ms, int(avg_latency * 1.25))
+
+        # Smoothly adjust throttle
+        if target_throttle > self.dynamic_throttle_ms:
+            self.dynamic_throttle_ms = min(target_throttle, 1000)  # Max 1s lag
+        elif target_throttle < self.dynamic_throttle_ms:
+            self.dynamic_throttle_ms = max(target_throttle, self.perf.ghost_throttle_ms)
 
     def process_chunk(self, chunk: np.ndarray, now_ms: float) -> bool:
         if self.is_idle:
@@ -125,9 +154,23 @@ class StandardPipeline(Pipeline):
             self.last_speech_time = now_ms
 
             # Intermediate 'Ghost' Update
-            if now_ms - self.last_update_time >= self.update_interval_ms:
+            if now_ms - self.last_update_time >= self.dynamic_throttle_ms:
                 full_audio = np.concatenate(self.active_buffer)
-                text = self.engine.transcribe(full_audio)
+
+                # EFFICIENT FIRST PASS: Sliding window for ghost results (GPU ONLY)
+                if self.engine.device_type != "cpu" and self.perf.ghost_window_s > 0:
+                    window_samples = int(self.perf.ghost_window_s * 16000)
+                    if len(full_audio) > window_samples:
+                        full_audio = full_audio[-window_samples:]
+
+                import time
+
+                start = time.perf_counter()
+                text = self.engine.transcribe(
+                    full_audio, padding_s=self.perf.min_padding_s
+                )
+                self._apply_dynamic_backoff((time.perf_counter() - start) * 1000)
+
                 if text:
                     self.display.update(ghost=text)  # Pass as ghost for real-time feel
                     if self.stop_detector and self.stop_detector.detect(text):
@@ -142,7 +185,10 @@ class StandardPipeline(Pipeline):
                 # If we've been silent long enough, finalize
                 if now_ms - self.last_speech_time > self.silence_threshold_ms:
                     full_audio = np.concatenate(self.active_buffer)
-                    text = self.engine.transcribe(full_audio)
+                    # Use full context for finalization, no windowing
+                    text = self.engine.transcribe(
+                        full_audio, padding_s=self.perf.min_padding_s
+                    )
                     if text:
                         self.display.finalize(text)
                         if self.stop_detector and self.stop_detector.detect(text):

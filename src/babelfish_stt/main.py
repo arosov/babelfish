@@ -134,6 +134,13 @@ async def run_babelfish(
         await server.broadcast_bootstrap_status(f"Loading STT Engine ({device})...")
         engine = await asyncio.to_thread(STTEngine, config=config_manager.config)
 
+        # 5. Hardware Self-Calibration
+        if config_manager.config.pipeline.performance.tier == "auto":
+            await server.broadcast_bootstrap_status("Calibrating Performance...")
+            perf_data = await asyncio.to_thread(engine.benchmark)
+            config_manager.update({"pipeline": {"performance": perf_data}})
+            print(f"✅ Performance calibrated: {perf_data['tier'].upper()}")
+
         ww_engine = None
 
         if config_manager.config.voice.wakeword:

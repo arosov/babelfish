@@ -7,12 +7,14 @@
         "quantization": null
     },
     "pipeline": {
-        "double_pass": true,
-        "preset": "balanced",
-        "ghost_preset": "fast",
-        "anchor_preset": "solid",
-        "anchor_trigger_interval_ms": 2000,
-        "silence_threshold_ms": 700
+        "silence_threshold_ms": 700,
+        "update_interval_ms": 100,
+        "performance": {
+            "ghost_throttle_ms": 100,
+            "ghost_window_s": 3.0,
+            "min_padding_s": 2.0,
+            "tier": "ultra"
+        }
     },
     "voice": {
         "wakeword": null,
