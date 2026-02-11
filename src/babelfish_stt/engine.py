@@ -92,12 +92,6 @@ class STTEngine(Reconfigurable):
             return ["OpenVINOExecutionProvider", "CPUExecutionProvider"]
         return ["CPUExecutionProvider"]
 
-    def reconfigure(self, config: PipelineConfig) -> None:
-        pass
-
-    def set_quality(self, level: str):
-        pass
-
     def transcribe(
         self, audio_buffer: np.ndarray, left_context_secs: float = 0.0
     ) -> str:

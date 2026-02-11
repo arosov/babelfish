@@ -171,9 +171,7 @@ class ConfigManager:
 
         self.config = BabelfishConfig(
             hardware=HardwareConfig(device=device, microphone_index=hw.best_mic_index),
-            pipeline=PipelineConfig(
-                double_pass=False  # Optimal defaults prioritize 1-pass for speed
-            ),
+            pipeline=PipelineConfig(),
         )
         self.save()
         logger.info(f"Optimal defaults saved to {self.config_path}.")

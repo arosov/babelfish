@@ -13,12 +13,8 @@ class HardwareConfig(BaseModel):
 
 
 class PipelineConfig(BaseModel):
-    double_pass: bool = False
-    preset: str = "balanced"
-    ghost_preset: str = "fast"
-    anchor_preset: str = "solid"
-    anchor_trigger_interval_ms: int = 2000
     silence_threshold_ms: int = 400
+    update_interval_ms: int = 100
 
 
 class ShortcutsConfig(BaseModel):
