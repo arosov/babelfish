@@ -3,6 +3,10 @@ from openwakeword.model import Model
 import numpy as np
 from typing import Dict, List, Optional
 from pathlib import Path
+import threading
+from pydantic import BaseModel
+from babelfish_stt.reconfigurable import Reconfigurable
+from babelfish_stt.config import VoiceConfig
 
 
 def list_wakewords() -> List[str]:
@@ -21,24 +25,54 @@ def list_wakewords() -> List[str]:
     return sorted(list(names))
 
 
-class WakeWordEngine:
+class WakeWordEngine(Reconfigurable):
     """
     A wrapper around openWakeWord for local keyword detection.
     """
 
-    def __init__(self, model_name: str = "hey_jarvis"):
+    def __init__(self, model_name: Optional[str] = None):
+        self._lock = threading.Lock()
         self.model_name = model_name
-        # openwakeword.Model takes a list of paths.
+        self.oww_model: Optional[Model] = None
+        self._load_model()
 
+    def _load_model(self):
+        """Loads the model specified by self.model_name. Must be called under lock or in init."""
+        if not self.model_name:
+            self.oww_model = None
+            return
+
+        # openwakeword.Model takes a list of paths.
         # Get all pretrained paths and filter for the one we want
         pretrained_paths = openwakeword.get_pretrained_model_paths() or []
-        target_paths = [p for p in pretrained_paths if model_name in p]
+        target_paths = [p for p in pretrained_paths if self.model_name in p]
 
         if not target_paths:
-            self.oww_model = Model()
+            # Fallback or empty model if not found
+            self.oww_model = None
         else:
             # Use wakeword_models instead of wakeword_model_paths for 0.6.0
             self.oww_model = Model(wakeword_models=[target_paths[0]])
+
+    def reconfigure(self, config: BaseModel) -> None:
+        """Update wakeword model based on config."""
+        if isinstance(config, VoiceConfig):
+            with self._lock:
+                if config.wakeword != self.model_name:
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.info(
+                        f"Reconfiguring WakeWordEngine: {self.model_name} -> {config.wakeword}"
+                    )
+                    self.model_name = config.wakeword
+                    self._load_model()
+
+    @property
+    def active_wakeword(self) -> Optional[str]:
+        """Returns the currently active wakeword name."""
+        with self._lock:
+            return self.model_name if self.oww_model else None
 
     def process_chunk(self, chunk: np.ndarray) -> Dict[str, float]:
         """
@@ -51,7 +85,7 @@ class WakeWordEngine:
             A dictionary mapping keyword names to detection probabilities.
             Keys are normalized to remove version suffixes if they match the model name.
         """
-        # openWakeWord expects 16-bit signed integers (int16).
+        # openwakeword expects 16-bit signed integers (int16).
         # Our streamer provides float32 normalized to [-1, 1].
         if chunk.dtype != np.int16:
             # Scale to int16 range
@@ -59,8 +93,12 @@ class WakeWordEngine:
         else:
             chunk_int16 = chunk
 
-        # The predict method returns a dictionary of probabilities
-        prediction = self.oww_model.predict(chunk_int16)
+        with self._lock:
+            if not self.oww_model:
+                return {}
+
+            # The predict method returns a dictionary of probabilities
+            prediction = self.oww_model.predict(chunk_int16)
 
         # Handle cases where predict might return a tuple (depending on version/flags)
         if isinstance(prediction, tuple):
@@ -69,9 +107,10 @@ class WakeWordEngine:
         # Normalize keys: if 'hey_jarvis_v0.1' is in prediction and we asked for 'hey_jarvis',
         # map it to 'hey_jarvis'.
         normalized = {}
+        target_name = self.model_name
         for k, v in prediction.items():
-            if k.startswith(self.model_name):
-                normalized[self.model_name] = v
+            if target_name and k.startswith(target_name):
+                normalized[target_name] = v
             else:
                 normalized[k] = v
         return normalized
@@ -82,8 +121,13 @@ class WakeWordEngine:
         above the given threshold.
         """
         probabilities = self.process_chunk(chunk)
-        return probabilities.get(self.model_name, 0.0) >= threshold
+        with self._lock:
+            if not self.model_name:
+                return False
+            return probabilities.get(self.model_name, 0.0) >= threshold
 
     def reset(self):
         """Resets the internal state of the wake-word model."""
-        self.oww_model.reset()
+        with self._lock:
+            if self.oww_model:
+                self.oww_model.reset()

@@ -1,6 +1,7 @@
 import numpy as np
 import time
 from typing import List, Optional
+from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import (
     VoiceConfig,
@@ -34,7 +35,7 @@ class Pipeline(Reconfigurable):
         """
         raise NotImplementedError
 
-    def reconfigure(self, config: PipelineConfig) -> None:
+    def reconfigure(self, config: BaseModel) -> None:
         """Pipeline base reconfiguration (e.g., logic shifts if needed)"""
         pass
 
@@ -47,9 +48,10 @@ class StopWordDetector(Reconfigurable):
     def __init__(self, stop_words: List[str]):
         self.stop_words = [w.lower().strip() for w in stop_words]
 
-    def reconfigure(self, config: VoiceConfig) -> None:
+    def reconfigure(self, config: BaseModel) -> None:
         """Update stop words list."""
-        self.stop_words = [w.lower().strip() for w in config.stop_words]
+        if isinstance(config, VoiceConfig):
+            self.stop_words = [w.lower().strip() for w in config.stop_words]
 
     def detect(self, text: str) -> bool:
         """
@@ -99,11 +101,12 @@ class StandardPipeline(Pipeline):
         self.dynamic_throttle_ms = 100
         self.inference_history = []
 
-    def reconfigure(self, config: PipelineConfig) -> None:
-        self.silence_threshold_ms = config.silence_threshold_ms
-        self.update_interval_ms = config.update_interval_ms
-        self.perf = config.performance
-        self.dynamic_throttle_ms = self.perf.ghost_throttle_ms
+    def reconfigure(self, config: BaseModel) -> None:
+        if isinstance(config, PipelineConfig):
+            self.silence_threshold_ms = config.silence_threshold_ms
+            self.update_interval_ms = config.update_interval_ms
+            self.perf = config.performance
+            self.dynamic_throttle_ms = self.perf.ghost_throttle_ms
 
     def _apply_dynamic_backoff(self, inference_ms: float):
         """Adjusts the ghost update throttle based on real-time inference latency."""

@@ -11,6 +11,7 @@ from babelfish_stt.config import (
     VoiceConfig,
     UIConfig,
     ServerConfig,
+    HardwareConfig,
 )
 from babelfish_stt.reconfigurable import Reconfigurable
 
@@ -56,10 +57,13 @@ class ConfigManager:
             from babelfish_stt.pipeline import Pipeline, StopWordDetector
             from babelfish_stt.engine import STTEngine
             from babelfish_stt.server import BabelfishServer
+            from babelfish_stt.wakeword import WakeWordEngine
 
             if isinstance(component, SileroVAD):
                 component.reconfigure(self.config.voice)
             elif isinstance(component, StopWordDetector):
+                component.reconfigure(self.config.voice)
+            elif isinstance(component, WakeWordEngine):
                 component.reconfigure(self.config.voice)
             elif isinstance(component, Pipeline):
                 component.reconfigure(self.config.pipeline)
