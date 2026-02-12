@@ -123,6 +123,11 @@ class ConfigManager:
                 data = json.load(f)
             config = BabelfishConfig.model_validate(data)
 
+            # Auto-detect mode is always valid as long as we have hardware manager
+            # to perform the detection during engine init.
+            if config.hardware.auto_detect:
+                return True
+
             if hw:
                 # Validate microphone name
                 if config.hardware.microphone_name is not None:
@@ -138,24 +143,12 @@ class ConfigManager:
                     config.hardware.device == "cuda"
                     and not hw.gpu_info["cuda_available"]
                 ):
-                    logger.warning("Configured for CUDA but no GPU detected.")
-                    return False
-
-                # If set to auto, we can check if a better option is available and regenerate
-                if config.hardware.device == "auto":
-                    if (
-                        "CUDAExecutionProvider" in hw.available_providers
-                        and hw.gpu_info["vram_gb"] >= 6.0
-                    ):
-                        logger.info(
-                            "GPU with >= 6GB VRAM detected but config is set to auto. Regenerating defaults to enable acceleration."
-                        )
-                        return False
-                    elif "ROCMExecutionProvider" in hw.available_providers:
-                        logger.info(
-                            "ROCm GPU detected but config is set to auto. Regenerating defaults."
-                        )
-                        return False
+                    logger.warning(
+                        "Configured for CUDA but no GPU detected. STT Engine will fall back to CPU for this session."
+                    )
+                    # We return True here to prevent overwriting the user's preferred config.
+                    # The STTEngine handles the runtime fallback.
+                    return True
 
             return True
         except Exception as e:
@@ -172,15 +165,10 @@ class ConfigManager:
         device = "cpu"
 
         if "CUDAExecutionProvider" in hw.available_providers:
-            if hw.gpu_info["vram_gb"] >= 6.0:
-                device = "cuda"
-                logger.info(
-                    f"VRAM is {hw.gpu_info['vram_gb']:.2f}GB (>= 6GB). Selecting CUDA mode."
-                )
-            else:
-                logger.info(
-                    f"VRAM is {hw.gpu_info['vram_gb']:.2f}GB (< 6GB). Selecting CPU mode for stability."
-                )
+            device = "cuda"
+            logger.info(
+                f"CUDA provider detected. Selecting CUDA mode (VRAM: {hw.gpu_info['vram_gb']:.2f}GB)."
+            )
         elif "ROCMExecutionProvider" in hw.available_providers:
             device = "rocm"
             logger.info("ROCm provider detected. Selecting ROCm mode.")
@@ -238,6 +226,12 @@ class ConfigManager:
         """
         current_data = self.config.model_dump()
         merged_data = self._deep_merge(current_data, changes)
+
+        # Protective logic: if auto_detect is enabled, ensure device is 'auto'
+        # This prevents UI race conditions where a draft 'cpu' device might be saved
+        # alongside an 'auto_detect: true' flag.
+        if merged_data.get("hardware", {}).get("auto_detect"):
+            merged_data["hardware"]["device"] = "auto"
 
         # Validate by creating a new model instance
         new_config = BabelfishConfig.model_validate(merged_data)

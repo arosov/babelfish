@@ -74,33 +74,30 @@ class BabelfishServer(Reconfigurable):
 
     def reconfigure(self, config: BaseModel) -> None:
         if isinstance(config, BabelfishConfig):
-            # Resolve requested device (if auto, we need to know what it would be)
-            # But more simply: if the new requested device is 'auto' and we are already running on a GPU,
-            # or if the new requested device matches our CURRENT active device, no restart.
-
             new_device = config.hardware.device
+            new_auto = config.hardware.auto_detect
+
+            old_device = self.initial_config.hardware.device
+            old_auto = self.initial_config.hardware.auto_detect
+
             current_active = self.initial_config.hardware.active_device
 
-            # If the user explicitly selects the device we are already using,
-            # or if they switch to 'auto' and we are already on a non-cpu device (heuristic)
-            # we can potentially skip restart.
-            # However, switching TO auto usually means the user wants the system to decide.
-
-            is_same_device = (
-                (new_device == current_active)
-                or (new_device == "auto" and current_active and current_active != "cpu")
-                or (new_device != "auto" and current_active == "auto")
-            )  # This one is tricky
-
-            # Let's be more precise. We only restart if the actual target hardware type changes.
-            hw_changed = config.hardware.device != self.initial_config.hardware.device
-
-            # Fix: If we were in 'auto' and we are now selecting the device 'auto' actually picked, skip restart.
-            if (
-                self.initial_config.hardware.device == "auto"
-                and config.hardware.device == current_active
-            ):
-                hw_changed = False
+            # Restart is required if:
+            # 1. auto_detect toggled
+            # 2. auto_detect is False and device changed
+            # 3. Switching from auto_detect=True to a device that ISN'T the current active one
+            hw_changed = False
+            if new_auto != old_auto:
+                if new_auto:  # Toggling ON auto-detect
+                    hw_changed = True
+                else:  # Toggling OFF auto-detect
+                    # If the user picks the device we are already using, no restart needed
+                    if new_device != current_active:
+                        hw_changed = True
+            elif not new_auto:  # Stayed in manual mode
+                if new_device != old_device:
+                    hw_changed = True
+            # If stayed in auto mode, hw_changed remains False regardless of the 'device' field value
 
             server_changed = (
                 config.server.host != self.initial_config.server.host
@@ -109,7 +106,7 @@ class BabelfishServer(Reconfigurable):
 
             if hw_changed or server_changed:
                 logger.info(
-                    f"Critical configuration change detected ({self.initial_config.hardware.device} -> {config.hardware.device}). Restart required."
+                    f"Critical configuration change detected. Restart required."
                 )
                 self.restart_required = True
             else:

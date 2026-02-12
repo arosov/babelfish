@@ -7,7 +7,7 @@ from pathlib import Path
 
 def list_wakewords() -> List[str]:
     """Lists all available pretrained wakewords."""
-    paths = openwakeword.get_pretrained_model_paths()
+    paths = openwakeword.get_pretrained_model_paths() or []
     # Extract filename without extension and remove common version suffixes
     # Paths look like: /path/to/models/hey_jarvis_v0.1.tflite
     names = set()
@@ -31,7 +31,7 @@ class WakeWordEngine:
         # openwakeword.Model takes a list of paths.
 
         # Get all pretrained paths and filter for the one we want
-        pretrained_paths = openwakeword.get_pretrained_model_paths()
+        pretrained_paths = openwakeword.get_pretrained_model_paths() or []
         target_paths = [p for p in pretrained_paths if model_name in p]
 
         if not target_paths:
@@ -62,6 +62,10 @@ class WakeWordEngine:
         # The predict method returns a dictionary of probabilities
         prediction = self.oww_model.predict(chunk_int16)
 
+        # Handle cases where predict might return a tuple (depending on version/flags)
+        if isinstance(prediction, tuple):
+            prediction = prediction[0]
+
         # Normalize keys: if 'hey_jarvis_v0.1' is in prediction and we asked for 'hey_jarvis',
         # map it to 'hey_jarvis'.
         normalized = {}
@@ -71,6 +75,14 @@ class WakeWordEngine:
             else:
                 normalized[k] = v
         return normalized
+
+    def detect(self, chunk: np.ndarray, threshold: float = 0.5) -> bool:
+        """
+        Convenience method to return True if the target wakeword is detected
+        above the given threshold.
+        """
+        probabilities = self.process_chunk(chunk)
+        return probabilities.get(self.model_name, 0.0) >= threshold
 
     def reset(self):
         """Resets the internal state of the wake-word model."""

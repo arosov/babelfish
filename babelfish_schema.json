@@ -41,6 +41,11 @@
           "title": "Device",
           "type": "string"
         },
+        "auto_detect": {
+          "default": true,
+          "title": "Auto Detect",
+          "type": "boolean"
+        },
         "microphone_name": {
           "anyOf": [
             {
