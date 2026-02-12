@@ -1,38 +1,46 @@
 # VogonPoet - Babelfish Server
 
-Babelfish is a high-performance, low-latency Speech-to-Text (STT) backend designed to provide system-wide transcription injection (similar to BetterDictation). It serves as the core engine for a Kotlin-based frontend application.
+Babelfish is a high-performance, low-latency Speech-to-Text (STT) backend designed to provide system-wide transcription injection. It serves as the core engine for a Kotlin-based frontend application, delivering real-time, hardware-accelerated transcription with minimal overhead.
 
 ## 🚀 Vision & Evolution
 
-The goal is to build a top-of-the-line low-latency pipeline by combining the best open-source components:
+The project has evolved from a `RealtimeSTT` wrapper into a custom, optimized pipeline:
 
-1.  **Step 1: Streaming Foundation** - Reproduce a `RealtimeSTT`-style pipeline but utilizing `parakeet-stream` (NVIDIA Parakeet TDT) instead of Whisper for superior streaming latency.
-2.  **Step 2: Two-Pass Refinement** - Upgrade to a two-pass system using two distinct models to balance speed and final accuracy.
-3.  **Step 3: LLM Optimization** - Integrate a local, low-latency LLM to post-process and optimize the transcribed text output.
+1.  **Step 1: Streaming Foundation (Completed)** - Transitioned from Whisper to a unified ONNX-based Parakeet TDT model (`nemo-parakeet-tdt-0.6b-v3`) for superior streaming latency and cross-platform GPU support.
+2.  **Step 2: Intelligent Pipeline (Active)** - Implemented a two-pass system:
+    *   **Ghost Pass:** Low-latency, sliding-window transcription for real-time visual feedback.
+    *   **Final Pass:** Full-context transcription for maximum accuracy once speech ends.
+3.  **Step 3: LLM Optimization (Future)** - Integration of local, low-latency LLMs to post-process, correct, and optimize the transcribed text.
 
 ## 🛠 Tech Stack
 
-*   **Backend:** Python, orchestrated via `uv` for seamless dependency management and execution.
-*   **STT Engine:** `parakeet-stream` for its aggressive latency-tuning capabilities.
-*   **Communication:** WebTransport for high-speed, low-latency local communication with the frontend.
-*   **Frontend:** Kotlin-based UI that manages the server lifecycle (start/stop/restart).
-*   **Targets:** Windows (Windows Services) and Linux (Systemd).
+*   **Backend:** Python 3.12+, managed via `uv`.
+*   **STT Engine:** `onnx-asr` running NVIDIA Parakeet TDT. Supports CUDA (NVIDIA), ROCm (AMD), OpenVINO (Intel), and DirectML (Windows Unified).
+*   **Wake-word / Stop-word:** `openwakeword` for local, low-power keyword detection (Start/Stop triggers).
+*   **Communication:** WebSockets for bidirectional communication with the frontend (configuration, status, and transcripts).
+*   **Global Control:** `pynput` for system-wide hotkeys (Push-To-Talk, Toggle mode).
+*   **Notifications:** `notify-py` for platform-native status alerts.
 
 ## 🧠 Philosophy: Server as the Brain
 
-Babelfish is designed to be the "brain" of the STT system. It doesn't just execute commands; it autonomously manages the environment to ensure optimal performance:
-*   **Hardware Auto-Discovery:** On startup, it probes for GPU availability, selects the best card, and reports VRAM capacity to optimize model loading.
-*   **Intelligent Defaults:** It automatically identifies and selects the most appropriate audio input devices if not explicitly configured.
-*   **Configuration Authority:** While the frontend provides a UI for human interaction, the server maintains the source of truth for configuration, providing sensible defaults that work out-of-the-box.
+Babelfish is designed to be autonomous and hardware-aware:
+*   **Hardware Auto-Discovery:** Probes for GPU capabilities (NVIDIA/AMD/Intel/DirectML) on startup and selects the best available backend.
+*   **Self-Calibration:** Runs internal benchmarks during bootstrap to determine optimal performance tiers (Ultra/High/Medium/Low) based on inference latency.
+*   **Dynamic Configuration:** Supports hot-reloading of nearly all settings (wakewords, sensitivities, hotkeys) via the WebSocket API without restarting the engine.
+*   **Unified Pipeline:** Manages the entire audio lifecycle: VAD (Silero) -> Wake-word (OpenWakeWord) -> STT (Parakeet) -> Injection/Display.
 
 ## 📦 Distribution & Orchestration
 
-The server is designed to be run as a background service. Developers and the frontend app interact with it via `uv` one-liners. All available commands and execution patterns are documented in `launcher.md`.
+The server runs as a background service. Interaction is primarily via the `babelfish` CLI tool provided by the package:
+*   `uv run babelfish` - Starts the server with optimal hardware defaults.
+*   `uv run babelfish --wakeword hey_jarvis` - Starts with specific wakeword activation.
+
+Detailed execution patterns and developer commands are documented in `launcher.md`.
 
 ## 🧩 Integrated Knowledge
 
-This project leverages insights and code patterns from:
-*   `RealtimeSTT`: Loop management and VAD integration.
-*   `parakeet-stream`: Streaming TDT implementation and quality presets.
-*   `speaches`: OpenAI-compatible serving, dynamic model handling, and hardware-aware resource management.
-
+This project distills patterns from:
+*   `RealtimeSTT`: Original inspiration for the loop management.
+*   `parakeet-stream`: Core TDT streaming logic.
+*   `onnx-asr`: The production-grade ONNX wrapper for Parakeet models.
+*   `speaches`: Hardware-aware resource management and model handling.
