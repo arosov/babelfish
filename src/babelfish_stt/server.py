@@ -264,7 +264,9 @@ class BabelfishServer(Reconfigurable):
             if msg_type == "update_config":
                 changes = message.get("data", {})
                 logger.info(f"Received config update: {json.dumps(changes)}")
-                self.config_manager.update(changes)
+                # Propagation can involve heavy model loading, offload to thread
+                await asyncio.to_thread(self.config_manager.update, changes)
+
                 # Broadcast updated config to ALL clients
                 config_data = self.config_manager.config.model_dump()
                 update_msg = {

@@ -6,6 +6,7 @@ import time
 import argparse
 import threading
 import asyncio
+import openwakeword
 from typing import Optional, List, Any
 from babelfish_stt.hardware import HardwareManager
 from babelfish_stt.engine import STTEngine
@@ -76,7 +77,10 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
                     )
                     last_configured_stop_ww = stop_ww
 
-            if pipeline.is_idle:
+            with pipeline._lock:
+                is_idle = pipeline.is_idle
+
+            if is_idle:
                 if now < cooldown_until:
                     continue
 
@@ -113,7 +117,10 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
                     # Re-check if we should go to idle based on current config
                     if active_ww:
                         # Already transitioned by pipeline or we transition here if it was just a regular utterance
-                        if not pipeline.is_idle:
+                        with pipeline._lock:
+                            currently_idle = pipeline.is_idle
+
+                        if not currently_idle:
                             pipeline.request_mode(is_idle=True, force=False)
 
                         streamer.drain()
@@ -163,7 +170,6 @@ async def run_babelfish(
         # Check if it's meant to be an openwakeword stopword or a transcript stopword
         # For now, if we have a stopword flag and it matches an openwakeword model,
         # we'll use it as stop_wakeword. Otherwise, we keep it in stop_words.
-        import openwakeword
 
         available_ww = list(openwakeword.MODELS.keys())
         if stopword in available_ww:
@@ -292,8 +298,6 @@ async def run_babelfish(
 
 
 def main():
-    import openwakeword
-
     # Configure logging early to ensure probe() output is visible
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s", force=True

@@ -1,6 +1,7 @@
 import onnx_asr
 import numpy as np
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Optional, List
 from babelfish_stt.reconfigurable import Reconfigurable
@@ -17,7 +18,10 @@ class STTEngine(Reconfigurable):
     on AMD, Intel, and NVIDIA GPUs across Windows and Linux.
     """
 
+    config_key = "pipeline"
+
     def __init__(self, config: BabelfishConfig):
+        self._lock = threading.Lock()
         # Resolve target device: if auto-detect is on, force "auto" regardless of the 'device' field
         target_device = (
             "auto" if config.hardware.auto_detect else config.hardware.device
@@ -76,18 +80,26 @@ class STTEngine(Reconfigurable):
         # Measure Memory After loading and update config
         mem_after = get_memory_usage(self.device_type)
 
-        self.config_ref.hardware.active_device = self.device_type
-        self.config_ref.hardware.active_device_name = get_device_name(self.device_type)
-        self.config_ref.hardware.vram_total_gb = mem_after["total"]
-        self.config_ref.hardware.vram_used_baseline_gb = mem_before["used"]
-        self.config_ref.hardware.vram_used_model_gb = mem_after["used"]
+        try:
+            self.config_ref.hardware.active_device = self.device_type
+            self.config_ref.hardware.active_device_name = get_device_name(
+                self.device_type
+            )
+            self.config_ref.hardware.vram_total_gb = float(mem_after["total"])
+            self.config_ref.hardware.vram_used_baseline_gb = float(mem_before["used"])
+            self.config_ref.hardware.vram_used_model_gb = float(mem_after["used"])
 
-        logger.info(
-            f"📊 VRAM Status: Total={mem_after['total']:.2f}GB, "
-            f"Baseline={mem_before['used']:.2f}GB, "
-            f"ModelLoaded={mem_after['used']:.2f}GB "
-            f"(Delta: {mem_after['used'] - mem_before['used']:.2f}GB)"
-        )
+            logger.info(
+                f"📊 VRAM Status: Total={self.config_ref.hardware.vram_total_gb:.2f}GB, "
+                f"Baseline={self.config_ref.hardware.vram_used_baseline_gb:.2f}GB, "
+                f"ModelLoaded={self.config_ref.hardware.vram_used_model_gb:.2f}GB "
+                f"(Delta: {self.config_ref.hardware.vram_used_model_gb - self.config_ref.hardware.vram_used_baseline_gb:.2f}GB)"
+            )
+        except (TypeError, ValueError):
+            # Handle mocks in tests or missing data
+            logger.info(
+                f"📊 VRAM Status: Total={mem_after['total']}GB, Baseline={mem_before['used']}GB, ModelLoaded={mem_after['used']}GB"
+            )
 
     def _resolve_device(self, device: str) -> str:
         if device != "auto":
@@ -166,8 +178,9 @@ class STTEngine(Reconfigurable):
 
         start_t = time.perf_counter()
 
-        # onnx-asr handles the stream/context internally or we can just pass the buffer
-        result = self.model.recognize(input_audio, sample_rate=16000)
+        with self._lock:
+            # onnx-asr handles the stream/context internally or we can just pass the buffer
+            result = self.model.recognize(input_audio, sample_rate=16000)
 
         end_t = time.perf_counter()
         duration_ms = (end_t - start_t) * 1000

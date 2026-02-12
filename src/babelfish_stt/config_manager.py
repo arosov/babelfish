@@ -45,35 +45,20 @@ class ConfigManager:
     def _propagate_to_component(self, component: Reconfigurable):
         """Propagate relevant sub-config to a specific component."""
         try:
-            # We determine which sub-config to send based on common patterns
-            # or we could let components specify. For now, we try to match.
-            # Most components care about a specific section.
+            # If the component specifies which config section it wants, use that.
+            # Otherwise, pass the full config.
+            config_key = getattr(component, "config_key", None)
 
-            # This is a bit heuristic, but effective for our current scale
-            # We could also use type hints of the reconfigure method if needed.
-
-            # Map of component types/instances to sections
-            from babelfish_stt.vad import SileroVAD
-            from babelfish_stt.pipeline import Pipeline, StopWordDetector
-            from babelfish_stt.engine import STTEngine
-            from babelfish_stt.server import BabelfishServer
-            from babelfish_stt.wakeword import WakeWordEngine
-
-            if isinstance(component, SileroVAD):
-                component.reconfigure(self.config.voice)
-            elif isinstance(component, StopWordDetector):
-                component.reconfigure(self.config.voice)
-            elif isinstance(component, WakeWordEngine):
-                component.reconfigure(self.config.voice)
-            elif isinstance(component, Pipeline):
-                component.reconfigure(self.config.pipeline)
-            elif isinstance(component, STTEngine):
-                component.reconfigure(self.config.pipeline)
-            elif isinstance(component, BabelfishServer):
-                component.reconfigure(self.config)
+            if config_key:
+                # Handle nested keys like "voice" or "pipeline.performance"
+                target_config = self.config
+                for part in config_key.split("."):
+                    target_config = getattr(target_config, part)
+                component.reconfigure(target_config)
             else:
-                # Fallback: send full config if we don't know the specifics
+                # Default: pass the full config
                 component.reconfigure(self.config)
+
         except Exception as e:
             logger.error(f"Failed to propagate config to {component}: {e}")
 

@@ -1,5 +1,8 @@
 import numpy as np
 import time
+import threading
+import logging
+import concurrent.futures
 from typing import List, Optional, Any
 from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
@@ -10,10 +13,14 @@ from babelfish_stt.config import (
     PerformanceProfile,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class Pipeline(Reconfigurable):
     def __init__(self):
+        self._lock = threading.RLock()
         self.is_idle = True
+        self.is_speaking = False
         self.pending_idle = False
         self.stop_detector: Optional[StopWordDetector] = None
         self.on_state_change = None  # Callback(is_speaking: bool)
@@ -28,45 +35,46 @@ class Pipeline(Reconfigurable):
         Unified entry point for changing the engine mode.
         Handles deferral, resource cleanup, and server synchronization.
         """
-        import logging
+        with self._lock:
+            if not is_idle:
+                # UNLOCKING (Listening) - Always immediate
+                logger.info(f"🔓 UNLOCK requested (Event: {source_event or 'manual'})")
+                self.pending_idle = False
+                callback = None
+                if self.is_idle:
+                    self.is_idle = False
+                    self.reset_state()
+                    callback = self.on_mode_change
 
-        logger = logging.getLogger(__name__)
+                if source_event and self.server:
+                    self.server.trigger_event(source_event)
 
-        if not is_idle:
-            # UNLOCKING (Listening) - Always immediate
-            logger.info(f"🔓 UNLOCK requested (Event: {source_event or 'manual'})")
+                if callback:
+                    callback(False)
+                return
+
+            # LOCKING (Idle)
+            if not force and self.is_speaking:
+                # Defer locking until current speech ends
+                if not self.pending_idle:
+                    logger.info(
+                        f"⏳ LOCK requested but speech in progress. Queuing... (Event: {source_event or 'manual'})"
+                    )
+                    self.pending_idle = True
+                return
+
+            # Execute immediate LOCK
+            logger.info(f"🔒 LOCK executed (Event: {source_event or 'manual'})")
+            self.is_idle = True
             self.pending_idle = False
-            if self.is_idle:
-                self.is_idle = False
-                self.reset_state()
-                if self.on_mode_change:
-                    self.on_mode_change(False)
+            self.reset_state()
+            callback = self.on_mode_change
 
             if source_event and self.server:
                 self.server.trigger_event(source_event)
-            return
 
-        # LOCKING (Idle)
-        if not force and getattr(self, "is_speaking", False):
-            # Defer locking until current speech ends
-            if not self.pending_idle:
-                logger.info(
-                    f"⏳ LOCK requested but speech in progress. Queuing... (Event: {source_event or 'manual'})"
-                )
-                self.pending_idle = True
-            return
-
-        # Execute immediate LOCK
-        logger.info(f"🔒 LOCK executed (Event: {source_event or 'manual'})")
-        self.is_idle = True
-        self.pending_idle = False
-        self.reset_state()
-
-        if self.on_mode_change:
-            self.on_mode_change(True)
-
-        if source_event and self.server:
-            self.server.trigger_event(source_event)
+            if callback:
+                callback(True)
 
     def set_idle(self, idle: bool, force: bool = False):
         """Legacy wrapper, delegates to request_mode."""
@@ -81,6 +89,8 @@ class Pipeline(Reconfigurable):
         self.test_mode = enabled
 
     def _notify_state_change(self, is_speaking: bool):
+        with self._lock:
+            self.is_speaking = is_speaking
         if self.on_state_change:
             self.on_state_change(is_speaking)
 
@@ -99,6 +109,8 @@ class StopWordDetector(Reconfigurable):
     """
     Detects stop phrases in transcript strings.
     """
+
+    config_key = "voice"
 
     def __init__(self, stop_words: List[str]):
         self.stop_words = [w.lower().strip() for w in stop_words]
@@ -138,6 +150,8 @@ class StandardPipeline(Pipeline):
     Handles intermediate 'ghost' updates and final commitments.
     """
 
+    config_key = "pipeline"
+
     def __init__(self, vad, engine, display):
         super().__init__()
         self.vad = vad
@@ -145,8 +159,8 @@ class StandardPipeline(Pipeline):
         self.display = display
 
         self.active_buffer = []
+        self._buffer_size = 0
         self.last_speech_time = 0
-        self.is_speaking = False
         self.silence_threshold_ms = 400
         self.update_interval_ms = 100
         self.last_update_time = 0
@@ -155,6 +169,10 @@ class StandardPipeline(Pipeline):
         self.perf = PerformanceProfile()
         self.dynamic_throttle_ms = 100
         self.inference_history = []
+
+        # Thread pool for offloading transcription
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self._transcription_future = None
 
     def reconfigure(self, config: BaseModel) -> None:
         if isinstance(config, PipelineConfig):
@@ -181,69 +199,112 @@ class StandardPipeline(Pipeline):
             self.dynamic_throttle_ms = max(target_throttle, self.perf.ghost_throttle_ms)
 
     def process_chunk(self, chunk: np.ndarray, now_ms: float) -> bool:
-        if self.is_idle:
-            return False
+        with self._lock:
+            if self.is_idle:
+                return False
 
         is_speech = self.vad.is_speech(chunk)
 
         # Handle test mode: run VAD but don't accumulate audio or transcribe
         if self.test_mode:
-            if is_speech:
-                if not self.is_speaking:
-                    self.is_speaking = True
-                    self._notify_state_change(True)
-                self.last_speech_time = now_ms
-            else:
-                # Silence detected in test mode
-                if self.is_speaking:
-                    if now_ms - self.last_speech_time > self.silence_threshold_ms:
-                        self.is_speaking = False
-                        self._notify_state_change(False)
+            with self._lock:
+                if is_speech:
+                    if not self.is_speaking:
+                        self.is_speaking = True
+                        self._notify_state_change(True)
+                    self.last_speech_time = now_ms
+                else:
+                    # Silence detected in test mode
+                    if self.is_speaking:
+                        if now_ms - self.last_speech_time > self.silence_threshold_ms:
+                            self.is_speaking = False
+                            self._notify_state_change(False)
             return False
 
         # Normal mode: accumulate audio and transcribe
         if is_speech:
-            if not self.is_speaking:
-                self.is_speaking = True
-                self._notify_state_change(True)
-                self.last_update_time = now_ms
+            with self._lock:
+                if not self.is_speaking:
+                    self._notify_state_change(True)
+                    self.last_update_time = now_ms
 
-            self.active_buffer.append(chunk)
-            self.last_speech_time = now_ms
+                self.active_buffer.append(chunk)
+                self._buffer_size += len(chunk)
+                self.last_speech_time = now_ms
 
             # Intermediate 'Ghost' Update
-            if now_ms - self.last_update_time >= self.dynamic_throttle_ms:
-                full_audio = np.concatenate(self.active_buffer)
-
-                # EFFICIENT FIRST PASS: Sliding window for ghost results (GPU ONLY)
-                if self.engine.device_type != "cpu" and self.perf.ghost_window_s > 0:
-                    window_samples = int(self.perf.ghost_window_s * 16000)
-                    if len(full_audio) > window_samples:
-                        full_audio = full_audio[-window_samples:]
-
-                import time
-
-                start = time.perf_counter()
-                text = self.engine.transcribe(
-                    full_audio, padding_s=self.perf.min_padding_s
+            with self._lock:
+                should_ghost = (
+                    now_ms - self.last_update_time >= self.dynamic_throttle_ms
                 )
-                self._apply_dynamic_backoff((time.perf_counter() - start) * 1000)
 
-                if text:
-                    self.display.update(ghost=text)  # Pass as ghost for real-time feel
-                    if self.stop_detector and self.stop_detector.detect(text):
-                        self._handle_stop()
-                        return True
-                self.last_update_time = now_ms
+            if should_ghost:
+                # Only start new transcription if the previous one is done
+                if (
+                    self._transcription_future is None
+                    or self._transcription_future.done()
+                ):
+                    # Handle result of previous future if it just finished
+                    if self._transcription_future and self._transcription_future.done():
+                        try:
+                            text, duration_ms = self._transcription_future.result()
+                            self._apply_dynamic_backoff(duration_ms)
+                            if text:
+                                self.display.update(ghost=text)
+                                if self.stop_detector and self.stop_detector.detect(
+                                    text
+                                ):
+                                    self._handle_stop()
+                                    return True
+                        except Exception as e:
+                            logger.error(f"Ghost transcription error: {e}")
+                        self._transcription_future = None
+
+                    # Start new ghost transcription
+                    with self._lock:
+                        full_audio = np.concatenate(self.active_buffer)
+
+                    # EFFICIENT FIRST PASS: Sliding window for ghost results (GPU ONLY)
+                    if (
+                        self.engine.device_type != "cpu"
+                        and self.perf.ghost_window_s > 0
+                    ):
+                        window_samples = int(self.perf.ghost_window_s * 16000)
+                        if len(full_audio) > window_samples:
+                            full_audio = full_audio[-window_samples:]
+
+                    def _run_transcribe(audio):
+                        t_start = time.perf_counter()
+                        res = self.engine.transcribe(
+                            audio, padding_s=self.perf.min_padding_s
+                        )
+                        return res, (time.perf_counter() - t_start) * 1000
+
+                    self._transcription_future = self.executor.submit(
+                        _run_transcribe, full_audio
+                    )
+                    with self._lock:
+                        self.last_update_time = now_ms
         else:
             # Silence detected
-            if self.is_speaking:
-                self.active_buffer.append(chunk)
+            with self._lock:
+                was_speaking = self.is_speaking
+
+            if was_speaking:
+                with self._lock:
+                    self.active_buffer.append(chunk)
+                    self._buffer_size += len(chunk)
+                    is_silent_long_enough = (
+                        now_ms - self.last_speech_time > self.silence_threshold_ms
+                    )
 
                 # If we've been silent long enough, finalize
-                if now_ms - self.last_speech_time > self.silence_threshold_ms:
-                    full_audio = np.concatenate(self.active_buffer)
-                    # Use full context for finalization, no windowing
+                if is_silent_long_enough:
+                    with self._lock:
+                        full_audio = np.concatenate(self.active_buffer)
+
+                    # Final pass: blocking for consistency
+                    # Since STTEngine now has a lock, it won't run concurrently with ghost pass
                     text = self.engine.transcribe(
                         full_audio, padding_s=self.perf.min_padding_s
                     )
@@ -256,8 +317,9 @@ class StandardPipeline(Pipeline):
                     self.reset_state()
 
                     # Completion of deferred LOCK
-                    if self.pending_idle:
-                        self.request_mode(is_idle=True, force=True)
+                    with self._lock:
+                        if self.pending_idle:
+                            self.request_mode(is_idle=True, force=True)
 
         return False
 
@@ -266,9 +328,16 @@ class StandardPipeline(Pipeline):
 
     def reset_state(self):
         # Reset for next sentence
-        self.active_buffer = []
-        self.last_update_time = 0
-        if self.is_speaking:
-            self.is_speaking = False
-            self._notify_state_change(False)
-        self.vad.reset_states()
+        with self._lock:
+            self.active_buffer = []
+            self.last_update_time = 0
+            if self.is_speaking:
+                self.is_speaking = False
+                callback = self.on_state_change
+            else:
+                callback = None
+
+            self.vad.reset_states()
+
+        if callback:
+            callback(False)

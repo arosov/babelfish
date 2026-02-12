@@ -221,6 +221,11 @@
           "title": "Show Timestamps",
           "type": "boolean"
         },
+        "notifications": {
+          "default": true,
+          "title": "Notifications",
+          "type": "boolean"
+        },
         "shortcuts": {
           "$ref": "#/$defs/ShortcutsConfig"
         },

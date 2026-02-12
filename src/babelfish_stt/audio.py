@@ -19,6 +19,8 @@ class AudioStreamer(Reconfigurable):
     Hardware-aware audio capture with low-latency resampling.
     """
 
+    config_key = None  # Reconfigures based on full config
+
     def __init__(self, sample_rate: int = 16000, microphone_name: Optional[str] = None):
         self.target_rate = sample_rate
 
@@ -38,12 +40,13 @@ class AudioStreamer(Reconfigurable):
         # Query hardware capabilities
         self._update_device_info()
 
-        self.audio_queue = queue.Queue()
+        self.audio_queue = queue.Queue(maxsize=100)  # Bounded queue to prevent OOM
         self.is_running = False
         self.restart_required = False
 
         # Buffer for accumulating audio to ensure consistent chunk sizes
-        self._chunk_buffer = np.array([], dtype=np.float32)
+        self._chunk_list = []
+        self._chunk_buffer_len = 0
 
     def _update_device_info(self):
         try:
@@ -74,22 +77,12 @@ class AudioStreamer(Reconfigurable):
         if status:
             logger.warning(f"Audio callback status: {status}")
 
-        data = indata.copy().flatten()
-
-        # Debug: check RMS
-        rms = np.sqrt(np.mean(data**2))
-        if rms > 0.001:
-            # logger.debug(f"Audio captured: RMS={rms:.6f}")
+        # Keep callback minimal: copy data and put in queue
+        try:
+            self.audio_queue.put_nowait(indata.copy().flatten())
+        except queue.Full:
+            # Drop audio if queue is full to avoid blocking the callback
             pass
-
-        # Resample if needed (to 16kHz target rate)
-        if self.needs_resampling:
-            data = soxr.resample(data, self.native_rate, self.target_rate)
-
-        if len(data) > 0:
-            self.audio_queue.put(data)
-        else:
-            logger.warning("Captured empty audio data")
 
     def stream(self, chunk_size: int = 512) -> Generator[np.ndarray, None, None]:
         """
@@ -119,19 +112,42 @@ class AudioStreamer(Reconfigurable):
 
                     while self.is_running and not self.restart_required:
                         try:
-                            # Get audio from queue and accumulate in buffer
-                            audio_chunk = self.audio_queue.get(timeout=0.1)
-                            self._chunk_buffer = np.concatenate(
-                                [self._chunk_buffer, audio_chunk]
-                            )
+                            # Get raw audio from queue
+                            raw_audio = self.audio_queue.get(timeout=0.1)
+
+                            # Resample outside of callback
+                            if self.needs_resampling:
+                                audio_chunk = soxr.resample(
+                                    raw_audio, self.native_rate, self.target_rate
+                                )
+                            else:
+                                audio_chunk = raw_audio
+
+                            if len(audio_chunk) == 0:
+                                continue
+
+                            # Accumulate in list (more efficient than np.concatenate on every small chunk)
+                            self._chunk_list.append(audio_chunk)
+                            self._chunk_buffer_len += len(audio_chunk)
 
                             # Yield fixed-size chunks while we have enough data
-                            while len(self._chunk_buffer) >= chunk_size:
-                                yield self._chunk_buffer[:chunk_size]
-                                self._chunk_buffer = self._chunk_buffer[chunk_size:]
+                            while self._chunk_buffer_len >= chunk_size:
+                                # Only concatenate when we have enough to yield
+                                full_buffer = np.concatenate(self._chunk_list)
+                                yield full_buffer[:chunk_size]
+
+                                # Keep the remainder
+                                remainder = full_buffer[chunk_size:]
+                                if len(remainder) > 0:
+                                    self._chunk_list = [remainder]
+                                    self._chunk_buffer_len = len(remainder)
+                                else:
+                                    self._chunk_list = []
+                                    self._chunk_buffer_len = 0
 
                         except queue.Empty:
                             continue
+
             except Exception as e:
                 logger.error(f"Stream error on device {self.device_index}: {e}")
                 time.sleep(1)  # Prevent tight error loop
@@ -154,7 +170,8 @@ class AudioStreamer(Reconfigurable):
             except queue.Empty:
                 break
         # Clear the internal chunk buffer
-        self._chunk_buffer = np.array([], dtype=np.float32)
+        self._chunk_list = []
+        self._chunk_buffer_len = 0
 
     def reconfigure(self, config: BaseModel) -> None:
         """Reconfigure audio stream with new hardware settings."""
@@ -184,27 +201,3 @@ class AudioStreamer(Reconfigurable):
 
             # Signal restart
             self.restart_required = True
-
-
-class HistoryBuffer:
-    """
-    Maintains a fixed-size sliding window of audio samples.
-    """
-
-    def __init__(self, maxlen_samples: int = 64000):  # 4s @ 16kHz
-        self.maxlen = maxlen_samples
-        self.buffer = np.array([], dtype=np.float32)
-
-    def append(self, chunk: np.ndarray):
-        """Adds a new chunk and trims the buffer to maxlen."""
-        self.buffer = np.concatenate([self.buffer, chunk])
-        if len(self.buffer) > self.maxlen:
-            self.buffer = self.buffer[-self.maxlen :]
-
-    def get_all(self) -> np.ndarray:
-        """Returns the entire current buffer."""
-        return self.buffer
-
-    def clear(self):
-        """Clears the buffer."""
-        self.buffer = np.array([], dtype=np.float32)

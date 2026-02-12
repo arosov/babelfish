@@ -34,6 +34,8 @@ class WakeWordEngine(Reconfigurable):
     Supports multiple concurrent models (e.g. start word and stop word).
     """
 
+    config_key = "voice"
+
     def __init__(
         self,
         start_word: Optional[str] = None,
@@ -41,7 +43,7 @@ class WakeWordEngine(Reconfigurable):
         sensitivity: float = 0.5,
         stop_sensitivity: float = 0.5,
     ):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.start_word = start_word
         self.stop_word = stop_word
         self.threshold = 1.0 - sensitivity

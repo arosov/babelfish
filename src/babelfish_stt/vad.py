@@ -14,6 +14,8 @@ class SileroVAD(Reconfigurable):
     Lightweight wrapper for Silero VAD v5.
     """
 
+    config_key = "voice"
+
     def __init__(self, threshold: float = 0.5, sample_rate: int = 16000):
         self.threshold = threshold
         self.sample_rate = sample_rate
