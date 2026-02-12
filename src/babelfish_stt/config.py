@@ -34,9 +34,7 @@ class PipelineConfig(BaseModel):
 
 
 class ShortcutsConfig(BaseModel):
-    toggle_transcribing: str = Field(
-        default="Ctrl+Shift+S", title="Toggle Transcribing"
-    )
+    toggle_listening: str = Field(default="Ctrl+Space", title="Toggle Listening")
     force_listen: str = "Ctrl+Shift+L"
 
 
@@ -47,7 +45,9 @@ class ActivationDetectionConfig(BaseModel):
 
 class VoiceConfig(BaseModel):
     wakeword: Optional[str] = None
+    stop_wakeword: Optional[str] = None
     wakeword_sensitivity: float = 0.5
+    stop_wakeword_sensitivity: float = 0.5
     stop_words: List[str] = Field(default_factory=list)
 
 

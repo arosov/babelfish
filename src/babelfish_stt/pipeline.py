@@ -22,8 +22,14 @@ class Pipeline(Reconfigurable):
     def set_idle(self, idle: bool):
         if self.is_idle != idle:
             self.is_idle = idle
+            # Reset state on ANY transition to ensure clean start/stop
+            self.reset_state()
             if self.on_mode_change:
                 self.on_mode_change(idle)
+
+    def reset_state(self):
+        """Resets internal audio buffers and VAD states."""
+        pass
 
     def set_test_mode(self, enabled: bool):
         """Enable/disable microphone test mode. When enabled, VAD runs but audio is dropped."""
@@ -202,15 +208,14 @@ class StandardPipeline(Pipeline):
                             self._handle_stop()
                             return True
 
-                    self._reset_utterance()
+                    self.reset_state()
 
         return False
 
     def _handle_stop(self):
         self.set_idle(True)
-        self._reset_utterance()
 
-    def _reset_utterance(self):
+    def reset_state(self):
         # Reset for next sentence
         self.active_buffer = []
         self.last_update_time = 0

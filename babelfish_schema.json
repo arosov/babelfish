@@ -195,9 +195,9 @@
     },
     "ShortcutsConfig": {
       "properties": {
-        "toggle_transcribing": {
-          "default": "Ctrl+Shift+S",
-          "title": "Toggle Transcribing",
+        "toggle_listening": {
+          "default": "Ctrl+Space",
+          "title": "Toggle Listening",
           "type": "string"
         },
         "force_listen": {
@@ -245,8 +245,24 @@
           "default": null,
           "title": "Wakeword"
         },
+        "stop_wakeword": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stop Wakeword"
+        },
         "wakeword_sensitivity": {
           "title": "Wakeword Sensitivity",
+          "type": "number"
+        },
+        "stop_wakeword_sensitivity": {
+          "title": "Stop Wakeword Sensitivity",
           "type": "number"
         },
         "stop_words": {

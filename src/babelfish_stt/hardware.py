@@ -458,9 +458,8 @@ class HardwareManager:
                 f"Selected best microphone: {mic_name} (index {self.best_mic_index})"
             )
         else:
-            logging.error("CRITICAL: No microphone detected on this system!")
-            print(
-                "\n❌ ERROR: No microphone detected. Babelfish requires an input device to start."
+            logging.error(
+                "CRITICAL: No microphone detected. Babelfish requires an input device to start."
             )
             sys.exit(1)
 

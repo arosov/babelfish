@@ -17,12 +17,14 @@ from babelfish_stt.server import BabelfishServer
 from babelfish_stt.wakeword import WakeWordEngine
 from babelfish_stt.pipeline import StandardPipeline, StopWordDetector
 
+logger = logging.getLogger(__name__)
+
 
 def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
     """Main blocking loop for audio capture and processing."""
     try:
-        print("\n🎤 STT Loop Started")
-        print("-" * 50)
+        logger.info("🎤 STT Loop Started")
+        logger.info("-" * 50)
 
         # In idle mode, only run WakeWord engine
         # We determine initial idle state based on whether a wakeword is currently active
@@ -30,12 +32,16 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
         pipeline.set_idle(is_idle)
 
         if is_idle:
-            print(f"💤 IDLE: Waiting for wake-word '{ww_engine.active_wakeword}'...")
+            logger.info(
+                f"💤 IDLE: Waiting for wake-word '{ww_engine.active_wakeword}'..."
+            )
         else:
-            print("\n🎤 Listening... (Press Ctrl+C to stop)\n")
+            logger.info("🎤 Listening... (Press Ctrl+C to stop)")
 
         cooldown_until = 0
+        stop_cooldown_until = 0
         last_configured_ww = ww_engine.active_wakeword if ww_engine else None
+        last_configured_stop_ww = ww_engine.active_stop_word if ww_engine else None
 
         for chunk in streamer.stream():
             if shutdown_event.is_set():
@@ -45,39 +51,59 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
             now_ms = now * 1000
 
             # Dynamically check for wakeword updates
-            active_ww = ww_engine.active_wakeword if ww_engine else None
+            active_ww = ww_engine.active_start_word if ww_engine else None
+            stop_ww = ww_engine.active_stop_word if ww_engine else None
 
             # Handle dynamic transitions when configuration changes
-            if active_ww != last_configured_ww:
-                if active_ww is None:
-                    is_idle = False
-                    pipeline.set_idle(False)
-                    logging.info("Wake-word disabled. Switching to active listening.")
-                    print("\n🎤 No wake-word configured. Listening...\n")
-                else:
-                    is_idle = True
-                    pipeline.set_idle(True)
-                    logging.info(
-                        f"Wake-word '{active_ww}' enabled. Switching to idle mode."
+            if active_ww != last_configured_ww or stop_ww != last_configured_stop_ww:
+                if active_ww != last_configured_ww:
+                    if active_ww is None:
+                        is_idle = False
+                        pipeline.set_idle(False)
+                        logger.info("🔄 CONFIG: Wake-word disabled. Listening...")
+                    else:
+                        is_idle = True
+                        pipeline.set_idle(True)
+                        logger.info(
+                            f"🔄 CONFIG: Wake-word '{active_ww}' enabled. Waiting..."
+                        )
+                    last_configured_ww = active_ww
+
+                if stop_ww != last_configured_stop_ww:
+                    logger.info(
+                        f"🔄 CONFIG: Stop-word changed to '{stop_ww or 'None'}'"
                     )
-                    print(f"💤 IDLE: Waiting for wake-word '{active_ww}'...")
-                last_configured_ww = active_ww
+                    last_configured_stop_ww = stop_ww
 
             if is_idle:
                 if now < cooldown_until:
                     continue
 
                 if ww_engine and ww_engine.detect(chunk):
-                    print(f"✨ WAKEWORD '{active_ww}' DETECTED!")
+                    logger.info(f"✨ WAKEWORD '{active_ww}' DETECTED!")
                     if server:
                         server.trigger_event("wakeword_detected")
                     is_idle = False
                     pipeline.set_idle(False)
                     # Clear any old audio from streamer to start fresh
                     streamer.drain()
+                    # Ignore stop word for 4s to avoid immediate re-triggering with same audio
+                    stop_cooldown_until = now + 4.0
             else:
-                # In active mode, process chunk through pipeline
-                state_changed = pipeline.process_chunk(chunk, now_ms)
+                # Parallel check for stop-wakeword (PRIORITY)
+                stop_detected = False
+                if ww_engine and stop_ww:
+                    # Always process chunk to keep model state consistent, but ignore result during cooldown
+                    is_detected = ww_engine.detect(chunk, word=stop_ww)
+                    if now >= stop_cooldown_until:
+                        stop_detected = is_detected
+
+                if stop_detected:
+                    logger.info(f"🛑 STOP WAKEWORD '{stop_ww}' DETECTED!")
+                    state_changed = True
+                else:
+                    # In active mode, process chunk through pipeline if not stopping
+                    state_changed = pipeline.process_chunk(chunk, now_ms)
 
                 if state_changed:
                     # Pipeline reported a transition (e.g., stop word detected)
@@ -91,16 +117,16 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
                         if ww_engine:
                             ww_engine.reset()
                         cooldown_until = now + 1.5
-                        print(
+                        logger.info(
                             f"💤 IDLE: Waiting for wake-word '{active_ww}'... (1.5s cooldown)"
                         )
                     else:
-                        print("🛑 Stopped.")
+                        logger.info("🛑 Stopped.")
 
     except Exception as e:
-        logging.error(f"Error in STT loop: {e}")
+        logger.error(f"Error in STT loop: {e}")
     finally:
-        print("✅ STT Loop Shutdown.")
+        logger.info("✅ STT Loop Shutdown.")
 
 
 async def run_babelfish(
@@ -109,47 +135,60 @@ async def run_babelfish(
     stopword: Optional[str] = None,
     force_cpu: bool = False,
 ):
-    print("\n" + "=" * 50, flush=True)
-    print("🚀 BABELFISH STT INITIALIZING", flush=True)
+    logger.info("=" * 50)
+    logger.info("🚀 BABELFISH STT INITIALIZING")
 
     # 2. Config Load & Validation
     config_manager = ConfigManager()
     if not config_manager.is_valid(hw):
-        print("⚠️ Configuration is invalid or missing. Generating optimal defaults...")
+        logger.warning(
+            "⚠️ Configuration is invalid or missing. Generating optimal defaults..."
+        )
         config_manager.generate_optimal_defaults(hw)
     else:
-        print("✅ Configuration validated against hardware.")
+        logger.info("✅ Configuration validated against hardware.")
 
     # Override config with CLI flags if provided
     if force_cpu:
         config_manager.config.hardware.device = "cpu"
         config_manager.config.hardware.auto_detect = False
-        print("   MODE: Force CPU Execution (CLI Override)")
+        logger.info("   MODE: Force CPU Execution (CLI Override)")
 
     if wakeword:
         config_manager.config.voice.wakeword = wakeword
     if stopword:
-        if stopword not in config_manager.config.voice.stop_words:
-            config_manager.config.voice.stop_words.append(stopword)
+        # Check if it's meant to be an openwakeword stopword or a transcript stopword
+        # For now, if we have a stopword flag and it matches an openwakeword model,
+        # we'll use it as stop_wakeword. Otherwise, we keep it in stop_words.
+        import openwakeword
 
-    print(f"   DEVICE: {config_manager.config.hardware.device.upper()}")
+        available_ww = list(openwakeword.MODELS.keys())
+        if stopword in available_ww:
+            config_manager.config.voice.stop_wakeword = stopword
+            logger.info(f"   STOP-WAKE-WORD: {stopword}")
+        else:
+            if stopword not in config_manager.config.voice.stop_words:
+                config_manager.config.voice.stop_words.append(stopword)
+            logger.info(
+                f"   STOP-WORDS: {', '.join(config_manager.config.voice.stop_words)}"
+            )
+
+    logger.info(f"   DEVICE: {config_manager.config.hardware.device.upper()}")
 
     if config_manager.config.voice.wakeword:
-        print(f"   WAKE-WORD: {config_manager.config.voice.wakeword}")
-    if config_manager.config.voice.stop_words:
-        print(f"   STOP-WORDS: {', '.join(config_manager.config.voice.stop_words)}")
+        logger.info(f"   WAKE-WORD: {config_manager.config.voice.wakeword}")
 
     # 3. Start Server Early (Async)
     server = BabelfishServer(config_manager)
     config_manager.register(server)
 
     await server.start()
-    print(
+    logger.info(
         f"   SERVER: WebSockets running on ws://{config_manager.config.server.host}:{config_manager.config.server.port}/config"
     )
 
     await asyncio.sleep(0.5)
-    print("=" * 50)
+    logger.info("=" * 50)
 
     # 4. Initialize Audio Pipeline (Heavy/Blocking)
     async def heavy_init():
@@ -166,13 +205,17 @@ async def run_babelfish(
             await server.broadcast_bootstrap_status("Calibrating Performance...")
             perf_data = await asyncio.to_thread(engine.benchmark)
             config_manager.update({"pipeline": {"performance": perf_data}})
-            print(f"✅ Performance calibrated: {perf_data['tier'].upper()}")
+            logger.info(f"✅ Performance calibrated: {perf_data['tier'].upper()}")
 
         await server.broadcast_bootstrap_status(
             f"Loading WakeWord ({config_manager.config.voice.wakeword or 'None'})..."
         )
         ww_engine = await asyncio.to_thread(
-            WakeWordEngine, model_name=config_manager.config.voice.wakeword
+            WakeWordEngine,
+            start_word=config_manager.config.voice.wakeword,
+            stop_word=config_manager.config.voice.stop_wakeword,
+            sensitivity=config_manager.config.voice.wakeword_sensitivity,
+            stop_sensitivity=config_manager.config.voice.stop_wakeword_sensitivity,
         )
 
         await server.broadcast_bootstrap_status("Initializing Audio Stream...")
@@ -191,7 +234,7 @@ async def run_babelfish(
 
         return vad, engine, ww_engine, streamer, display, pipeline
 
-    print("⏳ Loading engines and models (this may take a few seconds)...", flush=True)
+    logger.info("⏳ Loading engines and models (this may take a few seconds)...")
     vad, engine, ww_engine, streamer, display, pipeline = await heavy_init()
 
     # Link pipeline to server and register remaining components for hot-reloading
@@ -213,7 +256,7 @@ async def run_babelfish(
         config_manager.register(pipeline.stop_detector)
 
     await server.broadcast_bootstrap_status("Engine Ready!")
-    print("✅ Initialization complete.", flush=True)
+    logger.info("✅ Initialization complete.")
 
     # 3. Start STT Loop in Background Thread
     shutdown_event = threading.Event()
@@ -232,12 +275,12 @@ async def run_babelfish(
     try:
         await asyncio.Future()
     except (asyncio.CancelledError, KeyboardInterrupt):
-        print("\n\n🛑 Stopping Babelfish...")
+        logger.info("🛑 Stopping Babelfish...")
     finally:
         shutdown_event.set()
         streamer.stop()
         await stt_task
-        print("✅ Shutdown complete.")
+        logger.info("✅ Shutdown complete.")
 
 
 def main():
@@ -277,9 +320,9 @@ def main():
     args = parser.parse_args()
 
     if args.wakeword == "LIST_OPTIONS":
-        print("\nAvailable Wake-words:")
+        logger.info("Available Wake-words:")
         for ww in available_ww:
-            print(f"  - {ww}")
+            logger.info(f"  - {ww}")
         sys.exit(0)
 
     # 1. Hardware Probe
