@@ -85,19 +85,19 @@ class BabelfishServer(Reconfigurable):
             # Restart is required if:
             # 1. auto_detect toggled
             # 2. auto_detect is False and device changed
-            # 3. Switching from auto_detect=True to a device that ISN'T the current active one
+            # 3. Switching from auto_detect=True to a specific device that ISN'T the current active one
             hw_changed = False
             if new_auto != old_auto:
-                if new_auto:  # Toggling ON auto-detect
-                    hw_changed = True
-                else:  # Toggling OFF auto-detect
-                    # If the user picks the device we are already using, no restart needed
-                    if new_device != current_active:
-                        hw_changed = True
+                # Toggling auto-detect always triggers a restart to be safe,
+                # UNLESS we are switching from manual to auto and the manual device
+                # was already 'auto' (which shouldn't happen but let's be safe).
+                hw_changed = True
             elif not new_auto:  # Stayed in manual mode
                 if new_device != old_device:
                     hw_changed = True
-            # If stayed in auto mode, hw_changed remains False regardless of the 'device' field value
+
+            # If stayed in auto mode (new_auto == True and old_auto == True),
+            # we NEVER trigger a restart based on the 'device' field because it's ignored anyway.
 
             server_changed = (
                 config.server.host != self.initial_config.server.host
@@ -106,13 +106,17 @@ class BabelfishServer(Reconfigurable):
 
             if hw_changed or server_changed:
                 logger.info(
-                    f"Critical configuration change detected. Restart required."
+                    f"Critical configuration change detected. Restart required. "
+                    f"(hw_changed={hw_changed}, server_changed={server_changed})"
                 )
                 self.restart_required = True
             else:
-                self.restart_required = False
-                # Update initial_config so subsequent changes are compared against this new state
+                # If no restart required, update initial_config to match current state
+                # but preserve runtime stats if the incoming config has them as 0/None
+                # (which happens if the client sends a partial draft)
                 self.initial_config = config.model_copy(deep=True)
+                if self.initial_config.hardware.active_device is None:
+                    self.initial_config.hardware.active_device = current_active
 
     async def handle_connection(self, websocket):
         logger.info(
@@ -165,7 +169,7 @@ class BabelfishServer(Reconfigurable):
 
             if msg_type == "update_config":
                 changes = message.get("data", {})
-                logger.info(f"Received config update")
+                logger.info(f"Received config update: {json.dumps(changes)}")
                 self.config_manager.update(changes)
                 # Broadcast updated config to ALL clients
                 config_data = self.config_manager.config.model_dump()

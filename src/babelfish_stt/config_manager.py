@@ -103,7 +103,13 @@ class ConfigManager:
                 except Exception as e:
                     logger.warning(f"Failed to migrate microphone index to name: {e}")
 
-            return BabelfishConfig.model_validate(data)
+            config = BabelfishConfig.model_validate(data)
+
+            # Ensure consistency: if auto_detect is enabled, device should be "auto"
+            if config.hardware.auto_detect:
+                config.hardware.device = "auto"
+
+            return config
         except (json.JSONDecodeError, Exception) as e:
             logger.warning(
                 f"Failed to load config from {self.config_path}: {e}. Using defaults."

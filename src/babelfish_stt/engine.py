@@ -18,7 +18,11 @@ class STTEngine(Reconfigurable):
     """
 
     def __init__(self, config: BabelfishConfig):
-        self.device_type = self._resolve_device(config.hardware.device)
+        # Resolve target device: if auto-detect is on, force "auto" regardless of the 'device' field
+        target_device = (
+            "auto" if config.hardware.auto_detect else config.hardware.device
+        )
+        self.device_type = self._resolve_device(target_device)
         self.config_ref = config  # Keep reference to update status
 
         # Default model search
@@ -77,6 +81,13 @@ class STTEngine(Reconfigurable):
         self.config_ref.hardware.vram_total_gb = mem_after["total"]
         self.config_ref.hardware.vram_used_baseline_gb = mem_before["used"]
         self.config_ref.hardware.vram_used_model_gb = mem_after["used"]
+
+        logger.info(
+            f"📊 VRAM Status: Total={mem_after['total']:.2f}GB, "
+            f"Baseline={mem_before['used']:.2f}GB, "
+            f"ModelLoaded={mem_after['used']:.2f}GB "
+            f"(Delta: {mem_after['used'] - mem_before['used']:.2f}GB)"
+        )
 
     def _resolve_device(self, device: str) -> str:
         if device != "auto":
