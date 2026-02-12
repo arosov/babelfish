@@ -5,7 +5,7 @@ from typing import Set, Dict, Optional, Any
 
 import websockets
 from pydantic import BaseModel
-from plyer import notification
+from notifypy import Notify
 
 from babelfish_stt.config_manager import ConfigManager
 from babelfish_stt.reconfigurable import Reconfigurable
@@ -77,22 +77,22 @@ class BabelfishServer(Reconfigurable):
 
         # Send desktop notification if enabled
         if self.config_manager.config.ui.notifications:
+            notification = Notify()
+            notification.application_name = "VogonPoet"
+            notification.title = "VogonPoet"
+
+            should_send = False
             if event_name == "wakeword_detected":
-                try:
-                    notification.notify(
-                        title="VogonPoet",
-                        message="Wake word detected, listening",
-                        timeout=4,
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send notification: {e}")
+                notification.message = "Wake word detected, listening"
+                should_send = True
             elif event_name == "stop_word_detected":
+                notification.message = "Stop word detected, idle"
+                should_send = True
+
+            if should_send:
                 try:
-                    notification.notify(
-                        title="VogonPoet",
-                        message="Stop word detected, idle",
-                        timeout=4,
-                    )
+                    # notifypy uses seconds for timeout, it will be converted to ms for DBus on Linux
+                    notification.send(block=False)
                 except Exception as e:
                     logger.error(f"Failed to send notification: {e}")
 
