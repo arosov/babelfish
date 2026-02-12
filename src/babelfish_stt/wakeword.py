@@ -87,7 +87,11 @@ class WakeWordEngine(Reconfigurable):
                 logger.info(
                     f"Loading WakeWord models: {', '.join([Path(p).name for p in target_paths])}"
                 )
-                self.oww_model = Model(wakeword_models=target_paths)
+                self.oww_model = Model(
+                    wakeword_models=target_paths,
+                    inference_framework="onnx",
+                    device="cpu",
+                )
 
     def reconfigure(self, config: BaseModel) -> None:
         """Update wakeword models and sensitivity based on config."""
