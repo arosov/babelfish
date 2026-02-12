@@ -116,9 +116,9 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
                         streamer.drain()
                         if ww_engine:
                             ww_engine.reset()
-                        cooldown_until = now + 1.5
+                        cooldown_until = now + 4.0
                         logger.info(
-                            f"💤 IDLE: Waiting for wake-word '{active_ww}'... (1.5s cooldown)"
+                            f"💤 IDLE: Waiting for wake-word '{active_ww}'... (4.0s cooldown)"
                         )
                     else:
                         logger.info("🛑 Stopped.")
