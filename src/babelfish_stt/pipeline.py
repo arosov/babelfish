@@ -1,6 +1,6 @@
 import numpy as np
 import time
-from typing import List, Optional
+from typing import List, Optional, Any
 from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import (
@@ -13,19 +13,64 @@ from babelfish_stt.config import (
 
 class Pipeline(Reconfigurable):
     def __init__(self):
-        self.is_idle = False
+        self.is_idle = True
+        self.pending_idle = False
         self.stop_detector: Optional[StopWordDetector] = None
         self.on_state_change = None  # Callback(is_speaking: bool)
         self.on_mode_change = None  # Callback(is_idle: bool)
         self.test_mode = False  # When True, run VAD only and drop audio
+        self.server: Any = None  # Will be set by main.py
 
-    def set_idle(self, idle: bool):
-        if self.is_idle != idle:
-            self.is_idle = idle
-            # Reset state on ANY transition to ensure clean start/stop
-            self.reset_state()
-            if self.on_mode_change:
-                self.on_mode_change(idle)
+    def request_mode(
+        self, is_idle: bool, force: bool = False, source_event: Optional[str] = None
+    ):
+        """
+        Unified entry point for changing the engine mode.
+        Handles deferral, resource cleanup, and server synchronization.
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if not is_idle:
+            # UNLOCKING (Listening) - Always immediate
+            logger.info(f"🔓 UNLOCK requested (Event: {source_event or 'manual'})")
+            self.pending_idle = False
+            if self.is_idle:
+                self.is_idle = False
+                self.reset_state()
+                if self.on_mode_change:
+                    self.on_mode_change(False)
+
+            if source_event and self.server:
+                self.server.trigger_event(source_event)
+            return
+
+        # LOCKING (Idle)
+        if not force and getattr(self, "is_speaking", False):
+            # Defer locking until current speech ends
+            if not self.pending_idle:
+                logger.info(
+                    f"⏳ LOCK requested but speech in progress. Queuing... (Event: {source_event or 'manual'})"
+                )
+                self.pending_idle = True
+            return
+
+        # Execute immediate LOCK
+        logger.info(f"🔒 LOCK executed (Event: {source_event or 'manual'})")
+        self.is_idle = True
+        self.pending_idle = False
+        self.reset_state()
+
+        if self.on_mode_change:
+            self.on_mode_change(True)
+
+        if source_event and self.server:
+            self.server.trigger_event(source_event)
+
+    def set_idle(self, idle: bool, force: bool = False):
+        """Legacy wrapper, delegates to request_mode."""
+        self.request_mode(idle, force=force)
 
     def reset_state(self):
         """Resets internal audio buffers and VAD states."""
@@ -210,10 +255,14 @@ class StandardPipeline(Pipeline):
 
                     self.reset_state()
 
+                    # Completion of deferred LOCK
+                    if self.pending_idle:
+                        self.request_mode(is_idle=True, force=True)
+
         return False
 
     def _handle_stop(self):
-        self.set_idle(True)
+        self.request_mode(is_idle=True, force=True, source_event="stop_word_detected")
 
     def reset_state(self):
         # Reset for next sentence

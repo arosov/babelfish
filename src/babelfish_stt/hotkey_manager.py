@@ -107,9 +107,31 @@ class HotkeyManager(Reconfigurable):
         canonical_key = listener.canonical(key)
         if self.ptt_key and (key == self.ptt_key or canonical_key == self.ptt_key):
             if self.pipeline and self.pipeline.is_idle:
-                logger.info("[Hotkey] PTT Pressed -> Listening")
-                self.pipeline.set_idle(False)
-                self._broadcast_status()
+                self.pipeline.request_mode(is_idle=False, force=False)
+
+        # 2. Handle Toggle (Pass to HotKey helper)
+        if self.toggle_hotkey:
+            self.toggle_hotkey.press(canonical_key)
+
+    def _on_release(self, key):
+        listener = self.listener
+        if not listener:
+            return
+
+        # 1. Handle PTT (Hold to Talk)
+        canonical_key = listener.canonical(key)
+        if self.ptt_key and (key == self.ptt_key or canonical_key == self.ptt_key):
+            if self.pipeline and not self.pipeline.is_idle:
+                self.pipeline.request_mode(is_idle=True, force=False)
+
+        # 2. Handle Toggle (Pass to HotKey helper)
+        if self.toggle_hotkey:
+            self.toggle_hotkey.release(canonical_key)
+
+    def _on_toggle_triggered(self):
+        if self.pipeline:
+            new_state = not self.pipeline.is_idle
+            self.pipeline.request_mode(is_idle=new_state, force=True)
 
         # 2. Handle Toggle (Pass to HotKey helper)
         if self.toggle_hotkey:
@@ -138,7 +160,7 @@ class HotkeyManager(Reconfigurable):
             logger.info(
                 f"[Hotkey] Toggle triggered -> {'Idle' if new_state else 'Listening'}"
             )
-            self.pipeline.set_idle(new_state)
+            self.pipeline.set_idle(new_state, force=True)
             self._broadcast_status()
 
     def _broadcast_status(self):

@@ -24,6 +24,7 @@ dependencies = [
     "sounddevice",
     "soxr",
     "pynput",
+    "plyer",
 ]
 
 [project.optional-dependencies]

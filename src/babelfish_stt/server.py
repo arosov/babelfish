@@ -5,6 +5,7 @@ from typing import Set, Dict, Optional, Any
 
 import websockets
 from pydantic import BaseModel
+from plyer import notification
 
 from babelfish_stt.config_manager import ConfigManager
 from babelfish_stt.reconfigurable import Reconfigurable
@@ -73,6 +74,28 @@ class BabelfishServer(Reconfigurable):
 
     def trigger_event(self, event_name: str):
         logger.info(f"Triggering event: {event_name}")
+
+        # Send desktop notification if enabled
+        if self.config_manager.config.ui.notifications:
+            if event_name == "wakeword_detected":
+                try:
+                    notification.notify(
+                        title="VogonPoet",
+                        message="Wake word detected, listening",
+                        timeout=4,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send notification: {e}")
+            elif event_name == "stop_word_detected":
+                try:
+                    notification.notify(
+                        title="VogonPoet",
+                        message="Stop word detected, idle",
+                        timeout=4,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send notification: {e}")
+
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(
                 self.broadcast_event(event_name), self._loop
@@ -254,14 +277,14 @@ class BabelfishServer(Reconfigurable):
             elif msg_type == "force_listen":
                 logger.info("Received force_listen request")
                 if self.pipeline:
-                    self.pipeline.set_idle(False)
-                await self.broadcast_status()
+                    self.pipeline.request_mode(is_idle=False, force=False)
 
             elif msg_type == "toggle_listening":
                 logger.info("Received toggle_listening request")
                 if self.pipeline:
-                    self.pipeline.set_idle(not self.pipeline.is_idle)
-                await self.broadcast_status()
+                    self.pipeline.request_mode(
+                        is_idle=not self.pipeline.is_idle, force=True
+                    )
 
             elif msg_type == "hello":
                 logger.debug(f"Received HELLO")

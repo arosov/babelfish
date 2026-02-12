@@ -27,16 +27,18 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
         logger.info("🎤 STT Loop Started")
         logger.info("-" * 50)
 
-        # In idle mode, only run WakeWord engine
-        # We determine initial idle state based on whether a wakeword is currently active
-        initial_idle = ww_engine and ww_engine.active_start_word is not None
-        pipeline.set_idle(initial_idle)
+        # Start in idle state (waiting for trigger)
+        pipeline.request_mode(is_idle=True, force=True)
 
         if pipeline.is_idle:
-            logger.info(
-                f"💤 IDLE: Waiting for wake-word '{ww_engine.active_start_word}'..."
-            )
+            if ww_engine and ww_engine.active_start_word:
+                logger.info(
+                    f"💤 IDLE: Waiting for wake-word '{ww_engine.active_start_word}'..."
+                )
+            else:
+                logger.info("💤 IDLE: Waiting for trigger (Hotkey/PTT)...")
         else:
+            # This branch shouldn't be hit on startup now, but kept for logic consistency
             logger.info("🎤 Listening... (Press Ctrl+C to stop)")
 
         cooldown_until = 0
@@ -59,10 +61,10 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
             if active_ww != last_configured_ww or stop_ww != last_configured_stop_ww:
                 if active_ww != last_configured_ww:
                     if active_ww is None:
-                        pipeline.set_idle(False)
+                        pipeline.request_mode(is_idle=False, force=True)
                         logger.info("🔄 CONFIG: Wake-word disabled. Listening...")
                     else:
-                        pipeline.set_idle(True)
+                        pipeline.request_mode(is_idle=True, force=True)
                         logger.info(
                             f"🔄 CONFIG: Wake-word '{active_ww}' enabled. Waiting..."
                         )
@@ -80,9 +82,9 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
 
                 if ww_engine and ww_engine.detect(chunk):
                     logger.info(f"✨ WAKEWORD '{active_ww}' DETECTED!")
-                    if server:
-                        server.trigger_event("wakeword_detected")
-                    pipeline.set_idle(False)
+                    pipeline.request_mode(
+                        is_idle=False, force=False, source_event="wakeword_detected"
+                    )
                     # Clear any old audio from streamer to start fresh
                     streamer.drain()
                     # Ignore stop word for 4s to avoid immediate re-triggering with same audio
@@ -98,18 +100,22 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
 
                 if stop_detected:
                     logger.info(f"🛑 STOP WAKEWORD '{stop_ww}' DETECTED!")
+                    pipeline.request_mode(
+                        is_idle=True, force=True, source_event="stop_word_detected"
+                    )
                     state_changed = True
                 else:
                     # In active mode, process chunk through pipeline if not stopping
                     state_changed = pipeline.process_chunk(chunk, now_ms)
 
                 if state_changed:
-                    # Pipeline reported a transition (e.g., stop word detected)
-                    if server:
-                        server.trigger_event("stop_word_detected")
+                    # Pipeline reported a transition (e.g., transcript stop word detected)
                     # Re-check if we should go to idle based on current config
                     if active_ww:
-                        pipeline.set_idle(True)
+                        # Already transitioned by pipeline or we transition here if it was just a regular utterance
+                        if not pipeline.is_idle:
+                            pipeline.request_mode(is_idle=True, force=False)
+
                         streamer.drain()
                         if ww_engine:
                             ww_engine.reset()
@@ -234,6 +240,7 @@ async def run_babelfish(
 
     # Link pipeline to server and register remaining components for hot-reloading
     server.set_pipeline(pipeline)
+    pipeline.server = server
 
     # Initialize and start global hotkeys
     hotkey_manager = HotkeyManager(pipeline, server)
