@@ -232,6 +232,25 @@ class StandardPipeline(Pipeline):
                 self._buffer_size += len(chunk)
                 self.last_speech_time = now_ms
 
+                # SAFETY: Force finalize if buffer gets too large (> 60s) to prevent OOM
+                # 60s * 16000 samples = 960,000 samples
+                if self._buffer_size > 960000:
+                    logger.warning(
+                        "⚠️ Buffer limit (60s) reached. Forcing finalization."
+                    )
+
+                    # Manual Finalization
+                    full_audio = np.concatenate(self.active_buffer)
+                    # Run transcribe in main thread (blocking but safe here for safety)
+                    text = self.engine.transcribe(
+                        full_audio, padding_s=self.perf.min_padding_s
+                    )
+                    if text:
+                        self.display.finalize(text)
+                    self.reset_state()
+                    # Continue listening with empty buffer
+                    return False
+
             # Intermediate 'Ghost' Update
             with self._lock:
                 should_ghost = (
@@ -261,10 +280,37 @@ class StandardPipeline(Pipeline):
                         self._transcription_future = None
 
                     # Start new ghost transcription
-                    with self._lock:
-                        full_audio = np.concatenate(self.active_buffer)
+                    full_audio = None
 
                     # EFFICIENT FIRST PASS: Sliding window for ghost results (GPU ONLY)
+                    # Optimization: Avoid concatenating the entire history for ghost updates
+                    if (
+                        self.engine.device_type != "cpu"
+                        and self.perf.ghost_window_s > 0
+                    ):
+                        window_samples = int(self.perf.ghost_window_s * 16000)
+
+                        with self._lock:
+                            if self._buffer_size > window_samples:
+                                # Collect just enough chunks from the end
+                                chunks = []
+                                collected = 0
+                                for chunk in reversed(self.active_buffer):
+                                    chunks.append(chunk)
+                                    collected += len(chunk)
+                                    if collected >= window_samples:
+                                        break
+                                # Concatenate in correct order (chunks were reversed)
+                                full_audio = np.concatenate(chunks[::-1])
+                                # Trim to exact window
+                                full_audio = full_audio[-window_samples:]
+
+                    if full_audio is None:
+                        # Fallback: Capture everything (CPU mode or short buffer)
+                        with self._lock:
+                            full_audio = np.concatenate(self.active_buffer)
+
+                    # Sliding window (redundant check if optimized path was taken, but safe)
                     if (
                         self.engine.device_type != "cpu"
                         and self.perf.ghost_window_s > 0
