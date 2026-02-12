@@ -195,9 +195,9 @@
     },
     "ShortcutsConfig": {
       "properties": {
-        "toggle_listening": {
+        "toggle_transcribing": {
           "default": "Ctrl+Shift+S",
-          "title": "Toggle Listening",
+          "title": "Toggle Transcribing",
           "type": "string"
         },
         "force_listen": {

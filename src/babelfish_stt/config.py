@@ -34,7 +34,9 @@ class PipelineConfig(BaseModel):
 
 
 class ShortcutsConfig(BaseModel):
-    toggle_listening: str = "Ctrl+Shift+S"
+    toggle_transcribing: str = Field(
+        default="Ctrl+Shift+S", title="Toggle Transcribing"
+    )
     force_listen: str = "Ctrl+Shift+L"
 
 
