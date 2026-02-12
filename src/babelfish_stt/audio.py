@@ -3,6 +3,7 @@ import sounddevice as sd
 import numpy as np
 import soxr
 import logging
+import time
 from typing import Generator, Optional
 from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
@@ -35,25 +36,38 @@ class AudioStreamer(Reconfigurable):
         )
 
         # Query hardware capabilities
-        device_info = sd.query_devices(self.device_index, "input")
-        self.native_rate = int(device_info["default_samplerate"])
-        self.mic_name = device_info["name"]
+        self._update_device_info()
 
         self.audio_queue = queue.Queue()
         self.is_running = False
-
-        # Only resample if hardware rate differs from target
-        self.needs_resampling = self.native_rate != self.target_rate
+        self.restart_required = False
 
         # Buffer for accumulating audio to ensure consistent chunk sizes
         self._chunk_buffer = np.array([], dtype=np.float32)
 
-        if self.needs_resampling:
-            print(
-                f"🔄 Resampling enabled: {self.native_rate}Hz -> {self.target_rate}Hz (via soxr)"
+    def _update_device_info(self):
+        try:
+            device_info = sd.query_devices(self.device_index, "input")
+            self.native_rate = int(device_info["default_samplerate"])
+            self.mic_name = device_info["name"]
+
+            # Only resample if hardware rate differs from target
+            self.needs_resampling = self.native_rate != self.target_rate
+
+            if self.needs_resampling:
+                logger.info(
+                    f"🔄 Resampling enabled: {self.native_rate}Hz -> {self.target_rate}Hz (via soxr)"
+                )
+            else:
+                logger.info(f"🎯 Native match: {self.native_rate}Hz")
+        except Exception as e:
+            logger.error(
+                f"Failed to query device info for index {self.device_index}: {e}"
             )
-        else:
-            print(f"🎯 Native match: {self.native_rate}Hz")
+            # Fallback to sensible defaults to prevent crashes
+            self.native_rate = 16000
+            self.mic_name = "Unknown"
+            self.needs_resampling = False
 
     def _audio_callback(self, indata, frames, time_info, status):
         """Callback for sounddevice to capture audio."""
@@ -84,34 +98,49 @@ class AudioStreamer(Reconfigurable):
         """
         self.is_running = True
 
-        # We calculate the hardware blocksize based on the ratio to maintain
-        # the requested 16kHz chunk timing.
-        ratio = self.native_rate / self.target_rate
-        hw_blocksize = int(chunk_size * ratio)
+        while self.is_running:
+            # We calculate the hardware blocksize based on the ratio to maintain
+            # the requested 16kHz chunk timing.
+            ratio = self.native_rate / self.target_rate
+            hw_blocksize = int(chunk_size * ratio)
 
-        with sd.InputStream(
-            samplerate=self.native_rate,
-            channels=1,
-            dtype="float32",
-            device=self.device_index,
-            callback=self._audio_callback,
-            blocksize=hw_blocksize,
-        ):
-            while self.is_running:
-                try:
-                    # Get audio from queue and accumulate in buffer
-                    audio_chunk = self.audio_queue.get(timeout=0.1)
-                    self._chunk_buffer = np.concatenate(
-                        [self._chunk_buffer, audio_chunk]
+            try:
+                with sd.InputStream(
+                    samplerate=self.native_rate,
+                    channels=1,
+                    dtype="float32",
+                    device=self.device_index,
+                    callback=self._audio_callback,
+                    blocksize=hw_blocksize,
+                ):
+                    logger.info(
+                        f"🎤 Stream started on device {self.device_index} ({self.mic_name})"
                     )
 
-                    # Yield fixed-size chunks while we have enough data
-                    while len(self._chunk_buffer) >= chunk_size:
-                        yield self._chunk_buffer[:chunk_size]
-                        self._chunk_buffer = self._chunk_buffer[chunk_size:]
+                    while self.is_running and not self.restart_required:
+                        try:
+                            # Get audio from queue and accumulate in buffer
+                            audio_chunk = self.audio_queue.get(timeout=0.1)
+                            self._chunk_buffer = np.concatenate(
+                                [self._chunk_buffer, audio_chunk]
+                            )
 
-                except queue.Empty:
-                    continue
+                            # Yield fixed-size chunks while we have enough data
+                            while len(self._chunk_buffer) >= chunk_size:
+                                yield self._chunk_buffer[:chunk_size]
+                                self._chunk_buffer = self._chunk_buffer[chunk_size:]
+
+                        except queue.Empty:
+                            continue
+            except Exception as e:
+                logger.error(f"Stream error on device {self.device_index}: {e}")
+                time.sleep(1)  # Prevent tight error loop
+
+            if self.restart_required:
+                logger.info("🎤 Restarting stream with new configuration...")
+                self.restart_required = False
+                self.drain()
+                # Loop continues and recreates InputStream with new settings
 
     def stop(self):
         """Stops the audio stream."""
@@ -143,43 +172,18 @@ class AudioStreamer(Reconfigurable):
             new_device_index = sd.default.device[0]
 
         if new_device_index != self.device_index:
-            print(f"🎤 Switching microphone: {self.device_index} -> {new_device_index}")
+            logger.info(
+                f"🎤 Switching microphone: {self.device_index} -> {new_device_index}"
+            )
 
-            # Stop current stream
-            was_running = self.is_running
-            self.stop()
-
-            # Wait a moment for stream to close
-            import time
-
-            time.sleep(0.1)
-
-            # Update device
+            # Update device index
             self.device_index = new_device_index
 
-            # Query new hardware capabilities
-            device_info = sd.query_devices(self.device_index, "input")
-            self.native_rate = int(device_info["default_samplerate"])
-            self.mic_name = device_info["name"]
+            # Query new info
+            self._update_device_info()
 
-            # Update resampling flag
-            self.needs_resampling = self.native_rate != self.target_rate
-
-            print(f"🎤 New microphone: {self.mic_name} @ {self.native_rate}Hz")
-
-            if self.needs_resampling:
-                print(
-                    f"🔄 Resampling enabled: {self.native_rate}Hz -> {self.target_rate}Hz"
-                )
-            else:
-                print(f"🎯 Native match: {self.native_rate}Hz")
-
-            # Clear queue
-            self.drain()
-
-            # Restart if it was running
-            if was_running:
-                self.is_running = True
+            # Signal restart
+            self.restart_required = True
 
 
 class HistoryBuffer:

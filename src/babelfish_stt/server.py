@@ -32,22 +32,53 @@ class BabelfishServer(Reconfigurable):
     def set_pipeline(self, pipeline):
         self.pipeline = pipeline
         self.pipeline.on_state_change = self._on_pipeline_state_change
+        self.pipeline.on_mode_change = self._on_pipeline_mode_change
         # Apply persisted mic test state if it was set during bootstrap
         self.pipeline.set_test_mode(self.mic_test_enabled)
 
     def _on_pipeline_state_change(self, is_speaking: bool):
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(
-                self.broadcast_status(is_speaking), self._loop
+                self.broadcast_status(is_speaking=is_speaking), self._loop
             )
 
-    async def broadcast_status(self, is_speaking: bool) -> None:
+    def _on_pipeline_mode_change(self, is_idle: bool):
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self.broadcast_status(is_idle=is_idle), self._loop
+            )
+
+    async def broadcast_status(
+        self, is_speaking: Optional[bool] = None, is_idle: Optional[bool] = None
+    ) -> None:
+        if is_speaking is None and self.pipeline:
+            is_speaking = self.pipeline.is_speaking
+        if is_idle is None and self.pipeline:
+            is_idle = self.pipeline.is_idle
+
         status_msg = {
             "type": "status",
             "vad_state": "listening" if is_speaking else "idle",
             "engine_state": "ready",
+            "mode": "wakeword" if is_idle else "active",
         }
         await self.broadcast_message(status_msg)
+
+    async def broadcast_event(self, event_name: str) -> None:
+        event_msg = {
+            "type": "event",
+            "event": event_name,
+        }
+        await self.broadcast_message(event_msg)
+
+    def trigger_event(self, event_name: str):
+        logger.info(f"Triggering event: {event_name}")
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self.broadcast_event(event_name), self._loop
+            )
+        else:
+            logger.warning(f"Loop not running, cannot broadcast event: {event_name}")
 
     async def broadcast_bootstrap_status(self, message: str) -> None:
         status_msg = {
@@ -147,7 +178,20 @@ class BabelfishServer(Reconfigurable):
             else:
                 await self.broadcast_message(self.last_bootstrap_message)
 
-        # 2. Send full config
+        # 2. Send current status (engine state, vad state, mode)
+        if self.pipeline:
+            status_msg = {
+                "type": "status",
+                "vad_state": "listening" if self.pipeline.is_speaking else "idle",
+                "engine_state": "ready",
+                "mode": "wakeword" if self.pipeline.is_idle else "active",
+            }
+            if websocket:
+                await websocket.send(json.dumps(status_msg))
+            else:
+                await self.broadcast_message(status_msg)
+
+        # 3. Send full config
         config_data = self.config_manager.config.model_dump()
         message = {
             "type": "config",

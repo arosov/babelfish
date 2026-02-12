@@ -4,9 +4,12 @@ import numpy as np
 from typing import Dict, List, Optional
 from pathlib import Path
 import threading
+import logging
 from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import VoiceConfig
+
+logger = logging.getLogger(__name__)
 
 
 def list_wakewords() -> List[str]:
@@ -30,9 +33,10 @@ class WakeWordEngine(Reconfigurable):
     A wrapper around openWakeWord for local keyword detection.
     """
 
-    def __init__(self, model_name: Optional[str] = None):
+    def __init__(self, model_name: Optional[str] = None, sensitivity: float = 0.5):
         self._lock = threading.Lock()
         self.model_name = model_name
+        self.threshold = 1.0 - sensitivity
         self.oww_model: Optional[Model] = None
         self._load_model()
 
@@ -45,28 +49,39 @@ class WakeWordEngine(Reconfigurable):
         # openwakeword.Model takes a list of paths.
         # Get all pretrained paths and filter for the one we want
         pretrained_paths = openwakeword.get_pretrained_model_paths() or []
-        target_paths = [p for p in pretrained_paths if self.model_name in p]
+        m_name = self.model_name.lower()
+        target_paths = [p for p in pretrained_paths if m_name in Path(p).name.lower()]
 
         if not target_paths:
-            # Fallback or empty model if not found
+            logger.warning(
+                f"WakeWord model '{self.model_name}' not found in pretrained paths."
+            )
             self.oww_model = None
         else:
+            logger.info(f"Loading WakeWord model from: {target_paths[0]}")
             # Use wakeword_models instead of wakeword_model_paths for 0.6.0
             self.oww_model = Model(wakeword_models=[target_paths[0]])
 
     def reconfigure(self, config: BaseModel) -> None:
-        """Update wakeword model based on config."""
+        """Update wakeword model and sensitivity based on config."""
         if isinstance(config, VoiceConfig):
             with self._lock:
+                changed = False
                 if config.wakeword != self.model_name:
-                    import logging
-
-                    logger = logging.getLogger(__name__)
                     logger.info(
-                        f"Reconfiguring WakeWordEngine: {self.model_name} -> {config.wakeword}"
+                        f"Reconfiguring WakeWord model: {self.model_name} -> {config.wakeword}"
                     )
                     self.model_name = config.wakeword
                     self._load_model()
+                    changed = True
+
+                new_threshold = 1.0 - config.wakeword_sensitivity
+                if new_threshold != self.threshold:
+                    logger.info(
+                        f"WakeWord threshold updated to {new_threshold:.2f} (Sensitivity: {config.wakeword_sensitivity:.2f})"
+                    )
+                    self.threshold = new_threshold
+                    changed = True
 
     @property
     def active_wakeword(self) -> Optional[str]:
@@ -115,7 +130,7 @@ class WakeWordEngine(Reconfigurable):
                 normalized[k] = v
         return normalized
 
-    def detect(self, chunk: np.ndarray, threshold: float = 0.5) -> bool:
+    def detect(self, chunk: np.ndarray, threshold: Optional[float] = None) -> bool:
         """
         Convenience method to return True if the target wakeword is detected
         above the given threshold.
@@ -124,7 +139,9 @@ class WakeWordEngine(Reconfigurable):
         with self._lock:
             if not self.model_name:
                 return False
-            return probabilities.get(self.model_name, 0.0) >= threshold
+
+            target_threshold = threshold if threshold is not None else self.threshold
+            return probabilities.get(self.model_name, 0.0) >= target_threshold
 
     def reset(self):
         """Resets the internal state of the wake-word model."""

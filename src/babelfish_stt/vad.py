@@ -1,8 +1,12 @@
 import torch
 import numpy as np
+import logging
 from typing import Optional
+from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import VoiceConfig
+
+logger = logging.getLogger(__name__)
 
 
 class SileroVAD(Reconfigurable):
@@ -15,7 +19,7 @@ class SileroVAD(Reconfigurable):
         self.sample_rate = sample_rate
 
         # Load Silero VAD from torch hub
-        print("🎙️  Loading Silero VAD...")
+        logger.info("🎙️  Loading Silero VAD...")
         self.model, utils = torch.hub.load(
             repo_or_dir="snakers4/silero-vad",
             model="silero_vad",
@@ -30,11 +34,17 @@ class SileroVAD(Reconfigurable):
 
         self.reset_states()
 
-    def reconfigure(self, config: VoiceConfig) -> None:
+    def reconfigure(self, config: BaseModel) -> None:
         """Apply new configuration to VAD."""
-        self.threshold = (
-            config.wakeword_sensitivity
-        )  # Mapping sensitivity to threshold for now or similar
+        if isinstance(config, VoiceConfig):
+            # Map sensitivity (0.1-0.9) to threshold (0.9-0.1)
+            # Higher sensitivity = Lower threshold = Easier to trigger
+            self.threshold = 1.0 - config.wakeword_sensitivity
+            # Clamp to safe range to avoid extremes
+            self.threshold = max(0.05, min(0.95, self.threshold))
+            logger.info(
+                f"VAD threshold updated to {self.threshold:.2f} (Sensitivity: {config.wakeword_sensitivity:.2f})"
+            )
 
     def reset_states(self):
         """Resets the VAD model state."""

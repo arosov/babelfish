@@ -18,7 +18,7 @@ from babelfish_stt.wakeword import WakeWordEngine
 from babelfish_stt.pipeline import StandardPipeline, StopWordDetector
 
 
-def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event):
+def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
     """Main blocking loop for audio capture and processing."""
     try:
         print("\n🎤 STT Loop Started")
@@ -35,6 +35,7 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event):
             print("\n🎤 Listening... (Press Ctrl+C to stop)\n")
 
         cooldown_until = 0
+        last_configured_ww = ww_engine.active_wakeword if ww_engine else None
 
         for chunk in streamer.stream():
             if shutdown_event.is_set():
@@ -46,11 +47,21 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event):
             # Dynamically check for wakeword updates
             active_ww = ww_engine.active_wakeword if ww_engine else None
 
-            # If we were idle but no wakeword is configured anymore, stop being idle
-            if is_idle and active_ww is None:
-                is_idle = False
-                pipeline.set_idle(False)
-                print("\n🎤 No wake-word configured. Listening...\n")
+            # Handle dynamic transitions when configuration changes
+            if active_ww != last_configured_ww:
+                if active_ww is None:
+                    is_idle = False
+                    pipeline.set_idle(False)
+                    logging.info("Wake-word disabled. Switching to active listening.")
+                    print("\n🎤 No wake-word configured. Listening...\n")
+                else:
+                    is_idle = True
+                    pipeline.set_idle(True)
+                    logging.info(
+                        f"Wake-word '{active_ww}' enabled. Switching to idle mode."
+                    )
+                    print(f"💤 IDLE: Waiting for wake-word '{active_ww}'...")
+                last_configured_ww = active_ww
 
             if is_idle:
                 if now < cooldown_until:
@@ -58,6 +69,8 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event):
 
                 if ww_engine and ww_engine.detect(chunk):
                     print(f"✨ WAKEWORD '{active_ww}' DETECTED!")
+                    if server:
+                        server.trigger_event("wakeword_detected")
                     is_idle = False
                     pipeline.set_idle(False)
                     # Clear any old audio from streamer to start fresh
@@ -68,6 +81,8 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event):
 
                 if state_changed:
                     # Pipeline reported a transition (e.g., stop word detected)
+                    if server:
+                        server.trigger_event("stop_word_detected")
                     # Re-check if we should go to idle based on current config
                     if active_ww:
                         is_idle = True
@@ -108,6 +123,7 @@ async def run_babelfish(
     # Override config with CLI flags if provided
     if force_cpu:
         config_manager.config.hardware.device = "cpu"
+        config_manager.config.hardware.auto_detect = False
         print("   MODE: Force CPU Execution (CLI Override)")
 
     if wakeword:
@@ -210,6 +226,7 @@ async def run_babelfish(
         pipeline,
         ww_engine,
         shutdown_event,
+        server,
     )
 
     try:

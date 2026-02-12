@@ -16,10 +16,14 @@ class Pipeline(Reconfigurable):
         self.is_idle = False
         self.stop_detector: Optional[StopWordDetector] = None
         self.on_state_change = None  # Callback(is_speaking: bool)
+        self.on_mode_change = None  # Callback(is_idle: bool)
         self.test_mode = False  # When True, run VAD only and drop audio
 
     def set_idle(self, idle: bool):
-        self.is_idle = idle
+        if self.is_idle != idle:
+            self.is_idle = idle
+            if self.on_mode_change:
+                self.on_mode_change(idle)
 
     def set_test_mode(self, enabled: bool):
         """Enable/disable microphone test mode. When enabled, VAD runs but audio is dropped."""
