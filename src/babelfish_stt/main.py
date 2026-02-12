@@ -16,6 +16,7 @@ from babelfish_stt.config_manager import ConfigManager
 from babelfish_stt.server import BabelfishServer
 from babelfish_stt.wakeword import WakeWordEngine
 from babelfish_stt.pipeline import StandardPipeline, StopWordDetector
+from babelfish_stt.hotkey_manager import HotkeyManager
 
 logger = logging.getLogger(__name__)
 
@@ -28,19 +29,19 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
 
         # In idle mode, only run WakeWord engine
         # We determine initial idle state based on whether a wakeword is currently active
-        is_idle = ww_engine and ww_engine.active_wakeword is not None
-        pipeline.set_idle(is_idle)
+        initial_idle = ww_engine and ww_engine.active_start_word is not None
+        pipeline.set_idle(initial_idle)
 
-        if is_idle:
+        if pipeline.is_idle:
             logger.info(
-                f"💤 IDLE: Waiting for wake-word '{ww_engine.active_wakeword}'..."
+                f"💤 IDLE: Waiting for wake-word '{ww_engine.active_start_word}'..."
             )
         else:
             logger.info("🎤 Listening... (Press Ctrl+C to stop)")
 
         cooldown_until = 0
         stop_cooldown_until = 0
-        last_configured_ww = ww_engine.active_wakeword if ww_engine else None
+        last_configured_ww = ww_engine.active_start_word if ww_engine else None
         last_configured_stop_ww = ww_engine.active_stop_word if ww_engine else None
 
         for chunk in streamer.stream():
@@ -58,11 +59,9 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
             if active_ww != last_configured_ww or stop_ww != last_configured_stop_ww:
                 if active_ww != last_configured_ww:
                     if active_ww is None:
-                        is_idle = False
                         pipeline.set_idle(False)
                         logger.info("🔄 CONFIG: Wake-word disabled. Listening...")
                     else:
-                        is_idle = True
                         pipeline.set_idle(True)
                         logger.info(
                             f"🔄 CONFIG: Wake-word '{active_ww}' enabled. Waiting..."
@@ -75,7 +74,7 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
                     )
                     last_configured_stop_ww = stop_ww
 
-            if is_idle:
+            if pipeline.is_idle:
                 if now < cooldown_until:
                     continue
 
@@ -83,7 +82,6 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
                     logger.info(f"✨ WAKEWORD '{active_ww}' DETECTED!")
                     if server:
                         server.trigger_event("wakeword_detected")
-                    is_idle = False
                     pipeline.set_idle(False)
                     # Clear any old audio from streamer to start fresh
                     streamer.drain()
@@ -111,7 +109,6 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
                         server.trigger_event("stop_word_detected")
                     # Re-check if we should go to idle based on current config
                     if active_ww:
-                        is_idle = True
                         pipeline.set_idle(True)
                         streamer.drain()
                         if ww_engine:
@@ -227,10 +224,8 @@ async def run_babelfish(
         display = MultiDisplay(TerminalDisplay(), ServerDisplay(server))
         pipeline = StandardPipeline(vad, engine, display)
 
-        if config_manager.config.voice.stop_words:
-            pipeline.stop_detector = StopWordDetector(
-                stop_words=config_manager.config.voice.stop_words
-            )
+        if pipeline.stop_detector:
+            config_manager.register(pipeline.stop_detector)
 
         return vad, engine, ww_engine, streamer, display, pipeline
 
@@ -239,6 +234,11 @@ async def run_babelfish(
 
     # Link pipeline to server and register remaining components for hot-reloading
     server.set_pipeline(pipeline)
+
+    # Initialize and start global hotkeys
+    hotkey_manager = HotkeyManager(pipeline, server)
+    hotkey_manager.start(config_manager.config)
+    config_manager.register(hotkey_manager)
 
     # Update server's internal initial_config to include runtime stats (active_device, VRAM)
     # This prevents unnecessary restarts when switching from 'auto' to the detected device.
@@ -279,6 +279,7 @@ async def run_babelfish(
     finally:
         shutdown_event.set()
         streamer.stop()
+        hotkey_manager.stop()
         await stt_task
         logger.info("✅ Shutdown complete.")
 

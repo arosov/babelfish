@@ -251,6 +251,18 @@ class BabelfishServer(Reconfigurable):
                 response = {"type": "mic_test_status", "enabled": enabled}
                 await websocket.send(json.dumps(response))
 
+            elif msg_type == "force_listen":
+                logger.info("Received force_listen request")
+                if self.pipeline:
+                    self.pipeline.set_idle(False)
+                await self.broadcast_status()
+
+            elif msg_type == "toggle_listening":
+                logger.info("Received toggle_listening request")
+                if self.pipeline:
+                    self.pipeline.set_idle(not self.pipeline.is_idle)
+                await self.broadcast_status()
+
             elif msg_type == "hello":
                 logger.debug(f"Received HELLO")
             else:

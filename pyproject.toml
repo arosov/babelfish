@@ -23,6 +23,7 @@ dependencies = [
     "huggingface-hub",
     "sounddevice",
     "soxr",
+    "pynput",
 ]
 
 [project.optional-dependencies]
