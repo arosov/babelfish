@@ -8,15 +8,30 @@ import logging
 from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import VoiceConfig
+from babelfish_stt.wakeword_discovery import (
+    scan_custom_models,
+    is_custom_model,
+    strip_custom_suffix,
+    get_model_path,
+    CUSTOM_MODEL_SUFFIX,
+    EXCLUDED_WAKEWORDS,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def list_wakewords() -> List[str]:
-    """Lists all available pretrained wakewords."""
+def list_wakewords(app_data_dir: Optional[str] = None) -> List[str]:
+    """
+    Lists all available wakewords (pretrained + custom).
+
+    Args:
+        app_data_dir: Optional path to app data directory for custom model discovery
+
+    Returns:
+        Sorted list of wakeword names. Custom models have '*' suffix.
+    """
+    # Get pretrained models
     paths = openwakeword.get_pretrained_model_paths() or []
-    # Extract filename without extension and remove common version suffixes
-    # Paths look like: /path/to/models/hey_jarvis_v0.1.tflite
     names = set()
     for p in paths:
         filename = Path(p).stem
@@ -24,7 +39,20 @@ def list_wakewords() -> List[str]:
         import re
 
         base_name = re.sub(r"_v\d+(\.\d+)*$", "", filename)
-        names.add(base_name)
+        # Skip excluded wake words
+        if base_name.lower() not in EXCLUDED_WAKEWORDS:
+            names.add(base_name)
+
+    # Get custom models if app_data_dir is provided
+    if app_data_dir:
+        # Scan both start and stop directories for custom models
+        start_custom = scan_custom_models(app_data_dir, "start")
+        stop_custom = scan_custom_models(app_data_dir, "stop")
+
+        # Add custom model names (already have * suffix from scan_custom_models)
+        names.update(start_custom.keys())
+        names.update(stop_custom.keys())
+
     return sorted(list(names))
 
 
@@ -42,16 +70,20 @@ class WakeWordEngine(Reconfigurable):
         stop_word: Optional[str] = None,
         sensitivity: float = 0.5,
         stop_sensitivity: float = 0.5,
+        app_data_dir: Optional[str] = None,
     ):
         self._lock = threading.RLock()
         self.start_word = start_word
         self.stop_word = stop_word
         self.threshold = 1.0 - sensitivity
         self.stop_threshold = 1.0 - stop_sensitivity
+        self.app_data_dir = app_data_dir
         self.start_model: Optional[Model] = None
         self.stop_model: Optional[Model] = None
         self._loaded_start_name: Optional[str] = None
         self._loaded_stop_name: Optional[str] = None
+        self._custom_start_models: Dict[str, str] = {}
+        self._custom_stop_models: Dict[str, str] = {}
         self._load_models()
 
     def _load_models(self):
@@ -62,51 +94,83 @@ class WakeWordEngine(Reconfigurable):
             self._loaded_start_name = None
             self._loaded_stop_name = None
 
+            # Load custom models if app_data_dir is available
+            if self.app_data_dir:
+                self._custom_start_models = scan_custom_models(
+                    self.app_data_dir, "start"
+                )
+                self._custom_stop_models = scan_custom_models(self.app_data_dir, "stop")
+
             pretrained_paths = openwakeword.get_pretrained_model_paths() or []
 
-            def get_target_path(name):
+            def get_target_path(name, is_start=True):
                 if not name:
-                    return None
-                m_name = name.lower()
+                    return None, None
+
+                # Check if it's a custom model (has * suffix)
+                if is_custom_model(name):
+                    custom_models = (
+                        self._custom_start_models
+                        if is_start
+                        else self._custom_stop_models
+                    )
+                    path = get_model_path(name, custom_models)
+                    if path:
+                        return path, self._detect_framework(path)
+                    return None, None
+
                 # Check if it's a pretrained model name
+                m_name = name.lower()
                 matches = [
                     p for p in pretrained_paths if m_name in Path(p).name.lower()
                 ]
                 if matches:
-                    return m_name
-                elif Path(name).exists():
-                    return name
-                return None
+                    return m_name, "onnx"
 
-            start_path = get_target_path(self.start_word)
-            if start_path:
-                logger.info(f"Loading Start WakeWord model: {start_path}")
+                # Check if it's a direct file path
+                if Path(name).exists():
+                    return name, self._detect_framework(name)
+
+                return None, None
+
+            def load_model(name, is_start):
+                path, framework = get_target_path(name, is_start)
+                if not path:
+                    return None
+
+                # Default to "onnx" if framework is None
+                effective_framework = framework if framework is not None else "onnx"
+
+                logger.info(
+                    f"Loading {'Start' if is_start else 'Stop'} WakeWord model: {path} (framework={effective_framework})"
+                )
                 try:
-                    self.start_model = Model(
-                        wakeword_models=[start_path],
-                        inference_framework="onnx",
+                    model = Model(
+                        wakeword_models=[path],
+                        inference_framework=effective_framework,
                         device="cpu",
                     )
-                    self._loaded_start_name = self.start_word
+                    return model
                 except Exception as e:
                     logger.error(
-                        f"Failed to load start wakeword model '{start_path}': {e}"
+                        f"Failed to load {'start' if is_start else 'stop'} wakeword model '{path}': {e}"
                     )
+                    return None
 
-            stop_path = get_target_path(self.stop_word)
-            if stop_path:
-                logger.info(f"Loading Stop WakeWord model: {stop_path}")
-                try:
-                    self.stop_model = Model(
-                        wakeword_models=[stop_path],
-                        inference_framework="onnx",
-                        device="cpu",
-                    )
-                    self._loaded_stop_name = self.stop_word
-                except Exception as e:
-                    logger.error(
-                        f"Failed to load stop wakeword model '{stop_path}': {e}"
-                    )
+            self.start_model = load_model(self.start_word, is_start=True)
+            if self.start_model:
+                self._loaded_start_name = self.start_word
+
+            self.stop_model = load_model(self.stop_word, is_start=False)
+            if self.stop_model:
+                self._loaded_stop_name = self.stop_word
+
+    def _detect_framework(self, path: str) -> str:
+        """Detect inference framework from file extension."""
+        path_lower = path.lower()
+        if path_lower.endswith(".tflite"):
+            return "tflite"
+        return "onnx"
 
     def reconfigure(self, config: BaseModel) -> None:
         """Update wakeword models and sensitivity based on config."""

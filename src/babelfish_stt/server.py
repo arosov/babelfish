@@ -290,8 +290,20 @@ class BabelfishServer(Reconfigurable):
 
             elif msg_type == "list_wakewords":
                 logger.info(f"Received list_wakewords request")
-                words = list_wakewords()
-                response = {"type": "wakewords_list", "data": words}
+                app_data_dir = os.environ.get("VOGON_APP_DATA_DIR")
+                words = list_wakewords(app_data_dir)
+
+                # Build metadata for custom models
+                metadata = {}
+                for word in words:
+                    if word.endswith("*"):
+                        metadata[word] = {"is_custom": True}
+
+                response = {
+                    "type": "wakewords_list",
+                    "data": words,
+                    "metadata": metadata,
+                }
                 await websocket.send(json.dumps(response))
 
             elif msg_type == "set_mic_test":
