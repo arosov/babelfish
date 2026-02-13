@@ -83,6 +83,13 @@ class InputSimulator:
         # Reset tracking
         self.last_ghost_length = 0
 
+    def reset(self):
+        """
+        Resets the ghost tracking without sending backspaces.
+        Used for forced resets where the cursor position might have changed.
+        """
+        self.last_ghost_length = 0
+
     def _clear_previous(self):
         """Sends backspaces for the length of the last typed ghost."""
         if self.last_ghost_length > 0:

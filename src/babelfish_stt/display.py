@@ -55,6 +55,10 @@ class TerminalDisplay:
         sys.stdout.write(f"\r{display_text}{padding}\n")
         sys.stdout.flush()
 
+        self.reset()
+
+    def reset(self):
+        """Resets the line state."""
         self.last_text = ""
         self.max_line_length = 0
 
@@ -91,6 +95,12 @@ class ServerDisplay:
             self.server.broadcast_message(msg), self.server._loop
         )
 
+    def reset(self):
+        msg = {"type": "transcription_reset"}
+        asyncio.run_coroutine_threadsafe(
+            self.server.broadcast_message(msg), self.server._loop
+        )
+
 
 class MultiDisplay:
     """
@@ -107,6 +117,10 @@ class MultiDisplay:
     def finalize(self, text: str = ""):
         for d in self.displays:
             d.finalize(text)
+
+    def reset(self):
+        for d in self.displays:
+            d.reset()
 
 
 class InputDisplay:
@@ -140,3 +154,6 @@ class InputDisplay:
             return
 
         self.simulator.finalize(text, strategy=config.strategy)
+
+    def reset(self):
+        self.simulator.reset()
