@@ -43,6 +43,15 @@ class ActivationDetectionConfig(BaseModel):
     overlay_mode: bool = False
 
 
+class TranscriptionWindowConfig(BaseModel):
+    always_on_top: bool = True
+
+
+class SystemInputConfig(BaseModel):
+    enabled: bool = False
+    type_ghost: bool = False
+
+
 class VoiceConfig(BaseModel):
     wakeword: Optional[str] = None
     stop_wakeword: Optional[str] = None
@@ -59,6 +68,9 @@ class UIConfig(BaseModel):
     activation_detection: ActivationDetectionConfig = Field(
         default_factory=ActivationDetectionConfig
     )
+    transcription_window: TranscriptionWindowConfig = Field(
+        default_factory=TranscriptionWindowConfig
+    )
 
 
 class ServerConfig(BaseModel):
@@ -73,6 +85,7 @@ class CacheConfig(BaseModel):
 class BabelfishConfig(BaseModel):
     hardware: HardwareConfig = Field(default_factory=HardwareConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    system_input: SystemInputConfig = Field(default_factory=SystemInputConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
