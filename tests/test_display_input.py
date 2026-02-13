@@ -36,4 +36,7 @@ def test_input_display_finalize(mock_config_manager):
         mock_sim = MockSim.return_value
 
         display.finalize("final")
-        mock_sim.finalize.assert_called_once_with("final")
+        # Strategy should be passed from config
+        mock_sim.finalize.assert_called_once_with(
+            "final", strategy=mock_config_manager.config.system_input.strategy
+        )
