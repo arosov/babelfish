@@ -51,6 +51,13 @@ def scan_custom_models(app_data_dir: str, model_type: str) -> Dict[str, str]:
         model_name = _extract_model_name(model_file, models_dir)
         if model_name:
             display_name = f"{model_name}{CUSTOM_MODEL_SUFFIX}"
+
+            # Prefer .onnx over other extensions if already present
+            if display_name in custom_models:
+                existing_path = Path(custom_models[display_name])
+                if existing_path.suffix.lower() == ".onnx":
+                    continue
+
             custom_models[display_name] = str(model_file)
             logger.info(f"Found custom model: {display_name} -> {model_file}")
 

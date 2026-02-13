@@ -258,8 +258,16 @@ class WakeWordEngine(Reconfigurable):
         # Normalize keys
         normalized = {}
         with self._lock:
+            base_target = (
+                strip_custom_suffix(target_name).lower() if target_name else None
+            )
             for k, v in prediction.items():
-                if target_name and (target_name in k or k == target_name):
+                k_lower = k.lower()
+                if base_target and (
+                    base_target == k_lower
+                    or base_target in k_lower
+                    or k_lower in base_target
+                ):
                     normalized[target_name] = max(normalized.get(target_name, 0.0), v)
                 else:
                     normalized[k] = v

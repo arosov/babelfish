@@ -257,12 +257,14 @@ async def run_babelfish(
         await server.broadcast_bootstrap_status(
             f"Loading WakeWord ({config_manager.config.voice.wakeword or 'None'})..."
         )
+        app_data_dir = os.environ.get("VOGON_APP_DATA_DIR")
         ww_engine = await asyncio.to_thread(
             WakeWordEngine,
             start_word=config_manager.config.voice.wakeword,
             stop_word=config_manager.config.voice.stop_wakeword,
             sensitivity=config_manager.config.voice.wakeword_sensitivity,
             stop_sensitivity=config_manager.config.voice.stop_wakeword_sensitivity,
+            app_data_dir=app_data_dir,
         )
 
         await server.broadcast_bootstrap_status("Initializing Audio Stream...")
