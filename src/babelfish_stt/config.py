@@ -1,5 +1,13 @@
 from typing import List, Optional
+from enum import Enum
 from pydantic import BaseModel, Field
+
+
+class InputStrategy(str, Enum):
+    DIRECT = "direct"
+    CLIPBOARD = "clipboard"
+    NATIVE = "native"
+    HYBRID = "hybrid"
 
 
 class HardwareConfig(BaseModel):
@@ -51,6 +59,7 @@ class TranscriptionWindowConfig(BaseModel):
 class SystemInputConfig(BaseModel):
     enabled: bool = False
     type_ghost: bool = False
+    strategy: InputStrategy = InputStrategy.CLIPBOARD
 
 
 class VoiceConfig(BaseModel):
