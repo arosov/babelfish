@@ -5,11 +5,48 @@ from babelfish_stt.config import (
     PipelineConfig,
     VoiceConfig,
     UIConfig,
+    SystemInputConfig,
+    TranscriptionWindowConfig,
     BabelfishConfig,
 )
 
 
-def test_hardware_config_defaults():
+def test_system_input_config_defaults():
+    config = SystemInputConfig()
+    assert config.enabled is False
+    assert config.type_ghost is False
+
+
+def test_transcription_window_config_defaults():
+    config = TranscriptionWindowConfig()
+    assert config.always_on_top is True
+
+
+def test_ui_config_defaults():
+    config = UIConfig()
+    assert config.verbose is False
+    assert config.show_timestamps is True
+    assert config.transcription_window.always_on_top is True
+
+
+def test_babelfish_config_nesting():
+    config = BabelfishConfig()
+    assert isinstance(config.hardware, HardwareConfig)
+    assert isinstance(config.pipeline, PipelineConfig)
+    assert isinstance(config.voice, VoiceConfig)
+    assert isinstance(config.ui, UIConfig)
+    assert isinstance(config.system_input, SystemInputConfig)
+
+
+def test_babelfish_config_serialization():
+    config = BabelfishConfig()
+    config.system_input.enabled = True
+    json_data = config.model_dump_json()
+    assert "system_input" in json_data
+    assert '"enabled":true' in json_data
+
+    new_config = BabelfishConfig.model_validate_json(json_data)
+    assert new_config.system_input.enabled is True
     config = HardwareConfig()
     assert config.device == "auto"
     assert config.vram_total_gb == 0.0
