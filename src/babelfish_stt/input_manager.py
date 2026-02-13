@@ -22,6 +22,7 @@ class InputSimulator:
         # Allow injecting a mock controller for testing
         self.keyboard = keyboard_controller or Controller()
         self.last_ghost_length = 0
+        self.last_final_char = ""
         self._strategies = {
             StrategyEnum.DIRECT: DirectStrategy(),
             StrategyEnum.CLIPBOARD: ClipboardStrategy(),
@@ -59,7 +60,18 @@ class InputSimulator:
         """
         self._clear_previous()
         if text:
+            # Prepend space if the previous finalization didn't end with whitespace
+            # and the current text doesn't start with whitespace.
+            if (
+                self.last_final_char
+                and not self.last_final_char.isspace()
+                and not text[0].isspace()
+            ):
+                text = " " + text
+
             self.type_text(text, strategy)
+            self.last_final_char = text[-1]
+
         # Reset tracking
         self.last_ghost_length = 0
 

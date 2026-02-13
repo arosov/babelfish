@@ -58,3 +58,26 @@ def test_type_text_exception_handling(simulator, mock_keyboard):
     # Should not raise exception
     simulator.type_text("hello")
     mock_keyboard.type.assert_called_once()
+
+
+def test_finalize_adds_space(simulator, mock_keyboard):
+    # First call
+    simulator.finalize("hello")
+    mock_keyboard.type.assert_called_with("hello")
+
+    # Second call, should prepend space
+    mock_keyboard.reset_mock()
+    simulator.finalize("world")
+    mock_keyboard.type.assert_called_with(" world")
+
+    # Third call, already has a tab (whitespace)
+    mock_keyboard.reset_mock()
+    simulator.finalize("\tagain")
+    mock_keyboard.type.assert_called_with("\tagain")
+
+    # Fourth call, previous ended with newline (whitespace)
+    mock_keyboard.reset_mock()
+    simulator.finalize("test\n")
+    mock_keyboard.reset_mock()
+    simulator.finalize("me")
+    mock_keyboard.type.assert_called_with("me")
