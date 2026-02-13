@@ -411,6 +411,7 @@ class StandardPipeline(Pipeline):
             self._buffer_size = 0
             self.pre_roll_buffer.clear()
             self.last_update_time = 0
+            self._transcription_future = None
             if self.is_speaking:
                 self.is_speaking = False
                 callback = self.on_state_change

@@ -134,6 +134,16 @@
       "title": "HardwareConfig",
       "type": "object"
     },
+    "InputStrategy": {
+      "enum": [
+        "direct",
+        "clipboard",
+        "native",
+        "hybrid"
+      ],
+      "title": "InputStrategy",
+      "type": "string"
+    },
     "PerformanceProfile": {
       "properties": {
         "ghost_throttle_ms": {
@@ -163,6 +173,11 @@
         "silence_threshold_ms": {
           "default": 400,
           "title": "Silence Threshold Ms",
+          "type": "integer"
+        },
+        "pre_roll_ms": {
+          "default": 300,
+          "title": "Pre Roll Ms",
           "type": "integer"
         },
         "update_interval_ms": {
@@ -220,6 +235,10 @@
           "default": false,
           "title": "Type Ghost",
           "type": "boolean"
+        },
+        "strategy": {
+          "$ref": "#/$defs/InputStrategy",
+          "default": "clipboard"
         }
       },
       "title": "SystemInputConfig",
