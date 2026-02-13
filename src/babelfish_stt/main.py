@@ -106,6 +106,8 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
 
             if is_idle:
                 if now < cooldown_until:
+                    # Update pre-roll even during cooldown
+                    pipeline.process_chunk(chunk, now_ms, is_speech=is_speech)
                     continue
 
                 # Only run WakeWord detection if VAD detected speech
@@ -114,10 +116,16 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
                     pipeline.request_mode(
                         is_idle=False, force=False, source_event="wakeword_detected"
                     )
-                    # Clear any old audio from streamer to start fresh
-                    streamer.drain()
+
+                    # PROCESS THE TRIGGER CHUNK IMMEDIATELY
+                    # This ensures the audio that contained the wake word is part of the sentence
+                    pipeline.process_chunk(chunk, now_ms, is_speech=True)
+
                     # Ignore stop word for 4s to avoid immediate re-triggering with same audio
                     stop_cooldown_until = now + 4.0
+                else:
+                    # Update pre-roll while idle
+                    pipeline.process_chunk(chunk, now_ms, is_speech=is_speech)
             else:
                 # Active mode
                 stop_detected = False

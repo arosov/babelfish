@@ -24,9 +24,10 @@ class InputSimulator:
     performance regardless of conversation length.
     """
 
-    def __init__(self, keyboard_controller=None):
+    def __init__(self, keyboard_controller=None, throttle_s: float = 0.05):
         # Allow injecting a mock controller for testing
         self.keyboard = keyboard_controller or Controller()
+        self.throttle_s = throttle_s
         self.last_ghost_time = 0.0
         self.last_final_char = ""
 
@@ -43,6 +44,10 @@ class InputSimulator:
         self._direct = DirectStrategy()
         self._last_raw_ghost = ""
         self._clean_regex = re.compile(r"[^a-zA-Z0-9]")
+
+    @property
+    def last_ghost_length(self) -> int:
+        return len(self.graphemes)
 
     def type_text(self, text: str, strategy: StrategyEnum = StrategyEnum.DIRECT):
         """Types the given text using the selected strategy."""
@@ -84,7 +89,7 @@ class InputSimulator:
         # 3. Throttling
         # We only check timing for actual keystrokes
         if self.graphemes:
-            if now - self.last_ghost_time < 0.1:
+            if now - self.last_ghost_time < self.throttle_s:
                 self.words = new_words
                 return
 
@@ -135,10 +140,11 @@ class InputSimulator:
             return ext_words
 
         # Tail window for O(1) matching
-        tail_size = 15
+        tail_size = 30
         base_tail = base_words[-tail_size:]
 
         # Clean versions for matching (lower case, alphanumeric only)
+        # We MUST use lower() here to ensure case-insensitive alignment.
         def clean(w):
             return self._clean_regex.sub("", w).lower()
 
@@ -152,12 +158,19 @@ class InputSimulator:
         if match.size > 0:
             # Overlap found. Join index in global word list:
             join_idx = (len(base_words) - len(base_tail)) + match.a
-            # base words before overlap + ALL ext words from overlap point
-            # This handles sliding windows AND refinements inside the window.
+
+            # Reconstruction:
+            # We take the ORIGINAL base words up to the match,
+            # then ALL ext words from the match point.
+            # This handles case changes (Comment -> comment) by preferring the latest version.
             return base_words[:join_idx] + ext_words[match.b :]
 
-        # Fallback: only append if it's very likely a continuation
-        if len(base_words) < 5:
+        # Fallback: if no overlap found in the tail, we might have a drift.
+        # Instead of just returning base_words (which "squashes" the update),
+        # we trust the new ghost text if it's substantial or if we have little history.
+        if len(base_words) < 10 or (
+            len(ext_words) >= 5 and not any(w in base_clean for w in ext_clean[:5])
+        ):
             return ext_words
 
         return base_words
@@ -165,6 +178,11 @@ class InputSimulator:
     def finalize(self, text: str, strategy: StrategyEnum = StrategyEnum.DIRECT):
         """Finalizes the transcription by clearing any ghost text."""
         self._clear_previous()
+
+        # Safety delay to ensure the target application has processed backspaces
+        # before we paste the final text. Prevents "Comment comment" repetitions.
+        time.sleep(0.05)
+
         self.words = []
         self.graphemes = []
 

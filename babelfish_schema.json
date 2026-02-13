@@ -147,7 +147,7 @@
     "PerformanceProfile": {
       "properties": {
         "ghost_throttle_ms": {
-          "default": 100,
+          "default": 50,
           "title": "Ghost Throttle Ms",
           "type": "integer"
         },

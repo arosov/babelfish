@@ -205,19 +205,45 @@ class StandardPipeline(Pipeline):
     def process_chunk(
         self, chunk: np.ndarray, now_ms: float, is_speech: Optional[bool] = None
     ) -> bool:
-        with self._lock:
-            if self.is_idle:
-                return False
-
-            # GHOST TIMEOUT: If speaking but no new speech/updates for 5s, force reset
-            if self.is_speaking and now_ms - self.last_speech_time > 5000:
-                logger.warning("🕒 Ghost timeout (5s) reached. Resetting state.")
-                self.reset_state()
-                return False
-
         # Use pre-computed VAD result if provided, otherwise run it
         if is_speech is None:
             is_speech = self.vad.is_speech(chunk)
+
+        with self._lock:
+            if self.is_idle:
+                # While idle, maintain pre-roll buffer
+                self.pre_roll_buffer.append(chunk)
+                max_chunks = max(
+                    1, int((self.pre_roll_ms / 1000.0) * 16000 / len(chunk))
+                )
+                while len(self.pre_roll_buffer) > max_chunks:
+                    self.pre_roll_buffer.popleft()
+                return False
+
+            # GHOST TIMEOUT: Adaptive timeout based on buffer size and inference history
+            # Calculate expected processing time to avoid false timeouts on long utterances
+            if self.is_speaking:
+                # Base timeout: 5 seconds minimum
+                adaptive_timeout_ms = 5000
+
+                # Add time based on buffer size (assuming RTF of 0.3 for worst-case CPU)
+                # and the current dynamic throttle setting
+                with self._lock:
+                    audio_duration_s = self._buffer_size / 16000.0
+                    # Conservative estimate: 0.5 RTF + current throttle
+                    expected_processing_ms = (
+                        audio_duration_s * 0.5 * 1000
+                    ) + self.dynamic_throttle_ms
+                    # Add 3x safety margin for ghost inferences
+                    adaptive_timeout_ms = max(5000, expected_processing_ms * 3)
+
+                if now_ms - self.last_speech_time > adaptive_timeout_ms:
+                    logger.warning(
+                        f"🕒 Ghost timeout ({adaptive_timeout_ms / 1000:.1f}s) reached. "
+                        f"Buffer: {audio_duration_s:.1f}s. Resetting state."
+                    )
+                    self.reset_state()
+                    return False
 
         # Handle test mode: run VAD but don't accumulate audio or transcribe
         if self.test_mode:
@@ -286,8 +312,11 @@ class StandardPipeline(Pipeline):
                 ):
                     # Handle result of previous future if it just finished
                     if self._transcription_future and self._transcription_future.done():
+                        # Capture and reset future immediately to prevent race conditions
+                        future = self._transcription_future
+                        self._transcription_future = None
                         try:
-                            text, duration_ms = self._transcription_future.result()
+                            text, duration_ms = future.result()
                             self._apply_dynamic_backoff(duration_ms)
                             if text:
                                 self.display.update(ghost=text)
@@ -298,7 +327,6 @@ class StandardPipeline(Pipeline):
                                     return True
                         except Exception as e:
                             logger.error(f"Ghost transcription error: {e}")
-                        self._transcription_future = None
 
                     # Start new ghost transcription
                     full_audio = None

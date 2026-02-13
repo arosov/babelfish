@@ -11,7 +11,7 @@ def mock_keyboard():
 
 @pytest.fixture
 def simulator(mock_keyboard):
-    return InputSimulator(keyboard_controller=mock_keyboard)
+    return InputSimulator(keyboard_controller=mock_keyboard, throttle_s=0.0)
 
 
 def test_type_text(simulator, mock_keyboard):
@@ -28,12 +28,9 @@ def test_update_ghost(simulator, mock_keyboard):
     # Update ghost
     mock_keyboard.reset_mock()
     simulator.update_ghost("testing")
-    # Should backspace 4 times
-    assert mock_keyboard.press.call_count == 4
-    assert mock_keyboard.release.call_count == 4
-    # Verify they were backspaces
-    mock_keyboard.press.assert_has_calls([call(Key.backspace)] * 4)
-    mock_keyboard.type.assert_called_once_with("testing")
+    # Should not backspace since "test" is a prefix of "testing"
+    assert mock_keyboard.press.call_count == 0
+    mock_keyboard.type.assert_called_once_with("ing")
     assert simulator.last_ghost_length == 7
 
 

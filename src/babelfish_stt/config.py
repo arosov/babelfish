@@ -29,7 +29,7 @@ class HardwareConfig(BaseModel):
 
 
 class PerformanceProfile(BaseModel):
-    ghost_throttle_ms: int = 100
+    ghost_throttle_ms: int = 50
     ghost_window_s: float = 2.5
     min_padding_s: float = 2.0
     tier: str = "auto"

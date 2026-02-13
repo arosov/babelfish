@@ -2,7 +2,7 @@ import onnxruntime as ort
 import numpy as np
 import logging
 import urllib.request
-from typing import Optional
+from typing import Optional, Any
 from pathlib import Path
 from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
@@ -108,7 +108,7 @@ class SileroVAD(Reconfigurable):
             # Prepare inputs for Silero VAD v5
             inputs = {
                 "input": input_tensor,
-                "sr": np.array([self.sample_rate], dtype=np.int64),
+                "sr": np.array(self.sample_rate, dtype=np.int64),  # Scalar
                 "state": self._state,
             }
 
@@ -120,10 +120,18 @@ class SileroVAD(Reconfigurable):
             self._state = state_out
 
             # Check probability - handle various output formats safely
-            if isinstance(out, np.ndarray):
-                speech_prob = float(out.flatten()[0])
-            else:
-                speech_prob = float(out)
+            # Output 'out' can be [batch, 1] or just [1]
+            prob = out
+            while isinstance(prob, (np.ndarray, list)):
+                if len(prob) == 0:
+                    prob = 0.0
+                    break
+                prob = prob[0]
+
+            prob_any: Any = prob
+            speech_prob = (
+                float(prob_any) if not isinstance(prob_any, (np.ndarray, list)) else 0.0
+            )
 
             # Diagnostic logging (can be commented out after verification)
             # max_amp = np.max(np.abs(block))
