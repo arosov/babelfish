@@ -209,6 +209,33 @@
       "title": "ShortcutsConfig",
       "type": "object"
     },
+    "SystemInputConfig": {
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "type_ghost": {
+          "default": false,
+          "title": "Type Ghost",
+          "type": "boolean"
+        }
+      },
+      "title": "SystemInputConfig",
+      "type": "object"
+    },
+    "TranscriptionWindowConfig": {
+      "properties": {
+        "always_on_top": {
+          "default": true,
+          "title": "Always On Top",
+          "type": "boolean"
+        }
+      },
+      "title": "TranscriptionWindowConfig",
+      "type": "object"
+    },
     "UIConfig": {
       "properties": {
         "verbose": {
@@ -231,6 +258,9 @@
         },
         "activation_detection": {
           "$ref": "#/$defs/ActivationDetectionConfig"
+        },
+        "transcription_window": {
+          "$ref": "#/$defs/TranscriptionWindowConfig"
         }
       },
       "title": "UIConfig",
@@ -288,6 +318,9 @@
     },
     "pipeline": {
       "$ref": "#/$defs/PipelineConfig"
+    },
+    "system_input": {
+      "$ref": "#/$defs/SystemInputConfig"
     },
     "voice": {
       "$ref": "#/$defs/VoiceConfig"
