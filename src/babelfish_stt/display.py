@@ -1,6 +1,10 @@
 import sys
 import asyncio
 import json
+import logging
+from babelfish_stt.input_manager import InputSimulator
+
+logger = logging.getLogger(__name__)
 
 
 class TerminalDisplay:
@@ -103,3 +107,36 @@ class MultiDisplay:
     def finalize(self, text: str = ""):
         for d in self.displays:
             d.finalize(text)
+
+
+class InputDisplay:
+    """
+    Handles transcription updates by simulating keyboard input.
+    """
+
+    def __init__(self, config_manager):
+        self.config_manager = config_manager
+        self.simulator = InputSimulator()
+
+    def update(self, text: str = "", refined: str = "", ghost: str = ""):
+        config = self.config_manager.config.system_input
+        if not config.enabled or not config.type_ghost:
+            # If ghost typing is disabled, we still need to make sure we don't
+            # leave any stale ghost length in the simulator if it was previously enabled.
+            # But the simulator resets on finalize.
+            return
+
+        # We only type ghost text if explicitly enabled
+        if ghost:
+            self.simulator.update_ghost(ghost)
+
+    def finalize(self, text: str = ""):
+        config = self.config_manager.config.system_input
+        if not config.enabled:
+            # Even if disabled now, if it was enabled during ghost pass,
+            # we MUST clear the ghost text from the screen.
+            if self.simulator.last_ghost_length > 0:
+                self.simulator.finalize("")
+            return
+
+        self.simulator.finalize(text)
