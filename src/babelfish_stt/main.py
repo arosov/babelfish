@@ -11,7 +11,12 @@ from typing import Optional, List, Any
 from babelfish_stt.hardware import HardwareManager
 from babelfish_stt.engine import STTEngine
 from babelfish_stt.audio import AudioStreamer
-from babelfish_stt.display import TerminalDisplay, ServerDisplay, MultiDisplay
+from babelfish_stt.display import (
+    TerminalDisplay,
+    ServerDisplay,
+    MultiDisplay,
+    InputDisplay,
+)
 from babelfish_stt.vad import SileroVAD
 from babelfish_stt.config_manager import ConfigManager
 from babelfish_stt.server import BabelfishServer
@@ -233,7 +238,11 @@ async def run_babelfish(
             microphone_name=config_manager.config.hardware.microphone_name,
         )
 
-        display = MultiDisplay(TerminalDisplay(), ServerDisplay(server))
+        display = MultiDisplay(
+            TerminalDisplay(),
+            ServerDisplay(server),
+            InputDisplay(config_manager),
+        )
         pipeline = StandardPipeline(vad, engine, display)
 
         if pipeline.stop_detector:
