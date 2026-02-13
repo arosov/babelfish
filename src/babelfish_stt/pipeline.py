@@ -202,7 +202,9 @@ class StandardPipeline(Pipeline):
         elif target_throttle < self.dynamic_throttle_ms:
             self.dynamic_throttle_ms = max(target_throttle, self.perf.ghost_throttle_ms)
 
-    def process_chunk(self, chunk: np.ndarray, now_ms: float) -> bool:
+    def process_chunk(
+        self, chunk: np.ndarray, now_ms: float, is_speech: Optional[bool] = None
+    ) -> bool:
         with self._lock:
             if self.is_idle:
                 return False
@@ -213,7 +215,9 @@ class StandardPipeline(Pipeline):
                 self.reset_state()
                 return False
 
-        is_speech = self.vad.is_speech(chunk)
+        # Use pre-computed VAD result if provided, otherwise run it
+        if is_speech is None:
+            is_speech = self.vad.is_speech(chunk)
 
         # Handle test mode: run VAD but don't accumulate audio or transcribe
         if self.test_mode:

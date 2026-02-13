@@ -1,5 +1,16 @@
 import sys
 import os
+
+# PERFORMANCE OPTIMIZATION:
+# Strictly limit threading for numerical libraries BEFORE they initialize.
+# This prevents high-core CPUs (like i9 9900) from over-subscribing threads
+# for tiny real-time inferences, which is a major source of high CPU usage.
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import logging
 import numpy as np
 import time
@@ -52,12 +63,19 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
         last_configured_ww = ww_engine.active_start_word if ww_engine else None
         last_configured_stop_ww = ww_engine.active_stop_word if ww_engine else None
 
-        for chunk in streamer.stream():
+        # Optimization: Process audio in 96ms chunks (1536 samples @ 16kHz)
+        # This is exactly 3 blocks of 512 samples, which Silero VAD requires.
+        # This reduces inference frequency by ~66% compared to 32ms chunks.
+        for chunk in streamer.stream(chunk_size=1536):
             if shutdown_event.is_set():
                 break
 
             now = time.time()
             now_ms = now * 1000
+
+            # 1. VAD Gating (Cheapest Check)
+            # If the chunk is silent, we skip WakeWord and Pipeline logic entirely.
+            is_speech = pipeline.vad.is_speech(chunk)
 
             # Dynamically check for wakeword updates
             active_ww = ww_engine.active_start_word if ww_engine else None
@@ -65,6 +83,7 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
 
             # Handle dynamic transitions when configuration changes
             if active_ww != last_configured_ww or stop_ww != last_configured_stop_ww:
+                # ... (rest of config update logic remains same)
                 if active_ww != last_configured_ww:
                     if active_ww is None:
                         pipeline.request_mode(is_idle=False, force=True)
@@ -89,7 +108,8 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
                 if now < cooldown_until:
                     continue
 
-                if ww_engine and ww_engine.detect(chunk):
+                # Only run WakeWord detection if VAD detected speech
+                if is_speech and ww_engine and ww_engine.detect(chunk):
                     logger.info(f"✨ WAKEWORD '{active_ww}' DETECTED!")
                     pipeline.request_mode(
                         is_idle=False, force=False, source_event="wakeword_detected"
@@ -99,9 +119,11 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
                     # Ignore stop word for 4s to avoid immediate re-triggering with same audio
                     stop_cooldown_until = now + 4.0
             else:
-                # Parallel check for stop-wakeword (PRIORITY)
+                # Active mode
                 stop_detected = False
-                if ww_engine and stop_ww:
+
+                # Only check for Stop-WakeWord if VAD detected speech
+                if is_speech and ww_engine and stop_ww:
                     # Always process chunk to keep model state consistent, but ignore result during cooldown
                     is_detected = ww_engine.detect(chunk, word=stop_ww)
                     if now >= stop_cooldown_until:
@@ -115,7 +137,10 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
                     state_changed = True
                 else:
                     # In active mode, process chunk through pipeline if not stopping
-                    state_changed = pipeline.process_chunk(chunk, now_ms)
+                    # Pass the pre-computed is_speech to avoid redundant VAD check
+                    state_changed = pipeline.process_chunk(
+                        chunk, now_ms, is_speech=is_speech
+                    )
 
                 if state_changed:
                     # Pipeline reported a transition (e.g., transcript stop word detected)

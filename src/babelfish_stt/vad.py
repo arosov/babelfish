@@ -1,7 +1,9 @@
-import torch
+import onnxruntime as ort
 import numpy as np
 import logging
+import urllib.request
 from typing import Optional
+from pathlib import Path
 from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import VoiceConfig
@@ -11,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 class SileroVAD(Reconfigurable):
     """
-    Lightweight wrapper for Silero VAD v5.
+    State-of-the-art VAD using Silero VAD v5 on ONNX Runtime.
+    Optimized for minimal CPU usage via single-thread execution.
     """
 
     config_key = "voice"
@@ -20,57 +23,116 @@ class SileroVAD(Reconfigurable):
         self.threshold = threshold
         self.sample_rate = sample_rate
 
-        # Load Silero VAD from torch hub
-        logger.info("🎙️  Loading Silero VAD...")
-        self.model, utils = torch.hub.load(
-            repo_or_dir="snakers4/silero-vad",
-            model="silero_vad",
-            force_reload=False,
-            trust_repo=True,
-        )
-        (self.get_speech_timestamps, _, self.read_audio, _, _) = utils
+        # Default model search
+        base_dir = Path(__file__).resolve().parent.parent.parent
+        models_dir = base_dir / "models"
+        models_dir.mkdir(exist_ok=True)
+        model_path = models_dir / "silero_vad.onnx"
 
-        # Stay on CPU for compatibility
-        self.device = "cpu"
-        self.model.to("cpu")
+        # Auto-download if missing
+        if not model_path.exists():
+            url = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
+            logger.info(f"📥 Downloading Silero VAD ONNX model from {url}...")
+            try:
+                urllib.request.urlretrieve(url, model_path)
+                logger.info(f"✅ Model downloaded to {model_path}")
+            except Exception as e:
+                logger.error(f"Failed to download Silero VAD model: {e}")
+                # Fallback path if you have it in another common location or raise error
+                raise FileNotFoundError(
+                    f"Silero VAD model missing and download failed. Please place it at {model_path}"
+                )
+
+        # Configure ONNX Session for minimal CPU footprint
+        opts = ort.SessionOptions()
+        opts.inter_op_num_threads = 1
+        opts.intra_op_num_threads = 1
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+        logger.info("🎙️ Loading Silero VAD (ONNX)...")
+        try:
+            self.session = ort.InferenceSession(
+                str(model_path), sess_options=opts, providers=["CPUExecutionProvider"]
+            )
+        except Exception as e:
+            logger.error(f"Failed to load Silero VAD ONNX: {e}")
+            raise
 
         self.reset_states()
+
+    def reset_states(self):
+        """Resets the VAD model RNN state."""
+        self._state = np.zeros((2, 1, 128)).astype("float32")
+        self._context = np.zeros((1, 64)).astype("float32")
 
     def reconfigure(self, config: BaseModel) -> None:
         """Apply new configuration to VAD."""
         if isinstance(config, VoiceConfig):
-            # Map sensitivity (0.1-0.9) to threshold (0.9-0.1)
-            # Higher sensitivity = Lower threshold = Easier to trigger
             self.threshold = 1.0 - config.wakeword_sensitivity
-            # Clamp to safe range to avoid extremes
             self.threshold = max(0.05, min(0.95, self.threshold))
-            logger.info(
-                f"VAD threshold updated to {self.threshold:.2f} (Sensitivity: {config.wakeword_sensitivity:.2f})"
-            )
-
-    def reset_states(self):
-        """Resets the VAD model state."""
-        self.model.reset_states()
+            logger.info(f"VAD threshold updated to {self.threshold:.2f}")
 
     def is_speech(self, audio_chunk: np.ndarray) -> bool:
         """
-        Detects if speech is present in the current audio chunk.
-
-        Args:
-            audio_chunk: 1D numpy array of audio samples (float32)
-
-        Returns:
-            bool: True if speech probability > threshold
+        Detects if speech is present using incremental block processing.
         """
-        # Convert to torch tensor
-        audio_tensor = torch.from_numpy(audio_chunk).to(self.device)
+        block_size = 512
+        if len(audio_chunk) < block_size:
+            return False
 
-        # Silero expects (batch, samples)
-        if audio_tensor.dim() == 1:
-            audio_tensor = audio_tensor.unsqueeze(0)
+        # Ensure float32
+        if audio_chunk.dtype != np.float32:
+            audio_chunk = audio_chunk.astype(np.float32)
 
-        # Get speech probability
-        with torch.no_grad():
-            speech_prob = self.model(audio_tensor, self.sample_rate).item()
+        num_blocks = len(audio_chunk) // block_size
+        has_speech = False
 
-        return speech_prob > self.threshold
+        for i in range(num_blocks):
+            start = i * block_size
+            end = start + block_size
+            block = audio_chunk[start:end]
+
+            # Silero VAD v5 ONNX expects [batch, samples]
+            if len(block.shape) == 1:
+                block_in = np.expand_dims(block, axis=0)
+            else:
+                block_in = block
+
+            # Concatenate with context (64 samples)
+            # Input size becomes 512 + 64 = 576
+            input_tensor = np.concatenate([self._context, block_in], axis=1)
+
+            # Update context for next iteration (last 64 samples of current block)
+            self._context = block_in[:, -64:]
+
+            # Prepare inputs for Silero VAD v5
+            inputs = {
+                "input": input_tensor,
+                "sr": np.array([self.sample_rate], dtype=np.int64),
+                "state": self._state,
+            }
+
+            # Inference
+            outputs = self.session.run(None, inputs)
+            out, state_out = outputs
+
+            # Update state
+            self._state = state_out
+
+            # Check probability - handle various output formats safely
+            if isinstance(out, np.ndarray):
+                speech_prob = float(out.flatten()[0])
+            else:
+                speech_prob = float(out)
+
+            # Diagnostic logging (can be commented out after verification)
+            # max_amp = np.max(np.abs(block))
+            # if max_amp > 0.05 or speech_prob > 0.01:
+            #    logger.info(
+            #        f"VAD: Amp={max_amp:.4f}, Prob={speech_prob:.4f}, Thresh={self.threshold}"
+            #    )
+
+            if speech_prob > self.threshold:
+                has_speech = True
+
+        return has_speech

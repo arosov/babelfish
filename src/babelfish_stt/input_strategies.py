@@ -21,7 +21,14 @@ class DirectStrategy(InputStrategy):
     def type(self, text: str, keyboard: Controller):
         if not text:
             return
-        keyboard.type(text)
+        try:
+            keyboard.type(text)
+        except Exception as e:
+            logger.warning(
+                f"DirectStrategy failed to type '{text}' ({e}). Fallback to Clipboard."
+            )
+            # Fallback to ClipboardStrategy
+            ClipboardStrategy().type(text, keyboard)
 
 
 class ClipboardStrategy(InputStrategy):
