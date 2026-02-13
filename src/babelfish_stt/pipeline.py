@@ -3,6 +3,7 @@ import time
 import threading
 import logging
 import concurrent.futures
+from collections import deque
 from typing import List, Optional, Any
 from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
@@ -160,6 +161,8 @@ class StandardPipeline(Pipeline):
 
         self.active_buffer = []
         self._buffer_size = 0
+        self.pre_roll_ms = 300
+        self.pre_roll_buffer = deque()
         self.last_speech_time = 0
         self.silence_threshold_ms = 400
         self.update_interval_ms = 100
@@ -177,6 +180,7 @@ class StandardPipeline(Pipeline):
     def reconfigure(self, config: BaseModel) -> None:
         if isinstance(config, PipelineConfig):
             self.silence_threshold_ms = config.silence_threshold_ms
+            self.pre_roll_ms = config.pre_roll_ms
             self.update_interval_ms = config.update_interval_ms
             self.perf = config.performance
             self.dynamic_throttle_ms = self.perf.ghost_throttle_ms
@@ -227,6 +231,13 @@ class StandardPipeline(Pipeline):
                 if not self.is_speaking:
                     self._notify_state_change(True)
                     self.last_update_time = now_ms
+
+                    # Prepend pre-roll buffer if it exists
+                    if self.pre_roll_buffer:
+                        while self.pre_roll_buffer:
+                            rolled_chunk = self.pre_roll_buffer.popleft()
+                            self.active_buffer.append(rolled_chunk)
+                            self._buffer_size += len(rolled_chunk)
 
                 self.active_buffer.append(chunk)
                 self._buffer_size += len(chunk)
@@ -343,29 +354,44 @@ class StandardPipeline(Pipeline):
                     is_silent_long_enough = (
                         now_ms - self.last_speech_time > self.silence_threshold_ms
                     )
+            else:
+                # Silence while not speaking: maintain pre-roll buffer
+                with self._lock:
+                    self.pre_roll_buffer.append(chunk)
 
-                # If we've been silent long enough, finalize
-                if is_silent_long_enough:
-                    with self._lock:
-                        full_audio = np.concatenate(self.active_buffer)
-
-                    # Final pass: blocking for consistency
-                    # Since STTEngine now has a lock, it won't run concurrently with ghost pass
-                    text = self.engine.transcribe(
-                        full_audio, padding_s=self.perf.min_padding_s
+                    # Limit pre-roll buffer size
+                    # Assuming 16kHz, chunk size is usually 512 samples (~32ms)
+                    # 300ms / 32ms ~= 10 chunks
+                    max_chunks = max(
+                        1, int((self.pre_roll_ms / 1000.0) * 16000 / len(chunk))
                     )
-                    if text:
-                        self.display.finalize(text)
-                        if self.stop_detector and self.stop_detector.detect(text):
-                            self._handle_stop()
-                            return True
+                    while len(self.pre_roll_buffer) > max_chunks:
+                        self.pre_roll_buffer.popleft()
 
-                    self.reset_state()
+                is_silent_long_enough = False
 
-                    # Completion of deferred LOCK
-                    with self._lock:
-                        if self.pending_idle:
-                            self.request_mode(is_idle=True, force=True)
+            # If we've been silent long enough, finalize
+            if was_speaking and is_silent_long_enough:
+                with self._lock:
+                    full_audio = np.concatenate(self.active_buffer)
+
+                # Final pass: blocking for consistency
+                # Since STTEngine now has a lock, it won't run concurrently with ghost pass
+                text = self.engine.transcribe(
+                    full_audio, padding_s=self.perf.min_padding_s
+                )
+                if text:
+                    self.display.finalize(text)
+                    if self.stop_detector and self.stop_detector.detect(text):
+                        self._handle_stop()
+                        return True
+
+                self.reset_state()
+
+                # Completion of deferred LOCK
+                with self._lock:
+                    if self.pending_idle:
+                        self.request_mode(is_idle=True, force=True)
 
         return False
 
@@ -376,6 +402,8 @@ class StandardPipeline(Pipeline):
         # Reset for next sentence
         with self._lock:
             self.active_buffer = []
+            self._buffer_size = 0
+            self.pre_roll_buffer.clear()
             self.last_update_time = 0
             if self.is_speaking:
                 self.is_speaking = False
