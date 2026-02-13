@@ -207,6 +207,12 @@ class StandardPipeline(Pipeline):
             if self.is_idle:
                 return False
 
+            # GHOST TIMEOUT: If speaking but no new speech/updates for 5s, force reset
+            if self.is_speaking and now_ms - self.last_speech_time > 5000:
+                logger.warning("🕒 Ghost timeout (5s) reached. Resetting state.")
+                self.reset_state()
+                return False
+
         is_speech = self.vad.is_speech(chunk)
 
         # Handle test mode: run VAD but don't accumulate audio or transcribe
@@ -412,6 +418,9 @@ class StandardPipeline(Pipeline):
                 callback = None
 
             self.vad.reset_states()
+
+        # Reset display state (e.g. clear ghost tracking)
+        self.display.reset()
 
         if callback:
             callback(False)
