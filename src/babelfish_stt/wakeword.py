@@ -48,52 +48,65 @@ class WakeWordEngine(Reconfigurable):
         self.stop_word = stop_word
         self.threshold = 1.0 - sensitivity
         self.stop_threshold = 1.0 - stop_sensitivity
-        self.oww_model: Optional[Model] = None
-        self._loaded_model_names = set()
+        self.start_model: Optional[Model] = None
+        self.stop_model: Optional[Model] = None
+        self._loaded_start_name: Optional[str] = None
+        self._loaded_stop_name: Optional[str] = None
         self._load_models()
 
     def _load_models(self):
-        """Loads the models specified by start_word and stop_word."""
+        """Loads the models specified by start_word and stop_word separately."""
         with self._lock:
-            self._loaded_model_names.clear()
-            model_names = [name for name in [self.start_word, self.stop_word] if name]
-            if not model_names:
-                self.oww_model = None
-                return
+            self.start_model = None
+            self.stop_model = None
+            self._loaded_start_name = None
+            self._loaded_stop_name = None
 
             pretrained_paths = openwakeword.get_pretrained_model_paths() or []
-            target_paths = []
 
-            for name in model_names:
+            def get_target_path(name):
+                if not name:
+                    return None
                 m_name = name.lower()
                 # Check if it's a pretrained model name
                 matches = [
                     p for p in pretrained_paths if m_name in Path(p).name.lower()
                 ]
                 if matches:
-                    # For pretrained models, passing the identifier is better as it loads metadata
-                    target_paths.append(m_name)
-                    self._loaded_model_names.add(name)
+                    return m_name
                 elif Path(name).exists():
-                    # For custom models, we must use the path
-                    target_paths.append(name)
-                    self._loaded_model_names.add(name)
-                else:
-                    logger.warning(
-                        f"WakeWord model '{name}' not found in pretrained paths or as a file."
+                    return name
+                return None
+
+            start_path = get_target_path(self.start_word)
+            if start_path:
+                logger.info(f"Loading Start WakeWord model: {start_path}")
+                try:
+                    self.start_model = Model(
+                        wakeword_models=[start_path],
+                        inference_framework="onnx",
+                        device="cpu",
+                    )
+                    self._loaded_start_name = self.start_word
+                except Exception as e:
+                    logger.error(
+                        f"Failed to load start wakeword model '{start_path}': {e}"
                     )
 
-            if not target_paths:
-                self.oww_model = None
-            else:
-                logger.info(
-                    f"Loading WakeWord models: {', '.join([Path(p).name for p in target_paths])}"
-                )
-                self.oww_model = Model(
-                    wakeword_models=target_paths,
-                    inference_framework="onnx",
-                    device="cpu",
-                )
+            stop_path = get_target_path(self.stop_word)
+            if stop_path:
+                logger.info(f"Loading Stop WakeWord model: {stop_path}")
+                try:
+                    self.stop_model = Model(
+                        wakeword_models=[stop_path],
+                        inference_framework="onnx",
+                        device="cpu",
+                    )
+                    self._loaded_stop_name = self.stop_word
+                except Exception as e:
+                    logger.error(
+                        f"Failed to load stop wakeword model '{stop_path}': {e}"
+                    )
 
     def reconfigure(self, config: BaseModel) -> None:
         """Update wakeword models and sensitivity based on config."""
@@ -131,28 +144,23 @@ class WakeWordEngine(Reconfigurable):
     @property
     def active_start_word(self) -> Optional[str]:
         with self._lock:
-            return (
-                self.start_word
-                if self.oww_model and self.start_word in self._loaded_model_names
-                else None
-            )
+            return self._loaded_start_name
 
     @property
     def active_stop_word(self) -> Optional[str]:
         with self._lock:
-            return (
-                self.stop_word
-                if self.oww_model and self.stop_word in self._loaded_model_names
-                else None
-            )
+            return self._loaded_stop_name
 
     @property
     def active_wakeword(self) -> Optional[str]:
         return self.active_start_word
 
-    def process_chunk(self, chunk: np.ndarray) -> Dict[str, float]:
+    def process_chunk(
+        self, chunk: np.ndarray, word: Optional[str] = None
+    ) -> Dict[str, float]:
         """
-        Process an audio chunk and return detection probabilities.
+        Process an audio chunk and return detection probabilities for the specified word
+        or the start word if None.
         """
         if chunk.dtype != np.int16:
             chunk_int16 = (chunk * 32767).astype(np.int16)
@@ -160,28 +168,35 @@ class WakeWordEngine(Reconfigurable):
             chunk_int16 = chunk
 
         with self._lock:
-            if not self.oww_model:
+            # Select model based on requested word
+            target_model = None
+            target_name = None
+
+            if (
+                word
+                and self.stop_word
+                and (word == self.stop_word or word in self.stop_word)
+            ):
+                target_model = self.stop_model
+                target_name = self.stop_word
+            else:
+                target_model = self.start_model
+                target_name = self.start_word
+
+            if not target_model:
                 return {}
-            prediction = self.oww_model.predict(chunk_int16)
+
+            prediction = target_model.predict(chunk_int16)
 
         if isinstance(prediction, tuple):
             prediction = prediction[0]
 
-        # Debug raw keys occasionally
-        # if any(v > 0.05 for v in prediction.values()):
-        #    print(f"   [WW-RAW] {prediction}")
-
         # Normalize keys
         normalized = {}
         with self._lock:
-            start_name = self.start_word
-            stop_name = self.stop_word
-
             for k, v in prediction.items():
-                if start_name and (start_name in k or k == start_name):
-                    normalized[start_name] = max(normalized.get(start_name, 0.0), v)
-                elif stop_name and (stop_name in k or k == stop_name):
-                    normalized[stop_name] = max(normalized.get(stop_name, 0.0), v)
+                if target_name and (target_name in k or k == target_name):
+                    normalized[target_name] = max(normalized.get(target_name, 0.0), v)
                 else:
                     normalized[k] = v
         return normalized
@@ -195,7 +210,7 @@ class WakeWordEngine(Reconfigurable):
         """
         Returns True if the specified word (or the start word if None) is detected.
         """
-        probabilities = self.process_chunk(chunk)
+        probabilities = self.process_chunk(chunk, word=word)
         with self._lock:
             target_word = word or self.start_word
             if not target_word:
@@ -217,7 +232,9 @@ class WakeWordEngine(Reconfigurable):
             return prob >= target_threshold
 
     def reset(self):
-        """Resets the internal state of the wake-word model."""
+        """Resets the internal state of the wake-word models."""
         with self._lock:
-            if self.oww_model:
-                self.oww_model.reset()
+            if self.start_model:
+                self.start_model.reset()
+            if self.stop_model:
+                self.stop_model.reset()
