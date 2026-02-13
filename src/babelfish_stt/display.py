@@ -149,7 +149,7 @@ class InputDisplay:
         if not config.enabled:
             # Even if disabled now, if it was enabled during ghost pass,
             # we MUST clear the ghost text from the screen.
-            if self.simulator.last_ghost_length > 0:
+            if self.simulator.graphemes:
                 self.simulator.finalize("")
             return
 
