@@ -25,6 +25,7 @@ dependencies = [
     "soxr",
     "pynput",
     "notify-py",
+    "pyperclip",
 ]
 
 [project.optional-dependencies]

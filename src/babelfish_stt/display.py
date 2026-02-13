@@ -139,4 +139,4 @@ class InputDisplay:
                 self.simulator.finalize("")
             return
 
-        self.simulator.finalize(text)
+        self.simulator.finalize(text, strategy=config.strategy)

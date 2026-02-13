@@ -1,5 +1,13 @@
 import logging
 from pynput.keyboard import Controller, Key
+from babelfish_stt.input_strategies import (
+    InputStrategy,
+    DirectStrategy,
+    ClipboardStrategy,
+    NativeStrategy,
+    HybridStrategy,
+)
+from babelfish_stt.config import InputStrategy as StrategyEnum
 
 logger = logging.getLogger(__name__)
 
@@ -14,36 +22,44 @@ class InputSimulator:
         # Allow injecting a mock controller for testing
         self.keyboard = keyboard_controller or Controller()
         self.last_ghost_length = 0
+        self._strategies = {
+            StrategyEnum.DIRECT: DirectStrategy(),
+            StrategyEnum.CLIPBOARD: ClipboardStrategy(),
+            StrategyEnum.NATIVE: NativeStrategy(),
+            StrategyEnum.HYBRID: HybridStrategy(),
+        }
+        self._direct = DirectStrategy()
 
-    def type_text(self, text: str):
-        """Types the given text using the keyboard controller."""
+    def type_text(self, text: str, strategy: StrategyEnum = StrategyEnum.DIRECT):
+        """Types the given text using the selected strategy."""
         if not text:
             return
         try:
-            self.keyboard.type(text)
+            impl = self._strategies.get(strategy, self._direct)
+            impl.type(text, self.keyboard)
         except Exception as e:
-            logger.error(f"Failed to type text: {e}")
+            logger.error(f"Failed to type text with strategy {strategy}: {e}")
 
     def update_ghost(self, ghost_text: str):
         """
         Updates the ghost text by backspacing the previous one
-        and typing the new one.
+        and typing the new one. Ghost text ALWAYS uses direct input.
         """
         self._clear_previous()
         if ghost_text:
-            self.type_text(ghost_text)
+            self.type_text(ghost_text, StrategyEnum.DIRECT)
             self.last_ghost_length = len(ghost_text)
         else:
             self.last_ghost_length = 0
 
-    def finalize(self, text: str):
+    def finalize(self, text: str, strategy: StrategyEnum = StrategyEnum.DIRECT):
         """
         Finalizes the transcription by clearing any ghost text
-        and typing the final result.
+        and typing the final result using the selected strategy.
         """
         self._clear_previous()
         if text:
-            self.type_text(text)
+            self.type_text(text, strategy)
         # Reset tracking
         self.last_ghost_length = 0
 
