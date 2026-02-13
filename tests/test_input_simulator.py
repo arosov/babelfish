@@ -81,3 +81,27 @@ def test_finalize_adds_space(simulator, mock_keyboard):
     mock_keyboard.reset_mock()
     simulator.finalize("me")
     mock_keyboard.type.assert_called_with("me")
+
+
+def test_grapheme_backspacing(simulator, mock_keyboard):
+    # Emoji
+    simulator.update_ghost("🏢")
+    assert simulator.last_ghost_length == 1  # grapheme length, not len() which is 2
+
+    mock_keyboard.reset_mock()
+    simulator.update_ghost("updated")
+    # Should only backspace once
+    assert mock_keyboard.press.call_count == 1
+
+    # Combined characters (NFC normalization)
+    # 'e' + combining accent (NFD)
+    decomposed = "e\u0301"
+    mock_keyboard.reset_mock()
+    simulator.update_ghost(decomposed)
+    # grapheme length should be 1
+    assert simulator.last_ghost_length == 1
+
+    mock_keyboard.reset_mock()
+    simulator.finalize("done")
+    # Should only backspace once for the accented 'e'
+    assert mock_keyboard.press.call_count == 1

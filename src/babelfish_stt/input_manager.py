@@ -1,4 +1,6 @@
 import logging
+import unicodedata
+import grapheme
 from pynput.keyboard import Controller, Key
 from babelfish_stt.input_strategies import (
     InputStrategy,
@@ -48,8 +50,11 @@ class InputSimulator:
         """
         self._clear_previous()
         if ghost_text:
+            # Normalize to NFC to ensure consistent backspacing (e.g., é vs e+´)
+            ghost_text = unicodedata.normalize("NFC", ghost_text)
             self.type_text(ghost_text, StrategyEnum.DIRECT)
-            self.last_ghost_length = len(ghost_text)
+            # Use grapheme length to count visual character units for backspacing
+            self.last_ghost_length = grapheme.length(ghost_text)
         else:
             self.last_ghost_length = 0
 
@@ -60,6 +65,9 @@ class InputSimulator:
         """
         self._clear_previous()
         if text:
+            # Normalize to NFC
+            text = unicodedata.normalize("NFC", text)
+
             # Prepend space if the previous finalization didn't end with whitespace
             # and the current text doesn't start with whitespace.
             if (
