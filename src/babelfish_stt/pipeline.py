@@ -170,7 +170,7 @@ class StandardPipeline(Pipeline):
 
         # Performance Profile (Self-Calibration)
         self.perf = PerformanceProfile()
-        self.dynamic_throttle_ms = 100
+        self.dynamic_throttle_ms = self.perf.ghost_throttle_ms
         self.inference_history = []
 
         # Thread pool for offloading transcription
