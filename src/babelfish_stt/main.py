@@ -63,10 +63,9 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
         last_configured_ww = ww_engine.active_start_word if ww_engine else None
         last_configured_stop_ww = ww_engine.active_stop_word if ww_engine else None
 
-        # Optimization: Process audio in 96ms chunks (1536 samples @ 16kHz)
-        # This is exactly 3 blocks of 512 samples, which Silero VAD requires.
-        # This reduces inference frequency by ~66% compared to 32ms chunks.
-        for chunk in streamer.stream(chunk_size=1536):
+        # Process audio in 32ms chunks (512 samples @ 16kHz)
+        # This provides low-latency detection for VAD and ghost updates.
+        for chunk in streamer.stream(chunk_size=512):
             if shutdown_event.is_set():
                 break
 

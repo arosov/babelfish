@@ -350,18 +350,33 @@ class StandardPipeline(Pipeline):
 
                         with self._lock:
                             if self._buffer_size > window_samples:
+                                # Detect chunk size from active_buffer for alignment
+                                chunk_size = 512
+                                if self.active_buffer:
+                                    chunk_size = len(self.active_buffer[0])
+
+                                # Align window to chunk boundary (round UP to always send >= target)
+                                window_samples_aligned = (
+                                    (window_samples + chunk_size - 1) // chunk_size
+                                ) * chunk_size
+                                if window_samples_aligned == 0:
+                                    window_samples_aligned = chunk_size
+
+                                logger.debug(
+                                    f"[GHOST] Window: {window_samples} -> {window_samples_aligned} samples "
+                                    f"(chunk_size={chunk_size}, buffer_size={self._buffer_size})"
+                                )
+
                                 # Collect just enough chunks from the end
                                 chunks = []
                                 collected = 0
                                 for chunk in reversed(self.active_buffer):
                                     chunks.append(chunk)
                                     collected += len(chunk)
-                                    if collected >= window_samples:
+                                    if collected >= window_samples_aligned:
                                         break
                                 # Concatenate in correct order (chunks were reversed)
                                 full_audio = np.concatenate(chunks[::-1])
-                                # Trim to exact window
-                                full_audio = full_audio[-window_samples:]
 
                     if full_audio is None:
                         # Fallback: Capture everything (CPU mode or short buffer)
@@ -375,7 +390,21 @@ class StandardPipeline(Pipeline):
                     ):
                         window_samples = int(self.perf.ghost_window_s * 16000)
                         if len(full_audio) > window_samples:
-                            full_audio = full_audio[-window_samples:]
+                            # Align to chunk boundary
+                            chunk_size = 512
+                            if self.active_buffer:
+                                chunk_size = len(self.active_buffer[0])
+                            window_samples_aligned = (
+                                (window_samples + chunk_size - 1) // chunk_size
+                            ) * chunk_size
+                            if window_samples_aligned == 0:
+                                window_samples_aligned = chunk_size
+                            full_audio = full_audio[-window_samples_aligned:]
+
+                    logger.debug(
+                        f"[GHOST] Sending {len(full_audio)} samples to STT "
+                        f"({len(full_audio) / 16000:.2f}s, window={self.perf.ghost_window_s}s)"
+                    )
 
                     # Capture current generation to detect stale results
                     with self._lock:

@@ -27,6 +27,7 @@ dependencies = [
     "notify-py",
     "pyperclip",
     "grapheme",
+    "rapidfuzz>=3.0.0",
 ]
 
 [project.optional-dependencies]
