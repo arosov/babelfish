@@ -218,3 +218,264 @@ class TestEdgeCases:
         """Should handle empty finalize gracefully."""
         simulator.finalize("")
         mock_keyboard.assert_not_called()
+
+
+_HAS_GPU = None
+
+
+def has_gpu():
+    """Check if GPU is available."""
+    global _HAS_GPU
+    if _HAS_GPU is not None:
+        return _HAS_GPU
+
+    import ctypes
+    import ctypes.util
+
+    lib_name = "libcuda.so.1"
+    try:
+        ctypes.CDLL(lib_name)
+        _HAS_GPU = True
+        return True
+    except Exception:
+        try:
+            found = ctypes.util.find_library(lib_name)
+            if found:
+                ctypes.CDLL(found)
+                _HAS_GPU = True
+                return True
+        except Exception:
+            pass
+    _HAS_GPU = False
+    return False
+
+
+pytestmark = pytest.mark.skipif("not has_gpu()", reason="GPU not available")
+
+
+# Run with:
+#   uv sync --extra nvidia-linux
+#   export LD_LIBRARY_PATH=".venv/lib/python3.12/site-packages/nvidia/cublas/lib:.venv/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:.venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib:.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:.venv/lib/python3.12/site-packages/nvidia/cufft/lib:.venv/lib/python3.12/site-packages/nvidia/curand/lib:.venv/lib/python3.12/site-packages/nvidia/nvjitlink/lib:\$LD_LIBRARY_PATH"
+#   uv run pytest -s -m slow
+#
+# -s: shows stdout/stderr (required for real STT output)
+# -m slow: runs only slow tests (real STT integration tests)
+
+
+@pytest.mark.slow
+class TestRealSTTIntegration:
+    """Integration tests with real STT engine. Requires GPU.
+
+    Run with: pytest -s -m slow
+    """
+
+    @pytest.fixture
+    def audio_pipeline(self):
+        from tests.audio_fixtures import AudioPipelineFixture
+
+        return AudioPipelineFixture()
+
+    @pytest.fixture
+    def corpus(self):
+        import yaml
+
+        corpus_path = Path(__file__).parent / "fixtures" / "corpus.yaml"
+        with open(corpus_path) as f:
+            data = yaml.safe_load(f)
+        return {item["id"]: item for item in data["corpus"]}
+
+    WER_THRESHOLD = 0.10
+
+    def test_real_transcription_matches_corpus(self, audio_pipeline, corpus):
+        """Test that real STT output matches expected transcripts using WER threshold."""
+        from jiwer import wer, cer, RemoveMultipleSpaces, Strip, Compose
+
+        WER_THRESHOLD = 0.10
+
+        print(f"\n{'=' * 70}")
+        print(f"[TEST] REAL STT TRANSCRIPTION TEST WITH GPU")
+        print(f"{'=' * 70}")
+        print(f"[TEST] GPU available: {has_gpu()}")
+        print(f"[TEST] WER Threshold: {WER_THRESHOLD * 100:.1f}%")
+        print(f"[TEST] Corpus entries: {len(corpus)}")
+        print(f"{'=' * 70}\n")
+
+        import re
+
+        def normalize_punctuation(text):
+            text = re.sub(r"[,\.]", "", text)
+            text = re.sub(r"\s+", " ", text)
+            return text.strip().lower()
+
+        all_passed = True
+        results = []
+
+        for corpus_id, expected in corpus.items():
+            import soundfile as sf
+
+            audio_path = (
+                Path(__file__).parent / "fixtures" / "audio" / expected["filename"]
+            )
+            audio_info = sf.info(audio_path)
+            duration = audio_info.duration
+
+            print(f"[TEST] ▶ Processing: {expected['filename']}")
+            result = audio_pipeline.run_with_real_stt(
+                expected["filename"], warmup=False
+            )
+
+            actual = result.transcript.strip()
+            expected_transcript = expected.get("actual_transcript", "").strip()
+
+            actual_normalized = normalize_punctuation(actual)
+            expected_normalized = normalize_punctuation(expected_transcript)
+
+            word_error = wer(expected_normalized, actual_normalized)
+            char_error = (
+                cer(expected_normalized, expected_normalized)
+                if expected_normalized
+                else 0
+            )
+            passed = word_error <= WER_THRESHOLD
+
+            if not expected_normalized:
+                char_error = (
+                    cer(actual_normalized, expected_normalized)
+                    if expected_normalized
+                    else 0
+                )
+
+            results.append(
+                {
+                    "id": corpus_id,
+                    "duration": duration,
+                    "expected": expected_transcript,
+                    "actual": actual,
+                    "wer": word_error,
+                    "cer": char_error,
+                    "passed": passed,
+                    "ghost_count": len(result.ghost_timeline),
+                    "voice_to_first": result.voice_to_first_ghost_ms,
+                }
+            )
+
+            print(f"{'─' * 70}")
+            print(f"[TEST] 📁 {expected['filename']} ({duration:.2f}s)")
+            print(f"{'─' * 70}")
+            print(f'[TEST]   Expected: "{expected_transcript}"')
+            print(f'[TEST]   Actual:   "{actual}"')
+            print(f"[TEST]   ─────────────────────────────────────")
+            print(
+                f"[TEST]   WER: {word_error * 100:6.2f}%  |  CER: {char_error * 100:6.2f}%  |  {'✅ PASS' if passed else '❌ FAIL'}"
+            )
+            print(
+                f"[TEST]   Ghosts: {len(result.ghost_timeline)} updates  |  First ghost: {result.voice_to_first_ghost_ms:.0f}ms"
+                if result.voice_to_first_ghost_ms
+                else "[TEST]   Ghosts: 0 updates"
+            )
+            print()
+
+            if len(result.ghost_timeline) > 0:
+                print(f"[TEST]   Ghost Timeline:")
+                for i, ghost in enumerate(result.ghost_timeline):
+                    print(
+                        f'[TEST]     {i + 1:2d}. {ghost.timestamp_ms:6.0f}ms: "{ghost.text}"'
+                    )
+                print()
+
+            if not passed:
+                all_passed = False
+                print(
+                    f"[TEST]   ❌ FAILED: WER {word_error * 100:.2f}% exceeds threshold {WER_THRESHOLD * 100:.1f}%"
+                )
+
+        print(f"{'=' * 70}")
+        print(f"[TEST] SUMMARY")
+        print(f"{'=' * 70}")
+        passed_count = sum(1 for r in results if r["passed"])
+        total_ghosts = sum(r["ghost_count"] for r in results)
+        avg_wer = sum(r["wer"] * 100 for r in results) / len(results)
+        print(f"[TEST]   Files tested: {len(results)}")
+        print(f"[TEST]   Passed: {passed_count}/{len(results)}")
+        print(f"[TEST]   Average WER: {avg_wer:.2f}%")
+        print(f"[TEST]   Total ghost updates: {total_ghosts}")
+        print(f"{'=' * 70}\n")
+
+        assert all_passed, f"WER threshold exceeded for one or more files"
+
+    def test_ghost_timeline_captured(self, audio_pipeline, corpus):
+        """Test that ghost timeline is captured for each audio file."""
+        import soundfile as sf
+
+        print(f"\n{'=' * 70}")
+        print(f"[TEST] GHOST TIMELINE VERIFICATION TEST")
+        print(f"{'=' * 70}\n")
+
+        all_passed = True
+
+        for corpus_id, expected in corpus.items():
+            audio_path = (
+                Path(__file__).parent / "fixtures" / "audio" / expected["filename"]
+            )
+            audio_info = sf.info(audio_path)
+            duration = audio_info.duration
+
+            print(f"[TEST] ▶ Processing: {expected['filename']}")
+            result = audio_pipeline.run_with_real_stt(
+                expected["filename"], warmup=False
+            )
+
+            ghost_count = len(result.ghost_timeline)
+            passed = ghost_count > 0
+
+            print(f"{'─' * 70}")
+            print(f"[TEST] 📁 {expected['filename']} ({duration:.2f}s)")
+            print(f"{'─' * 70}")
+            print(f"[TEST]   Ghost Updates: {ghost_count}")
+
+            if result.voice_to_first_ghost_ms is not None:
+                print(
+                    f"[TEST]   Voice-to-First-Ghost: {result.voice_to_first_ghost_ms:.0f}ms"
+                )
+            else:
+                print(f"[TEST]   Voice-to-First-Ghost: N/A")
+
+            if result.end_to_end_latency_ms is not None:
+                print(
+                    f"[TEST]   End-to-End Latency: {result.end_to_end_latency_ms:.0f}ms"
+                )
+
+            print(f'[TEST]   Final Transcript: "{result.transcript}"')
+
+            print(f"\n[TEST]   Ghost Timeline ({len(result.ghost_timeline)} updates):")
+            if len(result.ghost_timeline) > 0:
+                for i, ghost in enumerate(result.ghost_timeline):
+                    print(
+                        f'[TEST]     {i + 1:2d}. {ghost.timestamp_ms:6.0f}ms | {ghost.grapheme_length:2d} graphemes | "{ghost.text}"'
+                    )
+            else:
+                print(f"[TEST]     (no ghost updates captured)")
+                all_passed = False
+
+            print()
+
+            if not passed:
+                print(f"[TEST]   ❌ FAILED: No ghost updates captured for {corpus_id}")
+
+        print(f"{'=' * 70}")
+        print(f"[TEST] GHOST TIMELINE SUMMARY")
+        print(f"{'=' * 70}")
+        total_ghosts = sum(
+            len(
+                audio_pipeline.run_with_real_stt(
+                    e["filename"], warmup=False
+                ).ghost_timeline
+            )
+            for e in corpus.values()
+        )
+        print(f"[TEST]   Files tested: {len(corpus)}")
+        print(f"[TEST]   Total ghost updates: {total_ghosts}")
+        print(f"[TEST]   Average ghosts per file: {total_ghosts / len(corpus):.1f}")
+        print(f"{'=' * 70}\n")
+
+        assert all_passed, "No ghost updates captured for one or more files"

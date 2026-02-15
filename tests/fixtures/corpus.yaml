@@ -25,7 +25,7 @@ corpus:
   transcript: café résumé naïve
   expected_ghosts: []
   notes: French words with accents for grapheme testing
-  actual_transcript: Cafe Resumé Naive.
+  actual_transcript: Café résumé naïve.
   ghost_count: 0
 - id: fast_speech
   filename: fast_speech.wav
@@ -49,7 +49,7 @@ corpus:
     This tests the audio pipeline warm-up behavior.
 
     '
-  actual_transcript: Hello, hello. Hello, hello.
+  actual_transcript: Hello, hello. Hello, hello
   ghost_count: 0
 - id: joke
   filename: joke.wav

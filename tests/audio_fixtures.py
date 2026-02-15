@@ -119,10 +119,161 @@ class AudioPipelineFixture:
             ghost_update_count=len(self._captured_ghosts),
         )
 
+    def run_with_real_stt(
+        self,
+        audio_filename: str,
+        config: Optional[BabelfishConfig] = None,
+        warmup: bool = True,
+    ) -> PipelineResult:
+        """
+        Run an audio file through the pipeline with real STT engine.
+
+        Args:
+            audio_filename: Name of file in fixtures/audio/
+            config: Optional pipeline configuration
+            warmup: If True, run a silent audio chunk first to warm up the model
+
+        Returns:
+            PipelineResult with transcript and ghost timeline
+        """
+        audio_path = self.fixtures_dir / audio_filename
+        if not audio_path.exists():
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+        audio_data, sample_rate = sf.read(audio_path, dtype="float32")
+
+        if sample_rate != 16000:
+            raise ValueError(
+                f"Audio must be 16kHz, got {sample_rate}. Please convert first."
+            )
+
+        self._captured_ghosts = []
+        self._captured_finals = []
+        self._start_time = None
+        self._first_ghost_time = None
+
+        test_config = config or self._default_config()
+
+        result = self._run_pipeline_with_real_stt(
+            audio_data, sample_rate, test_config, warmup
+        )
+
+        voice_to_first = None
+        if self._first_ghost_time and self._start_time:
+            voice_to_first = (self._first_ghost_time - self._start_time) * 1000
+
+        return PipelineResult(
+            transcript=result.get("text", ""),
+            ghost_timeline=self._captured_ghosts,
+            final_timeline=self._captured_finals,
+            voice_to_first_ghost_ms=voice_to_first,
+            ghost_update_count=len(self._captured_ghosts),
+        )
+
+    def _run_pipeline_with_real_stt(
+        self,
+        audio_data: np.ndarray,
+        sample_rate: int,
+        config: BabelfishConfig,
+        warmup: bool = True,
+    ) -> dict:
+        """
+        Execute the pipeline with real STT engine.
+        """
+        import logging
+
+        logging.basicConfig(level=logging.INFO)
+
+        from babelfish_stt.engine import STTEngine
+        from babelfish_stt.pipeline import StandardPipeline
+        from babelfish_stt.vad import SileroVAD
+        from babelfish_stt.display import TerminalDisplay
+
+        chunk_size = 512
+        hop_size = 512
+
+        print(f"[FIXTURE] Initializing STT Engine...")
+        stt_engine = STTEngine(config)
+        print(f"[FIXTURE] STT Engine device: {stt_engine.device_type}")
+
+        if warmup:
+            warmup_audio = np.zeros(int(16000 * 1.0), dtype=np.float32)
+            stt_engine.transcribe(warmup_audio, padding_s=1.0)
+
+        mock_vad = MagicMock(spec=SileroVAD)
+
+        class MockVAD:
+            def __init__(self):
+                self.chunk_count = 0
+
+            def is_speech(self, chunk):
+                self.chunk_count += 1
+                return self.chunk_count <= (len(audio_data) // hop_size)
+
+            def reset_states(self):
+                pass
+
+        mock_vad = MockVAD()
+        mock_display = MagicMock(spec=TerminalDisplay)
+        mock_display.update = self._create_ghost_callback()
+        mock_display.finalize = self._create_finalize_callback()
+        mock_display.reset = MagicMock()
+
+        pipeline = StandardPipeline(mock_vad, stt_engine, mock_display)
+        pipeline.set_test_mode(False)
+        pipeline.reconfigure(config.pipeline)
+        pipeline.request_mode(is_idle=False, force=True)
+
+        self._start_time = 0.0
+
+        import time
+
+        num_chunks = len(audio_data) // hop_size
+        for i in range(num_chunks):
+            start_idx = i * hop_size
+            end_idx = start_idx + chunk_size
+            if end_idx > len(audio_data):
+                break
+
+            chunk = audio_data[start_idx:end_idx]
+            now_ms = (start_idx / sample_rate) * 1000
+
+            pipeline.process_chunk(chunk, now_ms)
+
+            if (
+                pipeline._transcription_future
+                and not pipeline._transcription_future.done()
+            ):
+                try:
+                    pipeline._transcription_future.result(timeout=0.1)
+                except Exception:
+                    pass
+
+        silence_duration_ms = 500
+        silence_chunks = int(silence_duration_ms / (hop_size / sample_rate * 1000))
+        for i in range(silence_chunks):
+            now_ms = (num_chunks * hop_size / sample_rate * 1000) + (
+                i * (hop_size / sample_rate * 1000)
+            )
+            silence_chunk = np.zeros(hop_size, dtype=np.float32)
+            pipeline.process_chunk(silence_chunk, now_ms)
+
+        import time
+
+        for _ in range(50):
+            if (
+                pipeline._transcription_future is None
+                or pipeline._transcription_future.done()
+            ):
+                break
+            time.sleep(0.01)
+
+        return {"text": self._captured_finals[-1] if self._captured_finals else ""}
+
     def _default_config(self) -> BabelfishConfig:
         """Create default test configuration."""
         return BabelfishConfig(
-            hardware=HardwareConfig(device="cpu"),
+            hardware=HardwareConfig(device="auto"),
             pipeline=PipelineConfig(
                 silence_threshold_ms=400,
                 update_interval_ms=100,
@@ -214,7 +365,10 @@ class AudioPipelineFixture:
     def _create_ghost_callback(self):
         """Create callback for ghost text updates."""
 
-        def ghost_callback(text: Optional[str] = None, **kwargs):
+        def ghost_callback(
+            ghost: Optional[str] = None, text: Optional[str] = None, **kwargs
+        ):
+            text = text or ghost
             if text is None:
                 return
 
