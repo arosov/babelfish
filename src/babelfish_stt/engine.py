@@ -168,9 +168,9 @@ class STTEngine(Reconfigurable):
         min_samples = int(padding_s * 16000)
         if len(audio_buffer) < min_samples:
             padding = np.zeros(min_samples - len(audio_buffer), dtype=np.float32)
-            # Add padding to the BEGINNING so it doesn't interfere with the end-of-speech detection
-            # but provides the necessary input volume for GPU kernels to run at full speed.
-            input_audio = np.concatenate([padding, audio_buffer])
+            # Add padding to the END to preserve audio onset at the beginning
+            # This is critical for accurate transcription of the first words
+            input_audio = np.concatenate([audio_buffer, padding])
         else:
             input_audio = audio_buffer
 

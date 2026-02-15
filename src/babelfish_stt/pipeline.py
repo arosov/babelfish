@@ -44,7 +44,11 @@ class Pipeline(Reconfigurable):
                 callback = None
                 if self.is_idle:
                     self.is_idle = False
-                    self.reset_state()
+                    # Don't call reset_state() here - it would clear the pre-roll buffer
+                    # which contains valuable audio context from right before the wake word
+                    # The pre-roll will be prepended when the first speech chunk is processed
+                    # Just reset VAD state to ensure clean slate for new utterance
+                    self.vad.reset_states()
                     callback = self.on_mode_change
 
                 if source_event and self.server:
@@ -176,6 +180,10 @@ class StandardPipeline(Pipeline):
         # Thread pool for offloading transcription
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self._transcription_future = None
+
+        # Generation counter to detect stale ghost results
+        self._generation = 0
+        self._future_generation = 0  # Generation of the currently running future
 
     def reconfigure(self, config: BaseModel) -> None:
         if isinstance(config, PipelineConfig):
@@ -318,6 +326,11 @@ class StandardPipeline(Pipeline):
                         try:
                             text, duration_ms = future.result()
                             self._apply_dynamic_backoff(duration_ms)
+                            # Check generation to ensure result is still valid (not stale)
+                            with self._lock:
+                                if self._generation != self._future_generation:
+                                    logger.debug("Stale ghost result ignored")
+                                    return False
                             if text:
                                 self.display.update(ghost=text)
                                 if self.stop_detector and self.stop_detector.detect(
@@ -367,6 +380,10 @@ class StandardPipeline(Pipeline):
                         window_samples = int(self.perf.ghost_window_s * 16000)
                         if len(full_audio) > window_samples:
                             full_audio = full_audio[-window_samples:]
+
+                    # Capture current generation to detect stale results
+                    with self._lock:
+                        self._future_generation = self._generation
 
                     def _run_transcribe(audio):
                         t_start = time.perf_counter()
@@ -434,6 +451,10 @@ class StandardPipeline(Pipeline):
         return False
 
     def _handle_stop(self):
+        # Cancel any pending ghost transcription and increment generation to invalidate stale results
+        with self._lock:
+            self._transcription_future = None
+            self._generation += 1
         self.request_mode(is_idle=True, force=True, source_event="stop_word_detected")
 
     def reset_state(self):
@@ -444,6 +465,7 @@ class StandardPipeline(Pipeline):
             self.pre_roll_buffer.clear()
             self.last_update_time = 0
             self._transcription_future = None
+            self._generation += 1  # Invalidate any pending ghost transcriptions
             if self.is_speaking:
                 self.is_speaking = False
                 callback = self.on_state_change
