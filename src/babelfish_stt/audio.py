@@ -40,7 +40,9 @@ class AudioStreamer(Reconfigurable):
         # Query hardware capabilities
         self._update_device_info()
 
-        self.audio_queue = queue.Queue(maxsize=100)  # Bounded queue to prevent OOM
+        self.audio_queue = queue.Queue(
+            maxsize=300
+        )  # Increased to handle blocking transcription (~10s)
         self.is_running = False
         self.restart_required = False
 
