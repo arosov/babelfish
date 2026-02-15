@@ -1,0 +1,80 @@
+version: 1
+description: 'Test corpus for audio verification system.
+
+  This file defines expected transcripts and ghost timelines for test audio files.
+
+  Ghost timelines should be populated by running the audio through the pipeline
+
+  and capturing actual output.
+
+  '
+corpus:
+- id: multiple_words
+  filename: multiple_words.wav
+  duration_s: 3.858625
+  language: en
+  transcript: the quick brown fox jumps over the lazy dog
+  expected_ghosts: []
+  notes: Classic pangram
+  actual_transcript: The quick brown fox jumps over the lazy dog.
+  ghost_count: 0
+- id: unicode_speech
+  filename: unicode_speech.wav
+  duration_s: 2.3040625
+  language: fr
+  transcript: café résumé naïve
+  expected_ghosts: []
+  notes: French words with accents for grapheme testing
+  actual_transcript: Cafe Resumé Naive.
+  ghost_count: 0
+- id: fast_speech
+  filename: fast_speech.wav
+  duration_s: 2.242875
+  language: en
+  transcript: testing one two three four five
+  expected_ghosts: []
+  notes: Rapid sequential words for throttling test
+  actual_transcript: Testing one, two, three, four, five.
+  ghost_count: 0
+- id: hello_hello
+  filename: hello_hello.wav
+  duration_s: 2.93125
+  language: en
+  transcript: hello hello
+  expected_ghosts: []
+  notes: 'Regression test for first-transcription issue.
+
+    First "hello" may be mangled, second should transcribe properly.
+
+    This tests the audio pipeline warm-up behavior.
+
+    '
+  actual_transcript: Hello, hello. Hello, hello.
+  ghost_count: 0
+- id: joke
+  filename: joke.wav
+  duration_s: 18.5686875
+  language: en
+  transcript: 'A woman gets on a bus with her baby. The bus driver says:
+
+    "Ugh, that''s the ugliest baby I''ve ever seen!"
+
+    The woman walks to the rear of the bus and sits down, fuming.
+
+    She says to a man next to her:
+
+    "The driver just insulted me!"
+
+    The man says: "You go up there and tell him off.
+
+    Go on, I''ll hold your monkey for you."
+
+    '
+  expected_ghosts: []
+  notes: Long-form test with multiple sentences and dialogue
+  actual_transcript: A woman gets on a bus with her baby. The bus driver says You
+    that's the ugliest baby I've ever seen. The woman walks to the wheel of the bus
+    and sits down, fuming. She says to a man next to her, The driver just insulted
+    me. The man says, You go up there and tell him off. Go on, I hold your monkey
+    for you.
+  ghost_count: 0
