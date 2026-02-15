@@ -260,6 +260,10 @@ pytestmark = pytest.mark.skipif("not has_gpu()", reason="GPU not available")
 #
 # -s: shows stdout/stderr (required for real STT output)
 # -m slow: runs only slow tests (real STT integration tests)
+#
+# Run single file:
+#   uv run pytest -s -m slow -k "hello_hello"
+#   uv run pytest -s -m slow -k "joke"
 
 
 @pytest.mark.slow
@@ -285,6 +289,76 @@ class TestRealSTTIntegration:
         return {item["id"]: item for item in data["corpus"]}
 
     WER_THRESHOLD = 0.10
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize(
+        "corpus_entry",
+        ["multiple_words", "unicode_speech", "fast_speech", "hello_hello", "joke"],
+        indirect=False,
+    )
+    def test_single_file_transcription(self, audio_pipeline, corpus_entry):
+        """Test a single audio file from the corpus."""
+        import yaml
+        import soundfile as sf
+        import re
+        from jiwer import wer, cer
+
+        corpus_path = Path(__file__).parent / "fixtures" / "corpus.yaml"
+        with open(corpus_path) as f:
+            data = yaml.safe_load(f)
+        corpus = {item["id"]: item for item in data["corpus"]}
+
+        expected = corpus[corpus_entry]
+
+        print(f"\n{'=' * 70}")
+        print(f"[TEST] Single File: {corpus_entry}")
+        print(f"{'=' * 70}")
+
+        audio_path = Path(__file__).parent / "fixtures" / "audio" / expected["filename"]
+        audio_info = sf.info(audio_path)
+        duration = audio_info.duration
+
+        result = audio_pipeline.run_with_real_stt(expected["filename"], warmup=False)
+
+        actual = result.transcript.strip()
+        expected_transcript = expected.get("actual_transcript", "").strip()
+
+        def normalize_punctuation(text):
+            text = re.sub(r"[,\.]", "", text)
+            text = re.sub(r"\s+", " ", text)
+            return text.strip().lower()
+
+        actual_normalized = normalize_punctuation(actual)
+        expected_normalized = normalize_punctuation(expected_transcript)
+
+        word_error = wer(expected_normalized, actual_normalized)
+        char_error = (
+            cer(expected_normalized, actual_normalized) if expected_normalized else 0
+        )
+        passed = word_error <= self.WER_THRESHOLD
+
+        print(f"[TEST] 📁 {expected['filename']} ({duration:.2f}s)")
+        print(f'[TEST]   Expected: "{expected_transcript}"')
+        print(f'[TEST]   Actual:   "{actual}"')
+        print(
+            f"[TEST]   WER: {word_error * 100:6.2f}%  |  CER: {char_error * 100:6.2f}%  |  {'PASS' if passed else 'FAIL'}"
+        )
+
+        if result.ghost_timeline:
+            print(f"[TEST]   Ghosts: {len(result.ghost_timeline)} updates")
+            if result.voice_to_first_ghost_ms:
+                print(f"[TEST]   First ghost: {result.voice_to_first_ghost_ms:.0f}ms")
+            print(f"[TEST]   Ghost Timeline:")
+            for i, ghost in enumerate(result.ghost_timeline):
+                print(
+                    f'[TEST]     {i + 1:3d}. {ghost.timestamp_ms:6.0f}ms: "{ghost.text}"'
+                )
+        else:
+            print(f"[TEST]   Ghosts: 0 updates")
+
+        assert passed, (
+            f"WER {word_error * 100:.2f}% exceeds threshold {self.WER_THRESHOLD * 100:.1f}%"
+        )
 
     def test_real_transcription_matches_corpus(self, audio_pipeline, corpus):
         """Test that real STT output matches expected transcripts using WER threshold."""
@@ -332,18 +406,11 @@ class TestRealSTTIntegration:
 
             word_error = wer(expected_normalized, actual_normalized)
             char_error = (
-                cer(expected_normalized, expected_normalized)
+                cer(expected_normalized, actual_normalized)
                 if expected_normalized
                 else 0
             )
             passed = word_error <= WER_THRESHOLD
-
-            if not expected_normalized:
-                char_error = (
-                    cer(actual_normalized, expected_normalized)
-                    if expected_normalized
-                    else 0
-                )
 
             results.append(
                 {

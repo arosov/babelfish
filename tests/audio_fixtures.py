@@ -224,9 +224,9 @@ class AudioPipelineFixture:
         pipeline.reconfigure(config.pipeline)
         pipeline.request_mode(is_idle=False, force=True)
 
-        self._start_time = 0.0
-
         import time
+
+        self._start_time = time.perf_counter()
 
         num_chunks = len(audio_data) // hop_size
         for i in range(num_chunks):
@@ -257,8 +257,6 @@ class AudioPipelineFixture:
             )
             silence_chunk = np.zeros(hop_size, dtype=np.float32)
             pipeline.process_chunk(silence_chunk, now_ms)
-
-        import time
 
         for _ in range(50):
             if (
