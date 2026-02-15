@@ -53,6 +53,7 @@ class InputSimulator:
         self._direct = DirectStrategy()
         self._last_raw_ghost = ""
         self._clean_regex = re.compile(r"[^a-zA-Z0-9]")
+        self._after_finalize = False
 
     @property
     def last_ghost_length(self) -> int:
@@ -77,6 +78,15 @@ class InputSimulator:
         """
         Updates the ghost text incrementally with O(1) complexity.
         """
+        # If we're starting fresh after finalize, silently clear any stale state
+        # without sending backspaces. The user may have edited/moved the cursor
+        # after the last utterance ended.
+        if self._after_finalize and self.displayed_graphemes:
+            self.displayed_graphemes = []
+            self._accumulated_text = ""
+            self.words = []
+            self.graphemes = []
+            self._after_finalize = False
         if not ghost_text:
             self._clear_previous()
             self.words = []
@@ -298,6 +308,10 @@ class InputSimulator:
             self.type_text(text, strategy)
             self.last_final_char = text[-1]
 
+        # Mark that finalize completed - next ghost update should start fresh
+        # without backspacing, since user may have edited/moved cursor
+        self._after_finalize = True
+
     def reset(self):
         """Resets the state without backspacing."""
         self.words = []
@@ -306,6 +320,7 @@ class InputSimulator:
         self._last_raw_ghost = ""
         self._accumulated_text = ""
         self.pre_finalize_text = ""
+        self._after_finalize = False
 
     def _clear_previous(self):
         """Sends backspaces for the length of the last typed ghost."""

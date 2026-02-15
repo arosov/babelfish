@@ -14,6 +14,10 @@ class InputStrategy(abc.ABC):
     def type(self, text: str, keyboard: Controller):
         pass
 
+    @abc.abstractmethod
+    def backspace(self, count: int, keyboard: Controller):
+        pass
+
 
 class DirectStrategy(InputStrategy):
     """Simulates individual keystrokes using pynput."""
@@ -29,6 +33,20 @@ class DirectStrategy(InputStrategy):
             )
             # Fallback to ClipboardStrategy
             ClipboardStrategy().type(text, keyboard)
+
+    def backspace(self, count: int, keyboard: Controller):
+        if count <= 0:
+            return
+        try:
+            for _ in range(count):
+                keyboard.press(Key.backspace)
+                keyboard.release(Key.backspace)
+                # User requested 2ms delay (fast)
+                time.sleep(0.002)
+            # Minimal settle time to ensure application processes backspaces
+            time.sleep(0.01)
+        except Exception as e:
+            logger.error(f"DirectStrategy backspace failed: {e}")
 
 
 class ClipboardStrategy(InputStrategy):
@@ -53,6 +71,10 @@ class ClipboardStrategy(InputStrategy):
             with keyboard.pressed(Key.ctrl):
                 keyboard.press("v")
                 keyboard.release("v")
+
+    def backspace(self, count: int, keyboard: Controller):
+        # Clipboard cannot backspace, fallback to Direct
+        DirectStrategy().backspace(count, keyboard)
 
 
 class NativeStrategy(InputStrategy):
@@ -112,6 +134,10 @@ class NativeStrategy(InputStrategy):
         else:
             DirectStrategy().type(text, keyboard)
 
+    def backspace(self, count: int, keyboard: Controller):
+        # Fallback to DirectStrategy for robust backspacing
+        DirectStrategy().backspace(count, keyboard)
+
 
 class HybridStrategy(InputStrategy):
     """Uses Direct Input for ASCII, Clipboard for others."""
@@ -132,3 +158,6 @@ class HybridStrategy(InputStrategy):
             self.direct.type(text, keyboard)
         else:
             self.clipboard.type(text, keyboard)
+
+    def backspace(self, count: int, keyboard: Controller):
+        self.direct.backspace(count, keyboard)
