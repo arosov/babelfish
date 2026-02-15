@@ -1,50 +1,70 @@
 import unittest
 from unittest.mock import MagicMock
 from babelfish_stt.server import BabelfishServer
-from babelfish_stt.config import BabelfishConfig, HardwareConfig
+from babelfish_stt.config import BabelfishConfig, HardwareConfig, ServerConfig
 
 
 class TestSmartRestart(unittest.TestCase):
     def test_reconfigure_no_restart_same_device(self):
         config_manager = MagicMock()
         config_manager.config = BabelfishConfig(
-            hardware=HardwareConfig(device="cuda:0")
+            hardware=HardwareConfig(device="cuda:0", auto_detect=False)
         )
         server = BabelfishServer(config_manager)
 
-        # Simulate active device being cuda:0 (detected during engine init)
         server.initial_config.hardware.active_device = "cuda:0"
 
-        # New config with same explicit device
-        new_config = BabelfishConfig(hardware=HardwareConfig(device="cuda:0"))
+        new_config = BabelfishConfig(
+            hardware=HardwareConfig(device="cuda:0", auto_detect=False)
+        )
         server.reconfigure(new_config)
 
         self.assertFalse(server.restart_required)
 
-    def test_reconfigure_no_restart_auto_to_active(self):
+    def test_reconfigure_restart_when_disabling_auto_detect(self):
         config_manager = MagicMock()
-        config_manager.config = BabelfishConfig(hardware=HardwareConfig(device="auto"))
+        config_manager.config = BabelfishConfig(
+            hardware=HardwareConfig(device="auto", auto_detect=True)
+        )
         server = BabelfishServer(config_manager)
 
-        # Simulate engine resolved 'auto' to 'cuda:0'
         server.initial_config.hardware.active_device = "cuda:0"
 
-        # User switches from 'auto' to explicit 'cuda:0'
-        new_config = BabelfishConfig(hardware=HardwareConfig(device="cuda:0"))
+        new_config = BabelfishConfig(
+            hardware=HardwareConfig(device="auto", auto_detect=False)
+        )
         server.reconfigure(new_config)
 
-        self.assertFalse(server.restart_required)
+        self.assertTrue(server.restart_required)
 
     def test_reconfigure_restart_on_actual_change(self):
         config_manager = MagicMock()
         config_manager.config = BabelfishConfig(
-            hardware=HardwareConfig(device="cuda:0")
+            hardware=HardwareConfig(device="cuda:0", auto_detect=False)
         )
         server = BabelfishServer(config_manager)
         server.initial_config.hardware.active_device = "cuda:0"
 
-        # Change to cpu
-        new_config = BabelfishConfig(hardware=HardwareConfig(device="cpu"))
+        new_config = BabelfishConfig(
+            hardware=HardwareConfig(device="cpu", auto_detect=False)
+        )
+        server.reconfigure(new_config)
+
+        self.assertTrue(server.restart_required)
+
+    def test_reconfigure_restart_on_server_change(self):
+        config_manager = MagicMock()
+        config_manager.config = BabelfishConfig(
+            hardware=HardwareConfig(device="cpu", auto_detect=False),
+            server=ServerConfig(host="127.0.0.1", port=8123),
+        )
+        server = BabelfishServer(config_manager)
+        server.initial_config.hardware.active_device = "cpu"
+
+        new_config = BabelfishConfig(
+            hardware=HardwareConfig(device="cpu", auto_detect=False),
+            server=ServerConfig(host="0.0.0.0", port=8123),
+        )
         server.reconfigure(new_config)
 
         self.assertTrue(server.restart_required)

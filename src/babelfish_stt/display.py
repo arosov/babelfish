@@ -70,10 +70,17 @@ class ServerDisplay:
 
     def __init__(self, server):
         self.server = server
+        self._last_ghost = ""
+        self._last_final = ""
 
     def update(self, text: str = "", refined: str = "", ghost: str = ""):
         if not text and not refined and not ghost:
             return
+
+        # Deduplication: skip if ghost text is identical to last sent
+        if ghost == self._last_ghost and not refined:
+            return
+        self._last_ghost = ghost
 
         msg = {
             "type": "transcription",
@@ -90,6 +97,11 @@ class ServerDisplay:
         if not text:
             return
 
+        # Deduplication: skip if final text is identical to last sent
+        if text == self._last_final:
+            return
+        self._last_final = text
+
         msg = {"type": "transcription", "text": text, "final": True}
         asyncio.run_coroutine_threadsafe(
             self.server.broadcast_message(msg), self.server._loop
@@ -100,6 +112,8 @@ class ServerDisplay:
         asyncio.run_coroutine_threadsafe(
             self.server.broadcast_message(msg), self.server._loop
         )
+        self._last_ghost = ""
+        self._last_final = ""
 
 
 class MultiDisplay:

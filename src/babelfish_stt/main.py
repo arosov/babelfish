@@ -123,6 +123,7 @@ def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
 
                     # Ignore stop word for 4s to avoid immediate re-triggering with same audio
                     stop_cooldown_until = now + 4.0
+                    continue  # Skip normal idle processing to prevent duplicate chunk handling
                 else:
                     # Update pre-roll while idle
                     pipeline.process_chunk(chunk, now_ms, is_speech=is_speech)

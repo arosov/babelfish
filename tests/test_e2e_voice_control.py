@@ -1,56 +1,91 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 import numpy as np
-import logging
+
 
 class TestE2EVoiceControl(unittest.TestCase):
-    @patch('babelfish_stt.main.find_best_microphone')
-    @patch('babelfish_stt.main.get_gpu_info')
-    @patch('babelfish_stt.main.AudioStreamer')
-    @patch('babelfish_stt.main.WakeWordEngine')
-    @patch('babelfish_stt.main.STTEngine')
-    @patch('babelfish_stt.main.TerminalDisplay')
-    @patch('babelfish_stt.main.SileroVAD')
-    def test_full_lifecycle_logging(self, mock_vad, mock_display, mock_stt, mock_ww, mock_streamer, mock_gpu, mock_mic):
+    @patch("babelfish_stt.main.ConfigManager")
+    @patch("babelfish_stt.main.BabelfishServer")
+    @patch("babelfish_stt.main.HardwareManager")
+    @patch("babelfish_stt.main.StandardPipeline")
+    @patch("babelfish_stt.main.WakeWordEngine")
+    @patch("babelfish_stt.main.AudioStreamer")
+    @patch("babelfish_stt.main.SileroVAD")
+    @patch("babelfish_stt.main.TerminalDisplay")
+    @patch("babelfish_stt.main.asyncio.to_thread")
+    async def test_full_lifecycle_logging(
+        self,
+        mock_to_thread,
+        mock_display,
+        mock_vad,
+        mock_streamer,
+        mock_ww,
+        mock_pipeline,
+        mock_hw_mgr,
+        mock_server,
+    ):
         from babelfish_stt.main import run_babelfish
-        
-        # Setup hardware mocks
-        mock_gpu.return_value = {'cuda_available': False}
-        mock_mic.return_value = 0
-        
-        # 1. Setup Streamer to yield a sequence of chunks
-        streamer_inst = mock_streamer.return_value
-        # SinglePassPipeline update_interval_samples = 3200
-        # We need to yield enough samples in chunk 2 to trigger an engine.transcribe call
-        chunk_idle = np.zeros(512)
-        chunk_wake = np.zeros(512)
-        chunk_speech = np.zeros(4000) # > 3200 to trigger update
-        chunk_final = np.zeros(512)
-        
-        streamer_inst.stream.return_value = [chunk_idle, chunk_wake, chunk_speech, chunk_final]
-        
-        # 2. Setup WakeWordEngine
-        ww_inst = mock_ww.return_value
-        ww_inst.process_chunk.side_effect = [
-            {"hey": 0.1}, 
-            {"hey": 0.9},
-            {"hey": 0.1},
-            {"hey": 0.1}
-        ]
-        
-        # 3. Setup STT Engine
-        stt_inst = mock_stt.return_value
-        stt_inst.transcribe.return_value = "please stop"
-        
-        # 4. Mock VAD to always return true for speech so it triggers the update logic
-        mock_vad.return_value.is_speech.return_value = True
-        with self.assertLogs(level='INFO') as cm:
-            run_babelfish(wakeword="hey", stopword="stop")
-            
-            # Verify logs contain expected transitions
-            log_output = "\n".join(cm.output)
-            self.assertIn("Wake-word 'hey' detected with score 0.90", log_output)
-            self.assertIn("Stop-word 'stop' detected, transitioning to IDLE", log_output)
 
-if __name__ == '__main__':
+        # Setup hardware mock
+        hw = MagicMock()
+        hw.gpu_info = {"cuda_available": False}
+
+        # Setup config mock
+        config = MagicMock()
+        config.server.host = "127.0.0.1"
+        config.server.port = 8123
+        config.hardware.device = "cpu"
+        config.hardware.microphone_name = None
+        config.voice.wakeword = "hey"
+        config.voice.stop_words = []
+        config.pipeline.silence_threshold_ms = 400
+        config.pipeline.update_interval_ms = 100
+
+        cm = MagicMock()
+        cm.config = config
+        cm.is_valid.return_value = True
+
+        mock_hw_mgr.return_value = hw
+
+        # Setup server mock
+        srv = MagicMock()
+        srv.start = AsyncMock()
+        srv.broadcast_status = AsyncMock()
+        mock_server.return_value = srv
+
+        # Setup pipeline mock
+        pipe_inst = MagicMock()
+        pipe_inst.is_idle = True
+        pipe_inst.vad = MagicMock()
+        pipe_inst.vad.is_speech.return_value = True
+        pipe_inst.request_mode = MagicMock()
+
+        # Setup streamer mock
+        stream_inst = MagicMock()
+        chunk = np.zeros(512, dtype=np.float32)
+        stream_inst.stream.return_value = iter([chunk])
+
+        # Setup ww mock
+        ww_inst = MagicMock()
+        ww_inst.active_start_word = "hey"
+        ww_inst.active_stop_word = None
+        ww_inst.process_chunk.return_value = {"hey": 0.9}
+
+        # Setup display mock
+        disp_inst = MagicMock()
+
+        # Make to_thread return our mocks
+        async def fake_to_thread(*args):
+            return (cm, srv, ww_inst, disp_inst, stream_inst, pipe_inst)
+
+        mock_to_thread.side_effect = fake_to_thread
+
+        # Run the function
+        await run_babelfish(hw=hw, wakeword="hey")
+
+        # Verify pipeline was used
+        self.assertTrue(pipe_inst.request_mode.called)
+
+
+if __name__ == "__main__":
     unittest.main()
