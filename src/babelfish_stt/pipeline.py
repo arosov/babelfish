@@ -272,7 +272,8 @@ class StandardPipeline(Pipeline):
         # Normal mode: accumulate audio and transcribe
         if is_speech:
             with self._lock:
-                if not self.is_speaking:
+                speech_just_started = not self.is_speaking
+                if speech_just_started:
                     self._notify_state_change(True)
                     self.last_update_time = now_ms
 
@@ -286,6 +287,22 @@ class StandardPipeline(Pipeline):
                 self.active_buffer.append(chunk)
                 self._buffer_size += len(chunk)
                 self.last_speech_time = now_ms
+
+                # Check for stop word immediately when speech starts (for responsive stopping)
+                if (
+                    speech_just_started
+                    and self.stop_detector
+                    and self._buffer_size >= 16000
+                ):  # At least 1 second
+                    # Run quick blocking transcription to check for stop words
+                    with self._lock:
+                        full_audio = np.concatenate(self.active_buffer)
+                    text = self.engine.transcribe(
+                        full_audio, padding_s=self.perf.min_padding_s
+                    )
+                    if text and self.stop_detector.detect(text):
+                        self._handle_stop()
+                        return True
 
                 # SAFETY: Force finalize if buffer gets too large (> 60s) to prevent OOM
                 # 60s * 16000 samples = 960,000 samples
@@ -333,6 +350,7 @@ class StandardPipeline(Pipeline):
                                     return False
                             if text:
                                 self.display.update(ghost=text)
+                                # Check stop word on EVERY ghost result for responsive stopping
                                 if self.stop_detector and self.stop_detector.detect(
                                     text
                                 ):
