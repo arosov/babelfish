@@ -163,6 +163,10 @@ class InputSimulator:
                 # Track accumulated text
                 self._accumulated_text += to_add
 
+            # Reset committed count since we're modifying existing content (backspace+retype),
+            # not appending new content without backspacing
+            self.committed_grapheme_count = 0
+
         # 7. Update State
         self.words = new_words
         self.graphemes = new_graphemes
