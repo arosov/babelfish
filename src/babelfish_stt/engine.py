@@ -199,11 +199,6 @@ class STTEngine(Reconfigurable):
         """
         logger.info("⏱️ Starting hardware self-calibration...")
 
-        # Warmup
-        warmup_audio = np.zeros(16000 * 2, dtype=np.float32)  # 2s
-        for _ in range(3):
-            self.transcribe(warmup_audio, padding_s=2.0)
-
         import time
 
         # Test 1: Ghost pass (2.5s window)
