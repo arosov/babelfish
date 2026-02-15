@@ -3,6 +3,7 @@ import unicodedata
 import grapheme
 import time
 import re
+import sys
 import difflib
 from rapidfuzz import fuzz
 from pynput.keyboard import Controller, Key
@@ -128,6 +129,16 @@ class InputSimulator:
         # If there's NO overlap (common_len == 0), we just APPEND without backspacing
         # This handles STT sliding window case
         if common_len == 0:
+            if self.displayed_graphemes:
+                # If we have displayed text but 0 overlap, it's a replacement/correction
+                # that failed to stitch. We MUST clear the old text first.
+                total_to_clear = len(self.displayed_graphemes)
+                self._send_backspaces(
+                    total_to_clear,
+                    strategy=StrategyEnum.DIRECT,
+                    update_accumulated=True,
+                )
+
             # No overlap - APPEND without backspacing
             if new_graphemes:
                 to_add = "".join([str(g) for g in new_graphemes])
@@ -138,17 +149,14 @@ class InputSimulator:
             # Has overlap - but we need to be careful not to destroy content we appended earlier
             # Only backspace the EXACT suffix that differs
             # Compute what's currently displayed
-            current_displayed = "".join(self.displayed_graphemes)
-
             # Find where new ghost diverges from displayed
-            # We only want to backspace the part that the new ghost doesn't have
-            new_text_str = "".join(new_graphemes)
-
-            # Find the longest suffix of displayed that matches a prefix of new
-            # but don't backspace more than the length difference would suggest
             to_remove = len(self.displayed_graphemes) - common_len
             if to_remove > 0:
-                self._send_backspaces(to_remove, update_accumulated=True)
+                # We always use DIRECT strategy for intermediate ghost backspacing
+                # to maintain the highest responsiveness and avoid clipboard interference
+                self._send_backspaces(
+                    to_remove, strategy=StrategyEnum.DIRECT, update_accumulated=True
+                )
 
             # Type only the NEW suffix (beyond the common prefix)
             to_add_list = new_graphemes[common_len:]
@@ -172,6 +180,24 @@ class InputSimulator:
         """
         if not base_words:
             return ext_words
+
+        # Pre-process ext_words to collapse consecutive duplicate words
+        # This prevents STT repetitions from causing stitching issues
+        ext_words_deduped = []
+        prev_word = None
+        for w in ext_words:
+            clean_w = self._clean_regex.sub("", w).lower()
+            prev_clean = (
+                self._clean_regex.sub("", prev_word).lower() if prev_word else None
+            )
+            if clean_w and clean_w == prev_clean:
+                continue
+            ext_words_deduped.append(w)
+            prev_word = w
+
+        ext_words = ext_words_deduped
+        if not ext_words:
+            return base_words
 
         tail_size = 30
         base_tail = base_words[-tail_size:]
@@ -227,19 +253,37 @@ class InputSimulator:
     def finalize(self, text: str, strategy: StrategyEnum = StrategyEnum.DIRECT):
         """Finalizes the transcription by clearing any ghost text."""
         # Capture accumulated text before clearing (for testing/verification)
-        self.pre_finalize_text = "".join(self.displayed_graphemes)
+        self.pre_finalize_text = "".join([str(g) for g in self.displayed_graphemes])
+
+        # State verification: check if displayed_graphemes matches accumulated text
+        # If they don't match, we may have state drift and should use full clear
+        expected_accumulated = "".join([str(g) for g in self.displayed_graphemes])
+        state_mismatch = self._accumulated_text != expected_accumulated
 
         # Clear whatever is currently displayed on screen
         total_to_clear = len(self.displayed_graphemes)
         if total_to_clear:
-            self._send_backspaces(total_to_clear)
+            # If state mismatch detected, log warning
+            # This indicates ghost updates may have drifted from actual screen
+            if state_mismatch:
+                logger.warning(
+                    f"State mismatch in finalize: accumulated='{self._accumulated_text[:50]}...' "
+                    f"vs displayed={len(self.displayed_graphemes)} graphemes."
+                )
+            # We use the configured strategy for finalization backspacing
+            # to be consistent with the configured injection method
+            self._send_backspaces(total_to_clear, strategy=strategy)
 
         # Safety delay to ensure the target application has processed backspaces
         # before we paste the final text. Prevents "Comment comment" repetitions.
-        time.sleep(0.05)
+        # This is now also handled inside the strategy's backspace settle time,
+        # but we keep a small extra buffer here just in case.
+        time.sleep(0.01)
 
         self.words = []
         self.graphemes = []
+        self.displayed_graphemes = []
+        self._last_raw_ghost = ""
         self._accumulated_text = ""
 
         if text:
@@ -265,22 +309,33 @@ class InputSimulator:
 
     def _clear_previous(self):
         """Sends backspaces for the length of the last typed ghost."""
-        if self.graphemes:
-            self._send_backspaces(len(self.graphemes))
+        if self.displayed_graphemes:
+            self._send_backspaces(len(self.displayed_graphemes))
             self.graphemes = []
+            self.displayed_graphemes = []
 
-    def _send_backspaces(self, count: int, update_accumulated: bool = False):
-        """Sends N backspaces with a small delay between them."""
+    def _send_backspaces(
+        self,
+        count: int,
+        strategy: StrategyEnum = StrategyEnum.DIRECT,
+        update_accumulated: bool = False,
+    ):
+        """Sends N backspaces using the selected strategy."""
         if count <= 0:
             return
         try:
-            for _ in range(count):
-                self.keyboard.press(Key.backspace)
-                self.keyboard.release(Key.backspace)
-                # Track accumulated text if requested
-                if update_accumulated and self._accumulated_text:
-                    self._accumulated_text = self._accumulated_text[:-1]
-                # Small delay to let the target application process the key event
-                time.sleep(0.002)
+            impl = self._strategies.get(strategy, self._direct)
+            impl.backspace(count, self.keyboard)
+
+            # Update accumulated text tracking
+            if update_accumulated and self._accumulated_text:
+                # We remove the last 'count' graphemes
+                # Note: this is a simple approximation as graphemes might be multiple chars
+                # but in most cases backspace removes one 'visual' character.
+                self._accumulated_text = (
+                    self._accumulated_text[:-count]
+                    if len(self._accumulated_text) >= count
+                    else ""
+                )
         except Exception as e:
-            logger.error(f"Failed to send backspaces: {e}")
+            logger.error(f"Failed to send backspaces with strategy {strategy}: {e}")
