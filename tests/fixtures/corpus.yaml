@@ -78,3 +78,12 @@ corpus:
     me. The man says, You go up there and tell him off. Go on, I hold your monkey
     for you.
   ghost_count: 0
+- id: multi_utterance
+  filename: multi_utterance.wav
+  duration_s: 7.84
+  language: en
+  transcript: i used to hate facial hair but then it grew on me
+  expected_ghosts: []
+  notes: Multi-utterance joke test - 2 utterances with ~2s pause
+  actual_transcript: I used to hate facial hair. But then it grew on me.
+  ghost_count: 16

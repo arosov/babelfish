@@ -266,6 +266,46 @@ pytestmark = pytest.mark.skipif("not has_gpu()", reason="GPU not available")
 #   uv run pytest -s -m slow -k "joke"
 
 
+@pytest.fixture(scope="session")
+def shared_stt_engine():
+    """A session-scoped STT engine to avoid re-initializing and hitting GPU memory limits."""
+    import time
+    from babelfish_stt.config import (
+        BabelfishConfig,
+        HardwareConfig,
+        PipelineConfig,
+        PerformanceProfile,
+        SystemInputConfig,
+        InputStrategy,
+    )
+    from babelfish_stt.engine import STTEngine
+
+    print(f"\n[FIXTURE] Loading STT Engine...")
+    start_time = time.perf_counter()
+    config = BabelfishConfig(
+        hardware=HardwareConfig(device="auto"),
+        pipeline=PipelineConfig(
+            silence_threshold_ms=400,
+            update_interval_ms=100,
+            performance=PerformanceProfile(
+                ghost_throttle_ms=100,
+                ghost_window_s=3.0,
+                min_padding_s=2.0,
+                tier="ultra",
+            ),
+        ),
+        system_input=SystemInputConfig(
+            enabled=True,
+            type_ghost=True,
+            strategy=InputStrategy.DIRECT,
+        ),
+    )
+    engine = STTEngine(config)
+    load_duration = (time.perf_counter() - start_time) * 1000
+    print(f"[FIXTURE] STT Engine loaded in {load_duration:.2f}ms")
+    return engine
+
+
 @pytest.mark.slow
 class TestRealSTTIntegration:
     """Integration tests with real STT engine. Requires GPU.
@@ -274,10 +314,12 @@ class TestRealSTTIntegration:
     """
 
     @pytest.fixture
-    def audio_pipeline(self):
+    def audio_pipeline(self, shared_stt_engine):
         from tests.audio_fixtures import AudioPipelineFixture
 
-        return AudioPipelineFixture()
+        fixture = AudioPipelineFixture()
+        fixture._shared_engine = shared_stt_engine
+        return fixture
 
     @pytest.fixture
     def corpus(self):
@@ -293,7 +335,14 @@ class TestRealSTTIntegration:
     @pytest.mark.slow
     @pytest.mark.parametrize(
         "corpus_entry",
-        ["multiple_words", "unicode_speech", "fast_speech", "hello_hello", "joke"],
+        [
+            "multiple_words",
+            "unicode_speech",
+            "fast_speech",
+            "hello_hello",
+            "joke",
+            "multi_utterance",
+        ],
         indirect=False,
     )
     def test_single_file_transcription(self, audio_pipeline, corpus_entry):
@@ -301,6 +350,7 @@ class TestRealSTTIntegration:
         import yaml
         import soundfile as sf
         import re
+        import time
         from jiwer import wer, cer
 
         corpus_path = Path(__file__).parent / "fixtures" / "corpus.yaml"
@@ -318,7 +368,9 @@ class TestRealSTTIntegration:
         audio_info = sf.info(audio_path)
         duration = audio_info.duration
 
+        test_start = time.perf_counter()
         result = audio_pipeline.run_with_real_stt(expected["filename"], warmup=False)
+        test_elapsed = (time.perf_counter() - test_start) * 1000
 
         actual = result.transcript.strip()
         expected_transcript = expected.get("actual_transcript", "").strip()
@@ -338,6 +390,7 @@ class TestRealSTTIntegration:
         passed = word_error <= self.WER_THRESHOLD
 
         print(f"[TEST] 📁 {expected['filename']} ({duration:.2f}s)")
+        print(f"[TEST]   Elapsed:  {test_elapsed:.0f}ms")
         print(f'[TEST]   Expected: "{expected_transcript}"')
         print(f'[TEST]   Actual:   "{actual}"')
         print(
@@ -350,8 +403,11 @@ class TestRealSTTIntegration:
                 print(f"[TEST]   First ghost: {result.voice_to_first_ghost_ms:.0f}ms")
             print(f"[TEST]   Ghost Timeline:")
             for i, ghost in enumerate(result.ghost_timeline):
+                duration_str = (
+                    f" ({ghost.duration_ms:.0f}ms)" if ghost.duration_ms else ""
+                )
                 print(
-                    f'[TEST]     {i + 1:3d}. {ghost.timestamp_ms:6.0f}ms: "{ghost.text}"'
+                    f'[TEST]     {i + 1:3d}. {ghost.timestamp_ms:6.0f}ms{duration_str}: "{ghost.text}"'
                 )
         else:
             print(f"[TEST]   Ghosts: 0 updates")
@@ -359,7 +415,11 @@ class TestRealSTTIntegration:
         if result.final_timeline:
             print(f"[TEST]   Final Passes: {len(result.final_timeline)} updates")
             for i, final in enumerate(result.final_timeline):
-                print(f'[TEST]     Final {i + 1}: "{final}"')
+                print(f'[TEST]     Final {i + 1}: "{final.text}"')
+                print(f"[TEST]       Duration: {final.duration_ms:.0f}ms")
+                print(
+                    f"[TEST]       Delay from audio end: {final.delay_from_audio_end_ms:.0f}ms"
+                )
         else:
             print(f"[TEST]   Final Passes: 0 (using transcript)")
 
@@ -430,6 +490,7 @@ class TestRealSTTIntegration:
                     "passed": passed,
                     "ghost_count": len(result.ghost_timeline),
                     "voice_to_first": result.voice_to_first_ghost_ms,
+                    "final_timeline": result.final_timeline,
                 }
             )
 
@@ -452,8 +513,11 @@ class TestRealSTTIntegration:
             if len(result.ghost_timeline) > 0:
                 print(f"[TEST]   Ghost Timeline:")
                 for i, ghost in enumerate(result.ghost_timeline):
+                    duration_str = (
+                        f" ({ghost.duration_ms:.0f}ms)" if ghost.duration_ms else ""
+                    )
                     print(
-                        f'[TEST]     {i + 1:2d}. {ghost.timestamp_ms:6.0f}ms: "{ghost.text}"'
+                        f'[TEST]     {i + 1:2d}. {ghost.timestamp_ms:6.0f}ms{duration_str}: "{ghost.text}"'
                     )
                 print()
 
@@ -469,10 +533,25 @@ class TestRealSTTIntegration:
         passed_count = sum(1 for r in results if r["passed"])
         total_ghosts = sum(r["ghost_count"] for r in results)
         avg_wer = sum(r["wer"] * 100 for r in results) / len(results)
+
+        total_final_duration = 0
+        total_final_delay = 0
+        final_count = 0
+        for r in results:
+            for f in r.get("final_timeline", []):
+                total_final_duration += f.duration_ms
+                total_final_delay += f.delay_from_audio_end_ms
+                final_count += 1
+
         print(f"[TEST]   Files tested: {len(results)}")
         print(f"[TEST]   Passed: {passed_count}/{len(results)}")
         print(f"[TEST]   Average WER: {avg_wer:.2f}%")
         print(f"[TEST]   Total ghost updates: {total_ghosts}")
+        if final_count > 0:
+            print(
+                f"[TEST]   Avg Final Duration: {total_final_duration / final_count:.0f}ms"
+            )
+            print(f"[TEST]   Avg Final Delay: {total_final_delay / final_count:.0f}ms")
         print(f"{'=' * 70}\n")
 
         assert all_passed, f"WER threshold exceeded for one or more files"
@@ -520,12 +599,19 @@ class TestRealSTTIntegration:
                 )
 
             print(f'[TEST]   Final Transcript: "{result.transcript}"')
+            if result.final_timeline:
+                final = result.final_timeline[0]
+                print(f"[TEST]   Final Duration: {final.duration_ms:.0f}ms")
+                print(f"[TEST]   Final Delay: {final.delay_from_audio_end_ms:.0f}ms")
 
             print(f"\n[TEST]   Ghost Timeline ({len(result.ghost_timeline)} updates):")
             if len(result.ghost_timeline) > 0:
                 for i, ghost in enumerate(result.ghost_timeline):
+                    duration_str = (
+                        f" | {ghost.duration_ms:4.0f}ms" if ghost.duration_ms else ""
+                    )
                     print(
-                        f'[TEST]     {i + 1:2d}. {ghost.timestamp_ms:6.0f}ms | {ghost.grapheme_length:2d} graphemes | "{ghost.text}"'
+                        f'[TEST]     {i + 1:2d}. {ghost.timestamp_ms:6.0f}ms{duration_str} | {ghost.grapheme_length:2d} graphemes | "{ghost.text}"'
                     )
             else:
                 print(f"[TEST]     (no ghost updates captured)")

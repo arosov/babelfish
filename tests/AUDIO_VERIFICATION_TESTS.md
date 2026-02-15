@@ -53,6 +53,7 @@ Located in `tests/fixtures/audio/`:
 | `fast_speech.wav` | 2.24s | Rapid sequential words - tests throttling |
 | `hello_hello.wav` | 2.93s | Regression test for warm-up behavior |
 | `joke.wav` | 18.57s | Long-form multi-sentence test |
+| `multi_utterance.wav` | 7.84s | Multi-utterance joke test |
 
 All files are:
 - Format: WAV
@@ -131,6 +132,7 @@ Available test identifiers:
 - `test_single_file_transcription[fast_speech]`
 - `test_single_file_transcription[hello_hello]`
 - `test_single_file_transcription[joke]`
+- `test_single_file_transcription[multi_utterance]`
 
 ---
 
