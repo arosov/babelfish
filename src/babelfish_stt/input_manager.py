@@ -36,11 +36,8 @@ class InputSimulator:
         self.words = []  # List of strings (ghost state for stitching)
         self.graphemes = []  # List of individual graphemes (ghost state)
 
-        # Track what's actually displayed on screen (for accumulation)
+        # Track what's actually displayed on screen
         self.displayed_graphemes = []  # List of individual graphemes
-
-        # Track "committed" text - content from non-overlapping windows that should persist
-        self.committed_grapheme_count = 0
 
         # Track accumulated text continuously (for testing/verification)
         self._accumulated_text = ""
@@ -137,8 +134,6 @@ class InputSimulator:
                 self.type_text(to_add, StrategyEnum.DIRECT)
                 # Track accumulated text
                 self._accumulated_text += to_add
-                # Track these graphemes as committed (they came from a non-overlapping window)
-                self.committed_grapheme_count = len(new_graphemes)
         else:
             # Has overlap - but we need to be careful not to destroy content we appended earlier
             # Only backspace the EXACT suffix that differs
@@ -162,10 +157,6 @@ class InputSimulator:
                 self.type_text(to_add, StrategyEnum.DIRECT)
                 # Track accumulated text
                 self._accumulated_text += to_add
-
-            # Reset committed count since we're modifying existing content (backspace+retype),
-            # not appending new content without backspacing
-            self.committed_grapheme_count = 0
 
         # 7. Update State
         self.words = new_words
@@ -238,8 +229,8 @@ class InputSimulator:
         # Capture accumulated text before clearing (for testing/verification)
         self.pre_finalize_text = "".join(self.displayed_graphemes)
 
-        # Clear both committed and current ghost text
-        total_to_clear = self.committed_grapheme_count + len(self.graphemes)
+        # Clear whatever is currently displayed on screen
+        total_to_clear = len(self.displayed_graphemes)
         if total_to_clear:
             self._send_backspaces(total_to_clear)
 
@@ -249,7 +240,7 @@ class InputSimulator:
 
         self.words = []
         self.graphemes = []
-        self.committed_grapheme_count = 0
+        self._accumulated_text = ""
 
         if text:
             text = unicodedata.normalize("NFC", text)
@@ -268,7 +259,6 @@ class InputSimulator:
         self.words = []
         self.graphemes = []
         self.displayed_graphemes = []
-        self.committed_grapheme_count = 0
         self._last_raw_ghost = ""
         self._accumulated_text = ""
         self.pre_finalize_text = ""
