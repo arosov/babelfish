@@ -356,6 +356,13 @@ class TestRealSTTIntegration:
         else:
             print(f"[TEST]   Ghosts: 0 updates")
 
+        if result.final_timeline:
+            print(f"[TEST]   Final Passes: {len(result.final_timeline)} updates")
+            for i, final in enumerate(result.final_timeline):
+                print(f'[TEST]     Final {i + 1}: "{final}"')
+        else:
+            print(f"[TEST]   Final Passes: 0 (using transcript)")
+
         assert passed, (
             f"WER {word_error * 100:.2f}% exceeds threshold {self.WER_THRESHOLD * 100:.1f}%"
         )
