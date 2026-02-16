@@ -19,6 +19,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      - name: Update Python Version
+        run: |
+          # Determine version from input or tag
+          if [ "${{ github.event_name }}" == "release" ]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
+          else
+            TAG_NAME="${{ inputs.version }}"
+          fi
+          
+          # Strip 'v' prefix
+          CLEAN_VERSION="${TAG_NAME#v}"
+          
+          if [ -n "$CLEAN_VERSION" ]; then
+             echo "Updating pyproject.toml version to $CLEAN_VERSION"
+             sed -i "s/^version = \".*\"/version = \"$CLEAN_VERSION\"/" pyproject.toml
+             grep "^version =" pyproject.toml
+          else
+             echo "Error: Could not determine version!"
+             exit 1
+          fi
+
       - name: Create Zip
         run: |
           zip -r babelfish.zip . -x "*.git*" "tests/*" ".venv/*" "__pycache__/*" "models/*" "tmp_extraction/*" "*.log" "uv.lock" "test_output.txt"
