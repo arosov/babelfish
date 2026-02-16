@@ -200,7 +200,7 @@
           "type": "string"
         },
         "port": {
-          "default": 8123,
+          "default": 8124,
           "title": "Port",
           "type": "integer"
         }

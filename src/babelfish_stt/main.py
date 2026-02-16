@@ -182,6 +182,7 @@ async def run_babelfish(
     wakeword: Optional[str] = None,
     stopword: Optional[str] = None,
     force_cpu: bool = False,
+    port: Optional[int] = None,
 ):
     logger.info("=" * 50)
     logger.info("🚀 BABELFISH STT INITIALIZING")
@@ -201,6 +202,10 @@ async def run_babelfish(
         config_manager.config.hardware.device = "cpu"
         config_manager.config.hardware.auto_detect = False
         logger.info("   MODE: Force CPU Execution (CLI Override)")
+
+    if port is not None:
+        config_manager.config.server.port = port
+        logger.info(f"   PORT: {port} (CLI Override)")
 
     if wakeword:
         config_manager.config.voice.wakeword = wakeword
@@ -360,6 +365,13 @@ def main():
     )
 
     parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Server port (default: from config or 8124)",
+    )
+
+    parser.add_argument(
         "--wakeword",
         type=str,
         nargs="?",
@@ -390,6 +402,7 @@ def main():
             wakeword=args.wakeword,
             stopword=args.stopword,
             force_cpu=args.cpu,
+            port=args.port,
         )
     )
 
