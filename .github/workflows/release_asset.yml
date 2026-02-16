@@ -26,13 +26,21 @@ jobs:
       - name: Create and Upload Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Use fallback logic: if release event, use tag_name; otherwise use input version
+          TAG_NAME: ${{ github.event.release.tag_name || inputs.version }}
+          IS_RELEASE_EVENT: ${{ github.event_name == 'release' }}
         run: |
-          if [ "${{ github.event_name }}" == "release" ]; then
-            TAG_NAME="${{ github.event.release.tag_name }}"
-          else
-            TAG_NAME="${{ inputs.version }}"
-            # Create release if it doesn't exist. Ignore error if it does.
-            gh release create "$TAG_NAME" --title "$TAG_NAME" --generate-notes || echo "Release $TAG_NAME likely exists, proceeding to upload"
+          echo "Target Tag: $TAG_NAME"
+          
+          if [ -z "$TAG_NAME" ]; then
+            echo "Error: Tag name is empty!"
+            exit 1
+          fi
+
+          if [ "$IS_RELEASE_EVENT" != "true" ]; then
+             echo "Ensuring release $TAG_NAME exists..."
+             gh release create "$TAG_NAME" --title "$TAG_NAME" --generate-notes || echo "Release creation failed (might already exist)"
           fi
           
+          echo "Uploading asset to $TAG_NAME..."
           gh release upload "$TAG_NAME" babelfish.zip --clobber
