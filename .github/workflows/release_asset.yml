@@ -4,6 +4,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v0.0.1)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -18,8 +23,16 @@ jobs:
         run: |
           zip -r babelfish.zip . -x "*.git*" "tests/*" ".venv/*" "__pycache__/*" "models/*" "tmp_extraction/*" "*.log" "uv.lock" "test_output.txt"
           
-      - name: Upload Release Asset
+      - name: Create and Upload Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ github.event.release.tag_name }} babelfish.zip --clobber
+          if [ "${{ github.event_name }}" == "release" ]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
+          else
+            TAG_NAME="${{ inputs.version }}"
+            # Create release if it doesn't exist. Ignore error if it does.
+            gh release create "$TAG_NAME" --title "$TAG_NAME" --generate-notes || echo "Release $TAG_NAME likely exists, proceeding to upload"
+          fi
+          
+          gh release upload "$TAG_NAME" babelfish.zip --clobber
