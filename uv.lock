@@ -201,6 +201,15 @@ nvidia-linux = [
     { name = "nvidia-curand-cu12", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "onnxruntime-gpu", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
+nvidia-win = [
+    { name = "nvidia-cublas-cu12", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-nvrtc-cu12", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-runtime-cu12", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cufft-cu12", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-curand-cu12", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "onnxruntime-gpu", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 windows-gpu = [
     { name = "onnxruntime-directml", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
@@ -223,16 +232,23 @@ requires-dist = [
     { name = "notify-py" },
     { name = "numpy", specifier = "<2" },
     { name = "nvidia-cublas-cu12", marker = "extra == 'nvidia-linux'" },
+    { name = "nvidia-cublas-cu12", marker = "extra == 'nvidia-win'" },
     { name = "nvidia-cuda-nvrtc-cu12", marker = "extra == 'nvidia-linux'" },
+    { name = "nvidia-cuda-nvrtc-cu12", marker = "extra == 'nvidia-win'" },
     { name = "nvidia-cuda-runtime-cu12", marker = "extra == 'nvidia-linux'" },
+    { name = "nvidia-cuda-runtime-cu12", marker = "extra == 'nvidia-win'" },
     { name = "nvidia-cudnn-cu12", marker = "extra == 'nvidia-linux'" },
+    { name = "nvidia-cudnn-cu12", marker = "extra == 'nvidia-win'" },
     { name = "nvidia-cufft-cu12", marker = "extra == 'nvidia-linux'" },
+    { name = "nvidia-cufft-cu12", marker = "extra == 'nvidia-win'" },
     { name = "nvidia-curand-cu12", marker = "extra == 'nvidia-linux'" },
+    { name = "nvidia-curand-cu12", marker = "extra == 'nvidia-win'" },
     { name = "omegaconf" },
     { name = "onnx-asr" },
     { name = "onnxruntime", marker = "extra == 'cpu'", specifier = "==1.23.2" },
     { name = "onnxruntime-directml", marker = "extra == 'windows-gpu'" },
     { name = "onnxruntime-gpu", marker = "extra == 'nvidia-linux'", specifier = "==1.23.2" },
+    { name = "onnxruntime-gpu", marker = "extra == 'nvidia-win'", specifier = "==1.23.2" },
     { name = "onnxruntime-openvino", marker = "extra == 'intel-linux'" },
     { name = "onnxruntime-rocm", marker = "extra == 'amd-linux'" },
     { name = "openwakeword", git = "https://github.com/dscripka/openWakeWord.git" },
@@ -248,7 +264,7 @@ requires-dist = [
     { name = "torchaudio", specifier = ">=2.6.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "websockets", specifier = ">=14.2" },
 ]
-provides-extras = ["cpu", "windows-gpu", "nvidia-linux", "amd-linux", "intel-linux"]
+provides-extras = ["cpu", "windows-gpu", "nvidia-linux", "nvidia-win", "amd-linux", "intel-linux"]
 
 [package.metadata.requires-dev]
 dev = [

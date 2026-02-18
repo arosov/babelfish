@@ -532,15 +532,61 @@ def _get_nvidia_gpus() -> List[Dict]:
     return gpus
 
 
+def get_best_gpu_index() -> int:
+    """
+    Returns the index of the NVIDIA GPU with the most VRAM.
+    Defaults to 0 if detection fails.
+    """
+    if not shutil.which("nvidia-smi"):
+        return 0
+
+    try:
+        # Get memory.total for all GPUs
+        # Format: "4096, 8192"
+        output = (
+            subprocess.check_output(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=memory.total",
+                    "--format=csv,noheader,nounits",
+                ],
+                stderr=subprocess.STDOUT,
+            )
+            .decode("utf-8")
+            .strip()
+            .split("\n")
+        )
+
+        best_index = 0
+        max_vram = -1.0
+
+        for i, line in enumerate(output):
+            try:
+                vram = float(line.strip())
+                if vram > max_vram:
+                    max_vram = vram
+                    best_index = i
+            except ValueError:
+                continue
+
+        return best_index
+
+    except Exception:
+        return 0
+
+
 def list_hardware() -> List[Dict]:
     """Lists all supported hardware acceleration devices, including physically detected ones."""
     devices = [{"id": "cpu", "name": "CPU"}]
 
     # 1. NVIDIA (CUDA)
+    # Check physical GPUs first via nvidia-smi regardless of current ORT provider status
+    # This ensures users can select CUDA even if currently running in CPU/DML mode
     nvidia_physical = _get_nvidia_gpus()
     if nvidia_physical:
         devices.extend(nvidia_physical)
     elif detect_nvidia():
+        # Fallback if nvidia-smi missing but driver components found
         devices.append({"id": "cuda", "name": "NVIDIA GPU"})
 
     # 2. AMD (ROCm)

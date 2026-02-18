@@ -102,26 +102,42 @@ class STTEngine(Reconfigurable):
             )
 
     def _resolve_device(self, device: str) -> str:
-        if device != "auto":
-            return device
-
         try:
             import onnxruntime as ort
 
             available = ort.get_available_providers()
+        except Exception:
+            available = []
+
+        # 1. Handle "Auto" or generic "cuda" requests
+        if device == "auto" or device == "cuda":
             if "CUDAExecutionProvider" in available:
-                return "cuda"
+                # Find the best GPU index
+                from babelfish_stt.hardware import get_best_gpu_index
+
+                best_idx = get_best_gpu_index()
+                logger.info(f"🤖 Auto-selecting best GPU: cuda:{best_idx}")
+                return f"cuda:{best_idx}"
+
             if "ROCMExecutionProvider" in available:
                 return "rocm"
             if "DmlExecutionProvider" in available:
                 return "dml"
-        except Exception:
-            pass
+            return "cpu"
 
-        return "cpu"
+        # 2. Smart fallback for explicit requests
+        if device.startswith("cuda") and "CUDAExecutionProvider" not in available:
+            if "DmlExecutionProvider" in available:
+                logger.warning(
+                    f"Requested '{device}' but CUDA provider not found. Falling back to DirectML."
+                )
+                return "dml"
+
+        return device
 
     def _get_providers(self, device: str) -> List[Any]:
         if device == "cuda":
+            # Should have been resolved to cuda:X by _resolve_device, but safe fallback
             return [("CUDAExecutionProvider", {"device_id": 0}), "CPUExecutionProvider"]
         elif device.startswith("cuda:"):
             try:
