@@ -344,25 +344,25 @@ class BabelfishServer(Reconfigurable):
         import sys
         import errno
 
-        max_retries = 5
-        base_delay = 1.0
+        max_retries = 30
+        retry_delay = 1.0
 
         for attempt in range(max_retries):
             try:
                 self._server = await websockets.serve(
-                    self.handle_connection, self.server_config.host, self.server_config.port
+                    self.handle_connection,
+                    self.server_config.host,
+                    self.server_config.port,
                 )
                 return
             except OSError as e:
-                is_port_in_use = (
-                    e.errno == errno.EADDRINUSE or
-                    (sys.platform == "win32" and e.winerror == 10048)
+                is_port_in_use = e.errno == errno.EADDRINUSE or (
+                    sys.platform == "win32" and e.winerror == 10048
                 )
                 if is_port_in_use and attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
                     logger.warning(
-                        f"Port {self.server_config.port} in use, retrying in {delay}s (attempt {attempt + 1}/{max_retries})..."
+                        f"Port {self.server_config.port} in use, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})..."
                     )
-                    await asyncio.sleep(delay)
+                    await asyncio.sleep(retry_delay)
                 else:
                     raise

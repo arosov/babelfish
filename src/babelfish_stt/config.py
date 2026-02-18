@@ -85,7 +85,7 @@ class UIConfig(BaseModel):
 
 class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
-    port: int = 8124
+    port: int = 8123
 
 
 class CacheConfig(BaseModel):
