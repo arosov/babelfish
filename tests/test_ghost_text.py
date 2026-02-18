@@ -231,8 +231,14 @@ def has_gpu():
 
     import ctypes
     import ctypes.util
+    import platform
 
-    lib_name = "libcuda.so.1"
+    system = platform.system()
+    if system == "Windows":
+        lib_name = "nvcuda.dll"
+    else:
+        lib_name = "libcuda.so.1"
+
     try:
         ctypes.CDLL(lib_name)
         _HAS_GPU = True
@@ -326,7 +332,7 @@ class TestRealSTTIntegration:
         import yaml
 
         corpus_path = Path(__file__).parent / "fixtures" / "corpus.yaml"
-        with open(corpus_path) as f:
+        with open(corpus_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return {item["id"]: item for item in data["corpus"]}
 
@@ -354,7 +360,7 @@ class TestRealSTTIntegration:
         from jiwer import wer, cer
 
         corpus_path = Path(__file__).parent / "fixtures" / "corpus.yaml"
-        with open(corpus_path) as f:
+        with open(corpus_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         corpus = {item["id"]: item for item in data["corpus"]}
 

@@ -237,34 +237,14 @@ class AudioPipelineFixture:
             warmup_audio = np.zeros(int(16000 * 1.0), dtype=np.float32)
             stt_engine.transcribe(warmup_audio, padding_s=1.0)
 
-        mock_vad = MagicMock(spec=SileroVAD)
+        vad = SileroVAD(threshold=0.5)
 
-        class MockVAD:
-            def __init__(self, audio_data, hop_size, silence_threshold=0.01):
-                self.audio_data = audio_data
-                self.hop_size = hop_size
-                self.silence_threshold = silence_threshold
-                self.chunk_count = 0
-
-            def is_speech(self, chunk):
-                self.chunk_count += 1
-                chunk_start = (self.chunk_count - 1) * self.hop_size
-                if chunk_start >= len(self.audio_data):
-                    return False
-                chunk_audio = self.audio_data[chunk_start : chunk_start + len(chunk)]
-                rms = np.sqrt(np.mean(chunk_audio**2))
-                return rms > self.silence_threshold
-
-            def reset_states(self):
-                self.chunk_count = 0
-
-        mock_vad = MockVAD(audio_data, hop_size)
         mock_display = MagicMock(spec=TerminalDisplay)
         mock_display.update = self._create_ghost_callback(stt_engine)
         mock_display.finalize = self._create_finalize_callback(stt_engine)
         mock_display.reset = MagicMock()
 
-        pipeline = StandardPipeline(mock_vad, stt_engine, mock_display)
+        pipeline = StandardPipeline(vad, stt_engine, mock_display)
         pipeline.set_test_mode(False)
         pipeline.reconfigure(config.pipeline)
         pipeline.request_mode(is_idle=False, force=True)

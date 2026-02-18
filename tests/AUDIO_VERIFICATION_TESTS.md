@@ -99,8 +99,23 @@ Fields:
 # Install with GPU support
 uv sync --extra nvidia-linux
 
-# Set CUDA library path
+# Set CUDA library path (Linux)
 export LD_LIBRARY_PATH=".venv/lib/python3.12/site-packages/nvidia/cublas/lib:.venv/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:.venv/lib/python3.12/site-packages/nvidia/cuda_runtime/lib:.venv/lib/python3.12/site-packages/nvidia/cudnn/lib:.venv/lib/python3.12/site-packages/nvidia/cufft/lib:.venv/lib/python3.12/site-packages/nvidia/curand/lib:.venv/lib/python3.12/site-packages/nvidia/nvjitlink/lib:$LD_LIBRARY_PATH"
+
+# Set CUDA library path (Windows PowerShell) - run as single line:
+$env:PATH = ".venv\Lib\site-packages\nvidia\cublas\bin;.venv\Lib\site-packages\nvidia\cuda_nvrtc\bin;.venv\Lib\site-packages\nvidia\cuda_runtime\bin;.venv\Lib\site-packages\nvidia\cudnn\bin;.venv\Lib\site-packages\nvidia\cufft\bin;.venv\Lib\site-packages\nvidia\curand\bin;.venv\Lib\site-packages\nvidia\nvjitlink\bin;" + $env:PATH
+
+# Enable UTF-8 for proper Unicode support (Windows PowerShell):
+$env:PYTHONIOENCODING = "utf-8"
+
+# Run tests:
+uv run pytest -s -m slow -k "joke"
+
+# Or run all slow tests:
+uv run pytest -s -m slow
+
+# Or via cmd.exe:
+cmd /c "set PATH=.venv\Lib\site-packages\nvidia\cublas\bin;.venv\Lib\site-packages\nvidia\cuda_nvrtc\bin;.venv\Lib\site-packages\nvidia\cuda_runtime\bin;.venv\Lib\site-packages\nvidia\cudnn\bin;.venv\Lib\site-packages\nvidia\cufft\bin;.venv\Lib\site-packages\nvidia\curand\bin;.venv\Lib\site-packages\nvidia\nvjitlink\bin;%PATH% && set PYTHONIOENCODING=utf-8 && uv run pytest -s -m slow"
 ```
 
 ### Run All Tests
