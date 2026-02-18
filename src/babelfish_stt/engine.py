@@ -2,6 +2,7 @@ import onnx_asr
 import numpy as np
 import logging
 import threading
+import sys
 from pathlib import Path
 from typing import Any, Optional, List
 from babelfish_stt.reconfigurable import Reconfigurable
@@ -119,10 +120,21 @@ class STTEngine(Reconfigurable):
                 logger.info(f"🤖 Auto-selecting best GPU: cuda:{best_idx}")
                 return f"cuda:{best_idx}"
 
+            # Mac Logic: Prioritize CoreML only on Apple Silicon (arm64)
+            if sys.platform == "darwin":
+                import platform
+
+                arch = platform.machine().lower()
+                if "arm" in arch or "aarch64" in arch:
+                    if "CoreMLExecutionProvider" in available:
+                        return "coreml"
+                # Fallback to CPU for Intel Macs (x86_64) unless manually forced
+
             if "ROCMExecutionProvider" in available:
                 return "rocm"
             if "DmlExecutionProvider" in available:
                 return "dml"
+
             return "cpu"
 
         # 2. Smart fallback for explicit requests
@@ -136,6 +148,11 @@ class STTEngine(Reconfigurable):
         return device
 
     def _get_providers(self, device: str) -> List[Any]:
+        if device == "coreml" or (sys.platform == "darwin" and device == "metal"):
+            return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+
+        # Generic Mac with explicit device selection is handled by specific branches below or fallbacks
+
         if device == "cuda":
             # Should have been resolved to cuda:X by _resolve_device, but safe fallback
             return [("CUDAExecutionProvider", {"device_id": 0}), "CPUExecutionProvider"]
