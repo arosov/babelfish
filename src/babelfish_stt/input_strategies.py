@@ -41,10 +41,6 @@ class DirectStrategy(InputStrategy):
             for _ in range(count):
                 keyboard.press(Key.backspace)
                 keyboard.release(Key.backspace)
-                # User requested 2ms delay (fast)
-                time.sleep(0.002)
-            # Minimal settle time to ensure application processes backspaces
-            time.sleep(0.01)
         except Exception as e:
             logger.error(f"DirectStrategy backspace failed: {e}")
 
@@ -58,9 +54,6 @@ class ClipboardStrategy(InputStrategy):
 
         # Save current clipboard? (Restoration is tricky and racy, skipping for now)
         pyperclip.copy(text)
-
-        # Give the system a tiny moment to update clipboard
-        time.sleep(0.01)
 
         # Simulate Paste
         if sys.platform == "darwin":
