@@ -74,6 +74,15 @@ class InputSimulator:
         except Exception as e:
             logger.error(f"Failed to type text with strategy {strategy}: {e}")
 
+    def type_text_clipboard(self, text: str):
+        """Types text using clipboard strategy (for ghost updates)."""
+        if not text:
+            return
+        try:
+            self._strategies[StrategyEnum.CLIPBOARD].type(text, self.keyboard)
+        except Exception as e:
+            logger.error(f"Failed to type text via clipboard: {e}")
+
     def update_ghost(self, ghost_text: str):
         """
         Updates the ghost text incrementally with O(1) complexity.
@@ -114,69 +123,32 @@ class InputSimulator:
         # We only check timing for actual keystrokes
         if self.graphemes:
             if now - self.last_ghost_time < self.throttle_s:
-                self.words = new_words
+                # Don't update self.words here - only update when actually typing
+                # to keep displayed_graphemes in sync with words
                 return
 
         # 4. Content check
         if new_words == self.words and self.graphemes:
             return
 
-        # 5. Incremental Grapheme Update
-        # Convert the words back to a string for grapheme parsing,
-        # but ONLY if the list changed.
-        new_text = " ".join(new_words)
-        new_graphemes = list(grapheme.graphemes(new_text))
+        # 5. For ghost updates, use clipboard for reliability
+        # Clear all displayed text and paste the full new ghost
+        if self.displayed_graphemes:
+            total_to_clear = len(self.displayed_graphemes)
+            self._send_backspaces(
+                total_to_clear,
+                strategy=StrategyEnum.DIRECT,
+                update_accumulated=True,
+            )
 
-        # 6. Accumulate logic
-        # Find grapheme-level common prefix
-        common_len = 0
-        for g1, g2 in zip(self.displayed_graphemes, new_graphemes):
-            if g1 == g2:
-                common_len += 1
-            else:
-                break
+        # Type full ghost text using clipboard
+        full_ghost = " ".join(new_words)
+        new_graphemes = list(grapheme.graphemes(full_ghost)) if full_ghost else []
+        if full_ghost:
+            self.type_text_clipboard(full_ghost)
+            self._accumulated_text = full_ghost
 
-        # If there's NO overlap (common_len == 0), we just APPEND without backspacing
-        # This handles STT sliding window case
-        if common_len == 0:
-            if self.displayed_graphemes:
-                # If we have displayed text but 0 overlap, it's a replacement/correction
-                # that failed to stitch. We MUST clear the old text first.
-                total_to_clear = len(self.displayed_graphemes)
-                self._send_backspaces(
-                    total_to_clear,
-                    strategy=StrategyEnum.DIRECT,
-                    update_accumulated=True,
-                )
-
-            # No overlap - APPEND without backspacing
-            if new_graphemes:
-                to_add = "".join([str(g) for g in new_graphemes])
-                self.type_text(to_add, StrategyEnum.DIRECT)
-                # Track accumulated text
-                self._accumulated_text += to_add
-        else:
-            # Has overlap - but we need to be careful not to destroy content we appended earlier
-            # Only backspace the EXACT suffix that differs
-            # Compute what's currently displayed
-            # Find where new ghost diverges from displayed
-            to_remove = len(self.displayed_graphemes) - common_len
-            if to_remove > 0:
-                # We always use DIRECT strategy for intermediate ghost backspacing
-                # to maintain the highest responsiveness and avoid clipboard interference
-                self._send_backspaces(
-                    to_remove, strategy=StrategyEnum.DIRECT, update_accumulated=True
-                )
-
-            # Type only the NEW suffix (beyond the common prefix)
-            to_add_list = new_graphemes[common_len:]
-            if to_add_list:
-                to_add = "".join([str(g) for g in to_add_list])
-                self.type_text(to_add, StrategyEnum.DIRECT)
-                # Track accumulated text
-                self._accumulated_text += to_add
-
-        # 7. Update State
+        # 6. Update State
         self.words = new_words
         self.graphemes = new_graphemes
         self.displayed_graphemes = new_graphemes
@@ -273,22 +245,19 @@ class InputSimulator:
         # Clear whatever is currently displayed on screen
         total_to_clear = len(self.displayed_graphemes)
         if total_to_clear:
-            # If state mismatch detected, log warning
-            # This indicates ghost updates may have drifted from actual screen
+            # If state mismatch detected, SKIP backspacing entirely
+            # Safer to have ghost text remain than to erase user's content
             if state_mismatch:
                 logger.warning(
-                    f"State mismatch in finalize: accumulated='{self._accumulated_text[:50]}...' "
-                    f"vs displayed={len(self.displayed_graphemes)} graphemes."
+                    f"State mismatch in finalize: skipping {total_to_clear} backspaces "
+                    f"to prevent over-erasure. accumulated='{self._accumulated_text[:50]}...' "
+                    f"vs displayed={len(self.displayed_graphemes)} graphemes. "
+                    f"Will type final text without clearing."
                 )
-            # We use the configured strategy for finalization backspacing
-            # to be consistent with the configured injection method
-            self._send_backspaces(total_to_clear, strategy=strategy)
-
-        # Safety delay to ensure the target application has processed backspaces
-        # before we paste the final text. Prevents "Comment comment" repetitions.
-        # This is now also handled inside the strategy's backspace settle time,
-        # but we keep a small extra buffer here just in case.
-        time.sleep(0.01)
+            else:
+                # We use the configured strategy for finalization backspacing
+                # to be consistent with the configured injection method
+                self._send_backspaces(total_to_clear, strategy=strategy)
 
         self.words = []
         self.graphemes = []
