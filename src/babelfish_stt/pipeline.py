@@ -190,7 +190,14 @@ class StandardPipeline(Pipeline):
             self.dynamic_throttle_ms = self.perf.ghost_throttle_ms
 
     def _apply_dynamic_backoff(self, inference_ms: float):
-        """Adjusts the ghost update throttle based on real-time inference latency."""
+        """Adjusts the ghost update throttle based on real-time inference latency.
+        Disabled when initial throttle is 0 (no throttle).
+        """
+        # If user set throttle to 0, never apply dynamic backoff
+        if self.perf.ghost_throttle_ms == 0:
+            self.dynamic_throttle_ms = 0
+            return
+
         self.inference_history.append(inference_ms)
         if len(self.inference_history) > 5:
             self.inference_history.pop(0)
