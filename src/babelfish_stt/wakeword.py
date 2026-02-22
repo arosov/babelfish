@@ -1,6 +1,8 @@
 import openwakeword
 from openwakeword.model import Model
+from openwakeword.utils import download_models
 import numpy as np
+import os
 from typing import Dict, List, Optional
 from pathlib import Path
 import threading
@@ -84,6 +86,13 @@ class WakeWordEngine(Reconfigurable):
         self._loaded_stop_name: Optional[str] = None
         self._custom_start_models: Dict[str, str] = {}
         self._custom_stop_models: Dict[str, str] = {}
+
+        # Ensure pretrained models are present
+        try:
+            download_models()
+        except Exception as e:
+            logger.warning(f"Failed to download pretrained models: {e}")
+
         self._load_models()
 
     def _load_models(self):
