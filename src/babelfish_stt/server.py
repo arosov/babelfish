@@ -239,6 +239,15 @@ class BabelfishServer(Reconfigurable):
 
         # 3. Send full config
         config_data = self.config_manager.config.model_dump()
+
+        # If restart is required, clear runtime VRAM stats to avoid showing stale data
+        if self.restart_required:
+            config_data.get("hardware", {}).pop("vram_total_gb", None)
+            config_data.get("hardware", {}).pop("vram_used_baseline_gb", None)
+            config_data.get("hardware", {}).pop("vram_used_model_gb", None)
+            config_data.get("hardware", {}).pop("active_device", None)
+            config_data.get("hardware", {}).pop("active_device_name", None)
+
         message = {
             "type": "config",
             "data": config_data,
@@ -265,6 +274,18 @@ class BabelfishServer(Reconfigurable):
 
                 # Broadcast updated config to ALL clients
                 config_data = self.config_manager.config.model_dump()
+
+                # If restart is required, clear runtime VRAM stats to avoid showing stale data
+                if self.restart_required:
+                    config_data.get("hardware", {}).pop("vram_total_gb", None)
+                    config_data.get("hardware", {}).pop("vram_used_baseline_gb", None)
+                    config_data.get("hardware", {}).pop("vram_used_model_gb", None)
+                    config_data.get("hardware", {}).pop("active_device", None)
+                    config_data.get("hardware", {}).pop("active_device_name", None)
+                    logger.info(
+                        "Cleared VRAM stats from config broadcast due to pending restart"
+                    )
+
                 update_msg = {
                     "type": "config",
                     "data": config_data,

@@ -305,22 +305,34 @@ def _get_macos_memory() -> Dict[str, float]:
 def _get_windows_memory(device_index: int = 0) -> Dict[str, float]:
     """Windows generic (DirectML/AMD/Intel) memory query via PowerShell."""
     try:
+        # Get the target GPU name for this device index
+        gpu_names = get_windows_gpu_names()
+        if not gpu_names or device_index >= len(gpu_names):
+            return {"total": 0.0, "used": 0.0}
+
+        target_gpu_name = gpu_names[device_index]
+
         # 1. Get Total VRAM via PowerShell for the specific adapter
+        # Use the name to query the correct adapter
         ps_total_cmd = [
             "powershell",
             "-Command",
-            f"& {{ $gpus = @(Get-CimInstance Win32_VideoController); if ($gpus.Count -gt {device_index}) {{ $gpus[{device_index}].AdapterRam }} else {{ 0 }} }}",
+            f"& {{ $gpu = Get-CimInstance Win32_VideoController | Where-Object {{ $_.Name -eq '{target_gpu_name}' }}; if ($gpu) {{ $gpu.AdapterRam }} else {{ 0 }} }}",
         ]
         total_bytes = int(subprocess.check_output(ps_total_cmd).decode().strip())
         total_gb = total_bytes / (1024**3)
 
         # 2. Get Used VRAM via PowerShell Performance Counters
-        # We try to get the instance that corresponds to the device index, though performance counters
-        # are sometimes ordered differently. We'll pick the nth instance.
+        # Query all instances and match by name to find the correct one
         ps_used_cmd = [
             "powershell",
             "-Command",
-            f"(Get-Counter '\\GPU Adapter Memory(*)\\Dedicated Usage').CounterSamples[{device_index}].CookedValue",
+            """
+            $samples = (Get-Counter '\\GPU Adapter Memory(*)\\Dedicated Usage').CounterSamples
+            $target = '{target_gpu_name}'
+            $match = $samples | Where-Object {{ $_.InstanceName -like "*$target*" }} | Select-Object -First 1
+            if ($match) {{ $match.CookedValue }} else {{ 0 }}
+            """.format(target_gpu_name=target_gpu_name),
         ]
         used_bytes = float(subprocess.check_output(ps_used_cmd).decode().strip())
         used_gb = used_bytes / (1024**3)
