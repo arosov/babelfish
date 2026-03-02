@@ -154,8 +154,17 @@ def get_device_name(device_type: str = "cpu") -> str:
                 pass
         return "AMD GPU (ROCm)"
 
-    if device_type == "dml" and sys.platform == "win32":
+    if device_type.startswith("dml") and sys.platform == "win32":
         names = get_windows_gpu_names()
+        device_id = 0
+        if ":" in device_type:
+            try:
+                device_id = int(device_type.split(":")[1])
+            except ValueError:
+                pass
+
+        if 0 <= device_id < len(names):
+            return names[device_id]
         return names[0] if names else "DirectML GPU"
 
     if device_type == "metal" and sys.platform == "darwin":
@@ -193,8 +202,14 @@ def get_memory_usage(device_type: str = "cpu") -> Dict[str, float]:
     if device_type == "rocm":
         return _get_rocm_memory()
 
-    if device_type == "dml" and sys.platform == "win32":
-        return _get_windows_memory()
+    if device_type.startswith("dml") and sys.platform == "win32":
+        device_id = 0
+        if ":" in device_type:
+            try:
+                device_id = int(device_type.split(":")[1])
+            except ValueError:
+                pass
+        return _get_windows_memory(device_id)
 
     if device_type == "metal" and sys.platform == "darwin":
         return _get_macos_memory()
@@ -287,21 +302,22 @@ def _get_macos_memory() -> Dict[str, float]:
         return {"total": 0.0, "used": 0.0}
 
 
-def _get_windows_memory() -> Dict[str, float]:
+def _get_windows_memory(device_index: int = 0) -> Dict[str, float]:
     """Windows generic (DirectML/AMD/Intel) memory query via PowerShell."""
     try:
-        # 1. Get Total VRAM via PowerShell (CimInstance is more reliable than WMIC for large values)
-        ps_total_cmd = 'powershell -Command "(Get-CimInstance Win32_VideoController | Measure-Object -Property AdapterRam -Maximum).Maximum"'
+        # 1. Get Total VRAM via PowerShell for the specific adapter
+        ps_total_cmd = f'powershell -Command "& {{ \\$gpus = @(Get-CimInstance Win32_VideoController); if (\\$gpus.Count -gt {device_index}) {{ \\$gpus[{device_index}].AdapterRam }} else {{ 0 }} }}"'
         total_bytes = int(
             subprocess.check_output(ps_total_cmd, shell=True).decode().strip()
         )
         total_gb = total_bytes / (1024**3)
 
         # 2. Get Used VRAM via PowerShell Performance Counters
-        # Dedicated Usage is the standard counter for VRAM (not shared system RAM)
+        # We try to get the instance that corresponds to the device index, though performance counters
+        # are sometimes ordered differently. We'll pick the nth instance.
         ps_used_cmd = (
-            "powershell -Command \"(Get-Counter '\\GPU Adapter Memory(*)\\Dedicated Usage').CounterSamples "
-            '| Sort-Object CookedValue -Descending | Select-Object -First 1 -ExpandProperty CookedValue"'
+            f"powershell -Command \"(Get-Counter '\\GPU Adapter Memory(*)\\Dedicated Usage').CounterSamples "
+            f'| Select-Object -Index {device_index} -ExpandProperty CookedValue"'
         )
         used_bytes = float(
             subprocess.check_output(ps_used_cmd, shell=True).decode().strip()
@@ -600,9 +616,8 @@ def list_hardware() -> List[Dict]:
     # 4. Windows DirectML / Intel OpenVINO
     if sys.platform == "win32":
         gpu_names = get_windows_gpu_names()
-        if gpu_names:
-            name = ", ".join(gpu_names) + " (DirectML)"
-            devices.append({"id": "dml", "name": name})
+        for i, name in enumerate(gpu_names):
+            devices.append({"id": f"dml:{i}", "name": f"{name} (DirectML)"})
 
     # Deduplicate by ID
     seen_ids = set()

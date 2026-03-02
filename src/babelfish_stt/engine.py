@@ -131,7 +131,7 @@ class STTEngine(Reconfigurable):
             if "ROCMExecutionProvider" in available:
                 return "rocm"
             if "DmlExecutionProvider" in available:
-                return "dml"
+                return "dml:0"
 
             return "cpu"
 
@@ -141,7 +141,7 @@ class STTEngine(Reconfigurable):
                 logger.warning(
                     f"Requested '{device}' but CUDA provider not found. Falling back to DirectML."
                 )
-                return "dml"
+                return "dml:0"
 
         return device
 
