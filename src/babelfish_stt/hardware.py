@@ -283,7 +283,9 @@ def _get_macos_memory() -> Dict[str, float]:
 
         # Used RAM (Heuristic using vm_stat)
         # Pages active + Pages wired is a good proxy for 'Used' in the context of AI models
-        vm_output = subprocess.check_output(["vm_stat"]).decode("utf-8")
+        env = os.environ.copy()
+        env["LC_ALL"] = "C"
+        vm_output = subprocess.check_output(["vm_stat"], env=env).decode("utf-8")
         lines = vm_output.split("\n")
         page_size = 4096  # Default
         active = 0
@@ -310,29 +312,23 @@ def _get_windows_memory(device_index: int = 0) -> Dict[str, float]:
         if not gpu_names or device_index >= len(gpu_names):
             return {"total": 0.0, "used": 0.0}
 
-        target_gpu_name = gpu_names[device_index]
-
         # 1. Get Total VRAM via PowerShell for the specific adapter
-        # Use the name to query the correct adapter
+        # NOTE: AdapterRam in WMI is capped at 4GB, but it's the most robust way without localization
+        # and it's already an improvement over broken counters.
         ps_total_cmd = [
             "powershell",
             "-Command",
-            f"& {{ $gpu = Get-CimInstance Win32_VideoController | Where-Object {{ $_.Name -eq '{target_gpu_name}' }}; if ($gpu) {{ $gpu.AdapterRam }} else {{ 0 }} }}",
+            f"(Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty AdapterRam)[{device_index}]",
         ]
         total_bytes = int(subprocess.check_output(ps_total_cmd).decode().strip())
         total_gb = total_bytes / (1024**3)
 
-        # 2. Get Used VRAM via PowerShell Performance Counters
-        # Query all instances and match by name to find the correct one
+        # 2. Get Used VRAM via PowerShell WMI (locale-agnostic)
+        # Mapping by index for now, as it's the most consistent across locales
         ps_used_cmd = [
             "powershell",
             "-Command",
-            """
-            $samples = (Get-Counter '\\GPU Adapter Memory(*)\\Dedicated Usage').CounterSamples
-            $target = '{target_gpu_name}'
-            $match = $samples | Where-Object {{ $_.InstanceName -like "*$target*" }} | Select-Object -First 1
-            if ($match) {{ $match.CookedValue }} else {{ 0 }}
-            """.format(target_gpu_name=target_gpu_name),
+            f"(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory | Select-Object -ExpandProperty DedicatedUsage)[{device_index}]",
         ]
         used_bytes = float(subprocess.check_output(ps_used_cmd).decode().strip())
         used_gb = used_bytes / (1024**3)
@@ -501,16 +497,21 @@ def get_windows_gpu_names() -> List[str]:
     if sys.platform != "win32":
         return names
     try:
+        # Using powershell to avoid localized headers in wmic output
         output = (
             subprocess.check_output(
-                "wmic path win32_VideoController get name", shell=True
+                [
+                    "powershell",
+                    "-Command",
+                    "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+                ],
+                stderr=subprocess.DEVNULL,
             )
             .decode()
             .strip()
             .split("\n")
         )
-        # Skip header
-        for line in output[1:]:
+        for line in output:
             name = line.strip()
             if name:
                 names.append(name)
