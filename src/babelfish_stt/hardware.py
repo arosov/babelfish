@@ -4,8 +4,10 @@ import subprocess
 import shutil
 import sys
 import os
+import json
 import ctypes
 import ctypes.util
+from pathlib import Path
 from typing import Dict, Optional, List
 
 
@@ -304,17 +306,119 @@ def _get_macos_memory() -> Dict[str, float]:
         return {"total": 0.0, "used": 0.0}
 
 
-def _get_windows_memory(device_index: int = 0) -> Dict[str, float]:
-    """Windows generic (DirectML/AMD/Intel) memory query via PowerShell."""
+def find_d3d12info() -> Optional[str]:
+    """Finds the d3d12info executable in common locations."""
+    if sys.platform != "win32":
+        return None
+
+    search_paths = [
+        Path(__file__).parent.parent.parent / ".d3d12info" / "D3d12info.exe",
+        Path.home()
+        / ".cache"
+        / "vogonpoet"
+        / "babelfish"
+        / ".d3d12info"
+        / "D3d12info.exe",
+    ]
+
+    for path in search_paths:
+        if path.exists():
+            return str(path)
+
+    return None
+
+
+def _get_d3d12info_memory(device_index: int = 0) -> Dict[str, float]:
+    """Get GPU memory info using d3d12info CLI (DirectX 12)."""
+    d3d12info_path = find_d3d12info()
+
+    if not d3d12info_path:
+        return {"total": 0.0, "used": 0.0}
+
     try:
-        # Get the target GPU name for this device index
+        output = subprocess.check_output(
+            [d3d12info_path, "-a", str(device_index), "-j"],
+            stderr=subprocess.DEVNULL,
+        )
+        data = json.loads(output.decode("utf-8"))
+
+        adapters = data.get("Adapters", [])
+        if device_index >= len(adapters):
+            return {"total": 0.0, "used": 0.0}
+
+        adapter = adapters[device_index]
+        desc = adapter.get("DXGI_ADAPTER_DESC3", {})
+        nvapi = adapter.get("NvPhysicalGpuHandle", {})
+
+        total_bytes = int(
+            nvapi.get(
+                "NvAPI_GPU_GetMemoryInfoEx - NV_GPU_MEMORY_INFO_EX::dedicatedVideoMemory",
+                0,
+            )
+        )
+        if total_bytes == 0:
+            total_bytes = int(desc.get("DedicatedVideoMemory", 0))
+
+        available_bytes = int(
+            nvapi.get(
+                "NvAPI_GPU_GetMemoryInfoEx - NV_GPU_MEMORY_INFO_EX::curAvailableDedicatedVideoMemory",
+                0,
+            )
+        )
+
+        used_bytes = (
+            total_bytes - available_bytes
+            if total_bytes > 0 and available_bytes > 0
+            else 0
+        )
+
+        total_gb = total_bytes / (1024**3)
+        used_gb = used_bytes / (1024**3)
+
+        return {"total": total_gb, "used": used_gb}
+    except Exception:
+        return {"total": 0.0, "used": 0.0}
+
+    try:
+        output = subprocess.check_output(
+            [d3d12info_path, "-a", str(device_index), "-j"],
+            stderr=subprocess.DEVNULL,
+        )
+        data = json.loads(output.decode("utf-8"))
+
+        adapters = data.get("Adapters", [])
+        if device_index >= len(adapters):
+            return {"total": 0.0, "used": 0.0}
+
+        adapter = adapters[device_index]
+        desc = adapter.get("DXGI_ADAPTER_DESC3", {})
+        vram_bytes = int(desc.get("DedicatedVideoMemory", 0))
+
+        local_mem = adapter.get(
+            "DXGI_QUERY_VIDEO_MEMORY_INFO[DXGI_MEMORY_SEGMENT_GROUP_LOCAL]", {}
+        )
+        budget_bytes = int(local_mem.get("Budget", 0))
+
+        total_gb = vram_bytes / (1024**3)
+        budget_gb = budget_bytes / (1024**3)
+        used_gb = total_gb - budget_gb if total_gb > 0 else 0.0
+
+        return {"total": total_gb, "used": used_gb}
+    except Exception:
+        return {"total": 0.0, "used": 0.0}
+
+
+def _get_windows_memory(device_index: int = 0) -> Dict[str, float]:
+    """Windows generic (DirectML/AMD/Intel) memory query via d3d12info or WMI."""
+    d3d12info_result = _get_d3d12info_memory(device_index)
+    if d3d12info_result["total"] > 0:
+        return d3d12info_result
+
+    try:
         gpu_names = get_windows_gpu_names()
         if not gpu_names or device_index >= len(gpu_names):
             return {"total": 0.0, "used": 0.0}
 
-        # 1. Get Total VRAM via PowerShell for the specific adapter
-        # NOTE: AdapterRam in WMI is capped at 4GB, but it's the most robust way without localization
-        # and it's already an improvement over broken counters.
         ps_total_cmd = [
             "powershell",
             "-Command",
@@ -323,8 +427,6 @@ def _get_windows_memory(device_index: int = 0) -> Dict[str, float]:
         total_bytes = int(subprocess.check_output(ps_total_cmd).decode().strip())
         total_gb = total_bytes / (1024**3)
 
-        # 2. Get Used VRAM via PowerShell WMI (locale-agnostic)
-        # Mapping by index for now, as it's the most consistent across locales
         ps_used_cmd = [
             "powershell",
             "-Command",
