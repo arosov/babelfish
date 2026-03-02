@@ -306,22 +306,23 @@ def _get_windows_memory(device_index: int = 0) -> Dict[str, float]:
     """Windows generic (DirectML/AMD/Intel) memory query via PowerShell."""
     try:
         # 1. Get Total VRAM via PowerShell for the specific adapter
-        ps_total_cmd = f'powershell -Command "& {{ \\$gpus = @(Get-CimInstance Win32_VideoController); if (\\$gpus.Count -gt {device_index}) {{ \\$gpus[{device_index}].AdapterRam }} else {{ 0 }} }}"'
-        total_bytes = int(
-            subprocess.check_output(ps_total_cmd, shell=True).decode().strip()
-        )
+        ps_total_cmd = [
+            "powershell",
+            "-Command",
+            f"& {{ $gpus = @(Get-CimInstance Win32_VideoController); if ($gpus.Count -gt {device_index}) {{ $gpus[{device_index}].AdapterRam }} else {{ 0 }} }}",
+        ]
+        total_bytes = int(subprocess.check_output(ps_total_cmd).decode().strip())
         total_gb = total_bytes / (1024**3)
 
         # 2. Get Used VRAM via PowerShell Performance Counters
         # We try to get the instance that corresponds to the device index, though performance counters
         # are sometimes ordered differently. We'll pick the nth instance.
-        ps_used_cmd = (
-            f"powershell -Command \"(Get-Counter '\\GPU Adapter Memory(*)\\Dedicated Usage').CounterSamples "
-            f'| Select-Object -Index {device_index} -ExpandProperty CookedValue"'
-        )
-        used_bytes = float(
-            subprocess.check_output(ps_used_cmd, shell=True).decode().strip()
-        )
+        ps_used_cmd = [
+            "powershell",
+            "-Command",
+            f"(Get-Counter '\\GPU Adapter Memory(*)\\Dedicated Usage').CounterSamples[{device_index}].CookedValue",
+        ]
+        used_bytes = float(subprocess.check_output(ps_used_cmd).decode().strip())
         used_gb = used_bytes / (1024**3)
 
         if total_gb > 0:
