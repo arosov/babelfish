@@ -94,10 +94,6 @@ class ConfigManager:
 
             config = BabelfishConfig.model_validate(data)
 
-            # Ensure consistency: if auto_detect is enabled, device should be "auto"
-            if config.hardware.auto_detect:
-                config.hardware.device = "auto"
-
             return config
         except (json.JSONDecodeError, Exception) as e:
             logger.warning(
@@ -118,9 +114,9 @@ class ConfigManager:
                 data = json.load(f)
             config = BabelfishConfig.model_validate(data)
 
-            # Auto-detect mode is always valid as long as we have hardware manager
+            # Auto mode is always valid as long as we have hardware manager
             # to perform the detection during engine init.
-            if config.hardware.auto_detect:
+            if config.hardware.device == "auto":
                 return True
 
             if hw:
@@ -195,7 +191,18 @@ class ConfigManager:
         """
         Atomic save using a temporary file.
         """
-        data = self.config.model_dump()
+        # Exclude runtime-only fields from being saved to disk
+        data = self.config.model_dump(
+            exclude={
+                "hardware": {
+                    "vram_total_gb",
+                    "vram_used_baseline_gb",
+                    "vram_used_model_gb",
+                    "active_device",
+                    "active_device_name",
+                }
+            }
+        )
 
         # Ensure directory exists
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,12 +228,6 @@ class ConfigManager:
         """
         current_data = self.config.model_dump()
         merged_data = self._deep_merge(current_data, changes)
-
-        # Protective logic: if auto_detect is enabled, ensure device is 'auto'
-        # This prevents UI race conditions where a draft 'cpu' device might be saved
-        # alongside an 'auto_detect: true' flag.
-        if merged_data.get("hardware", {}).get("auto_detect"):
-            merged_data["hardware"]["device"] = "auto"
 
         # Validate by creating a new model instance
         new_config = BabelfishConfig.model_validate(merged_data)

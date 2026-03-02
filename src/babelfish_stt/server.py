@@ -156,29 +156,25 @@ class BabelfishServer(Reconfigurable):
     def reconfigure(self, config: BaseModel) -> None:
         if isinstance(config, BabelfishConfig):
             new_device = config.hardware.device
-            new_auto = config.hardware.auto_detect
-
             old_device = self.initial_config.hardware.device
-            old_auto = self.initial_config.hardware.auto_detect
-
             current_active = self.initial_config.hardware.active_device
 
             # Restart is required if:
-            # 1. auto_detect toggled
-            # 2. auto_detect is False and device changed
-            # 3. Switching from auto_detect=True to a specific device that ISN'T the current active one
+            # 1. Device changed manually to something else
+            # 2. We are switching from auto to a specific device that ISN'T the current active one
+            # Note: We NEVER trigger a restart if changing from 'auto' to 'auto'
             hw_changed = False
-            if new_auto != old_auto:
-                # Toggling auto-detect always triggers a restart to be safe,
-                # UNLESS we are switching from manual to auto and the manual device
-                # was already 'auto' (which shouldn't happen but let's be safe).
-                hw_changed = True
-            elif not new_auto:  # Stayed in manual mode
-                if new_device != old_device:
-                    hw_changed = True
 
-            # If stayed in auto mode (new_auto == True and old_auto == True),
-            # we NEVER trigger a restart based on the 'device' field because it's ignored anyway.
+            if new_device != old_device:
+                # If we were in auto, and user selected the explicit active device, no restart needed
+                is_same_as_active = (
+                    old_device == "auto"
+                    and new_device == current_active
+                    and new_device != "cpu"
+                )
+
+                if not is_same_as_active:
+                    hw_changed = True
 
             server_changed = (
                 config.server.host != self.initial_config.server.host

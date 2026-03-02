@@ -23,10 +23,8 @@ class STTEngine(Reconfigurable):
 
     def __init__(self, config: BabelfishConfig):
         self._lock = threading.Lock()
-        # Resolve target device: if auto-detect is on, force "auto" regardless of the 'device' field
-        target_device = (
-            "auto" if config.hardware.auto_detect else config.hardware.device
-        )
+        # Resolve target device
+        target_device = config.hardware.device
         self.device_type = self._resolve_device(target_device)
         self.config_ref = config  # Keep reference to update status
 

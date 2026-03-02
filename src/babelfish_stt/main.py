@@ -200,7 +200,6 @@ async def run_babelfish(
     # Override config with CLI flags if provided
     if force_cpu:
         config_manager.config.hardware.device = "cpu"
-        config_manager.config.hardware.auto_detect = False
         logger.info("   MODE: Force CPU Execution (CLI Override)")
 
     if port is not None:

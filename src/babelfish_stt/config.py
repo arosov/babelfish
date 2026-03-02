@@ -12,7 +12,6 @@ class InputStrategy(str, Enum):
 
 class HardwareConfig(BaseModel):
     device: str = "auto"
-    auto_detect: bool = True
     microphone_name: Optional[str] = None
     onnx_model_dir: Optional[str] = None
     onnx_execution_provider: Optional[str] = None
