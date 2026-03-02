@@ -123,8 +123,8 @@ def get_device_name(device_type: str = "cpu") -> str:
                         [
                             "nvidia-smi",
                             f"--id={device_id}",
-                            "--query-gpu=name",
-                            "--format=csv,noheader",
+                            "--query-gpu=name,memory.total",
+                            "--format=csv,noheader,nounits",
                         ],
                         stderr=subprocess.STDOUT,
                     )
@@ -132,10 +132,19 @@ def get_device_name(device_type: str = "cpu") -> str:
                     .strip()
                 )
                 if output:
-                    return output
+                    parts = output.split(",")
+                    name = parts[0].strip()
+                    if len(parts) >= 2:
+                        vram_mb = parts[1].strip()
+                        try:
+                            vram_gb = float(vram_mb) / 1024.0
+                            return f"{name} ({vram_gb:.1f} GB) (CUDA)"
+                        except ValueError:
+                            pass
+                    return f"{name} (CUDA)"
             except Exception:
                 pass
-        return f"NVIDIA GPU (CUDA:{device_id})"
+        return f"NVIDIA GPU (CUDA)"
 
     if device_type == "rocm":
         # Try to get name via rocm-smi
@@ -151,7 +160,7 @@ def get_device_name(device_type: str = "cpu") -> str:
                 for card in data.values():
                     name = card.get("Card series", card.get("Product Name"))
                     if name:
-                        return name
+                        return f"{name} (ROCm)"
             except Exception:
                 pass
         return "AMD GPU (ROCm)"
@@ -166,8 +175,8 @@ def get_device_name(device_type: str = "cpu") -> str:
                 pass
 
         if 0 <= device_id < len(names):
-            return names[device_id]
-        return names[0] if names else "DirectML GPU"
+            return f"{names[device_id]} (DirectML)"
+        return f"{names[0]} (DirectML)" if names else "DirectML GPU"
 
     if device_type == "metal" and sys.platform == "darwin":
         # For Mac, actual hardware name can be found via system_profiler or sysctl
@@ -178,10 +187,10 @@ def get_device_name(device_type: str = "cpu") -> str:
                 .strip()
             )
             if output:
-                return output
+                return f"{output} (Metal)"
         except Exception:
             pass
-        return "Apple Silicon"
+        return "Apple Silicon (Metal)"
 
     return device_type.upper()
 
@@ -594,22 +603,21 @@ class HardwareManager:
 
 
 def get_windows_gpu_names() -> List[str]:
-    """Retrieves GPU names on Windows using WMIC."""
+    """Retrieves ENABLED GPU names on Windows using PowerShell Win32_VideoController."""
     names = []
     if sys.platform != "win32":
         return names
     try:
-        # Using powershell to avoid localized headers in wmic output
         output = (
             subprocess.check_output(
                 [
                     "powershell",
                     "-Command",
-                    "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+                    "Get-CimInstance Win32_VideoController | Where-Object { $_.Status -eq 'OK' } | Select-Object -ExpandProperty Name",
                 ],
                 stderr=subprocess.DEVNULL,
             )
-            .decode()
+            .decode("utf-8", errors="ignore")
             .strip()
             .split("\n")
         )
@@ -653,9 +661,9 @@ def _get_nvidia_gpus() -> List[Dict]:
                 vram_mb = parts[1].strip()
                 try:
                     vram_gb = float(vram_mb) / 1024.0
-                    display_name = f"{name} ({vram_gb:.1f} GB)"
+                    display_name = f"{name} ({vram_gb:.1f} GB) (CUDA)"
                 except ValueError:
-                    display_name = name
+                    display_name = f"{name} (CUDA)"
 
                 gpus.append({"id": f"cuda:{i}", "name": display_name})
     except Exception:
@@ -719,7 +727,7 @@ def list_hardware() -> List[Dict]:
         devices.extend(nvidia_physical)
     elif detect_nvidia():
         # Fallback if nvidia-smi missing but driver components found
-        devices.append({"id": "cuda", "name": "NVIDIA GPU"})
+        devices.append({"id": "cuda", "name": "NVIDIA GPU (CUDA)"})
 
     # 2. AMD (ROCm)
     if detect_amd_linux():
@@ -729,7 +737,10 @@ def list_hardware() -> List[Dict]:
     if detect_metal():
         devices.append({"id": "metal", "name": "Apple Metal"})
 
-    # 4. Windows DirectML / Intel OpenVINO
+    # 4. Windows DirectML
+    # List all GPUs from Win32_VideoController - these are enabled GPUs visible to Windows
+    # Note: DirectML may enumerate in different order, but this is the best we can do
+    # without using platform-specific APIs. The device_id in selection maps to this order.
     if sys.platform == "win32":
         gpu_names = get_windows_gpu_names()
         for i, name in enumerate(gpu_names):

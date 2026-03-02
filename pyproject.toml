@@ -77,9 +77,12 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
-openwakeword = { git = "https://github.com/dscripka/openWakeWord.git" }
+openwakeword = { url = "https://github.com/dscripka/openWakeWord/archive/368c03716d1e92591906a84949bc477f3a834455.zip" }
 
 [tool.uv]
+conflicts = [
+    [{ extra = "cpu" }, { extra = "nvidia-win" }, { extra = "windows-gpu" }, { extra = "amd-linux" }, { extra = "intel-linux" }],
+]
 environments = [
     "sys_platform == 'linux'",
     "sys_platform == 'win32'",
