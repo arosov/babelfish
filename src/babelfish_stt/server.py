@@ -159,8 +159,10 @@ class BabelfishServer(Reconfigurable):
             old_device = self.initial_config.hardware.device
             current_active = self.initial_config.hardware.active_device
 
-            # Recalculate restart requirement on every config update
-            self.restart_required = False
+            # Restart is required if:
+            # 1. Device changed manually to something else
+            # 2. We are switching from auto to a specific device that ISN'T the current active one
+            # Note: We NEVER trigger a restart if changing from 'auto' to 'auto'
             hw_changed = False
 
             if new_device != old_device:
@@ -172,13 +174,7 @@ class BabelfishServer(Reconfigurable):
                 )
 
                 if not is_same_as_active:
-                    # Check if hot-reload is possible
-                    can_hot_reload = False
-                    if self.pipeline and hasattr(self.pipeline, "engine"):
-                        can_hot_reload = self.pipeline.engine.can_hot_reload(new_device)
-
-                    if not can_hot_reload:
-                        hw_changed = True
+                    hw_changed = True
 
             server_changed = (
                 config.server.host != self.initial_config.server.host
@@ -191,12 +187,13 @@ class BabelfishServer(Reconfigurable):
                     f"(hw_changed={hw_changed}, server_changed={server_changed})"
                 )
                 self.restart_required = True
-
-            # Always update initial_config to match current state to avoid stale comparisons
-            # Preserve runtime stats if the incoming config has them as 0/None
-            self.initial_config = config.model_copy(deep=True)
-            if self.initial_config.hardware.active_device is None:
-                self.initial_config.hardware.active_device = current_active
+            else:
+                # If no restart required, update initial_config to match current state
+                # but preserve runtime stats if the incoming config has them as 0/None
+                # (which happens if the client sends a partial draft)
+                self.initial_config = config.model_copy(deep=True)
+                if self.initial_config.hardware.active_device is None:
+                    self.initial_config.hardware.active_device = current_active
 
     async def handle_connection(self, websocket):
         logger.info(
