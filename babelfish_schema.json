@@ -252,16 +252,6 @@
     },
     "UIConfig": {
       "properties": {
-        "verbose": {
-          "default": false,
-          "title": "Verbose",
-          "type": "boolean"
-        },
-        "show_timestamps": {
-          "default": true,
-          "title": "Show Timestamps",
-          "type": "boolean"
-        },
         "notifications": {
           "default": true,
           "title": "Notifications",

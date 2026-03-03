@@ -71,8 +71,6 @@ class VoiceConfig(BaseModel):
 
 
 class UIConfig(BaseModel):
-    verbose: bool = False
-    show_timestamps: bool = True
     notifications: bool = True
     shortcuts: ShortcutsConfig = Field(default_factory=ShortcutsConfig)
     activation_detection: ActivationDetectionConfig = Field(

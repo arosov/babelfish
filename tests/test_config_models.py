@@ -49,8 +49,7 @@ def test_transcription_window_config_defaults():
 
 def test_ui_config_defaults():
     config = UIConfig()
-    assert config.verbose is False
-    assert config.show_timestamps is True
+    assert config.notifications is True
     assert config.transcription_window.always_on_top is True
 
 
