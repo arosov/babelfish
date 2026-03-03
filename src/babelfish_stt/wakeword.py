@@ -89,7 +89,12 @@ class WakeWordEngine(Reconfigurable):
 
         # Ensure pretrained models are present
         try:
-            download_models()
+            # Only download models that are not in the exclusion list
+            models_to_download = [
+                m for m in openwakeword.MODELS.keys()
+                if m.lower() not in EXCLUDED_WAKEWORDS
+            ]
+            download_models(model_names=models_to_download)
         except Exception as e:
             logger.warning(f"Failed to download pretrained models: {e}")
 

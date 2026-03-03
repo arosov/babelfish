@@ -9,15 +9,9 @@ description = "High-performance local STT pipeline using unified ONNX"
 readme = "README.md"
 requires-python = ">=3.12, <3.13"
 dependencies = [
-    "torch>=2.6.0",
-    "torchaudio>=2.6.0",
-    "pyarrow<19.0.0",
     "numpy<2",
-    "omegaconf",
-    "tensorflow",
     "openwakeword",
     "pydantic>=2.12.5",
-    "aiohttp>=3.13.3",
     "websockets>=14.2",
     "onnx-asr",
     "huggingface-hub",
@@ -67,16 +61,7 @@ intel-linux = [
     "onnxruntime-openvino",
 ]
 
-[[tool.uv.index]]
-# Default to CPU index for base install size reduction.
-# The bootstrapper will override UV_INDEX_PYTORCH_URL if a GPU is detected.
-name = "pytorch"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
 [tool.uv.sources]
-torch = { index = "pytorch" }
-torchaudio = { index = "pytorch" }
 openwakeword = { url = "https://github.com/dscripka/openWakeWord/archive/368c03716d1e92591906a84949bc477f3a834455.zip" }
 
 [tool.uv]

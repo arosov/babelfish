@@ -152,19 +152,23 @@ class ConfigManager:
         logger.info("Generating optimal default configuration...")
 
         # Determine device based on priority and VRAM
+        # Priority: CUDA > ROCm > DirectML > OpenVINO > CPU
         device = "cpu"
 
-        if "CUDAExecutionProvider" in hw.available_providers:
-            device = "cuda"
+        if hw.gpu_info["cuda_available"] or "CUDAExecutionProvider" in hw.available_providers:
+            from babelfish_stt.hardware import get_best_gpu_index
+
+            idx = get_best_gpu_index()
+            device = f"cuda:{idx}"
             logger.info(
-                f"CUDA provider detected. Selecting CUDA mode (VRAM: {hw.gpu_info['vram_gb']:.2f}GB)."
+                f"CUDA capable hardware detected. Selecting {device} mode (VRAM: {hw.gpu_info['vram_gb']:.2f}GB)."
             )
         elif "ROCMExecutionProvider" in hw.available_providers:
             device = "rocm"
             logger.info("ROCm provider detected. Selecting ROCm mode.")
         elif "DmlExecutionProvider" in hw.available_providers:
-            device = "dml"
-            logger.info("DirectML provider detected. Selecting DML mode.")
+            device = "dml:0"
+            logger.info("DirectML provider detected. Selecting dml:0 mode.")
         elif "OpenVINOExecutionProvider" in hw.available_providers:
             device = "openvino"
             logger.info("OpenVINO provider detected. Selecting OpenVINO mode.")
@@ -180,7 +184,7 @@ class ConfigManager:
                 pass
 
         self.config = BabelfishConfig(
-            hardware=HardwareConfig(device=device, microphone_name=best_mic_name),
+            hardware=HardwareConfig(device="auto", microphone_name=best_mic_name),
             pipeline=PipelineConfig(),
         )
         self.save()
