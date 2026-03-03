@@ -53,30 +53,6 @@
           "default": null,
           "title": "Microphone Name"
         },
-        "onnx_model_dir": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Onnx Model Dir"
-        },
-        "onnx_execution_provider": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Onnx Execution Provider"
-        },
         "quantization": {
           "anyOf": [
             {
@@ -88,7 +64,13 @@
           ],
           "default": null,
           "title": "Quantization"
-        },
+        }
+      },
+      "title": "HardwareConfig",
+      "type": "object"
+    },
+    "HardwareStatus": {
+      "properties": {
         "active_device": {
           "anyOf": [
             {
@@ -126,7 +108,7 @@
           "type": "number"
         }
       },
-      "title": "HardwareConfig",
+      "title": "HardwareStatus",
       "type": "object"
     },
     "InputStrategy": {
@@ -319,6 +301,9 @@
   "properties": {
     "hardware": {
       "$ref": "#/$defs/HardwareConfig"
+    },
+    "status": {
+      "$ref": "#/$defs/HardwareStatus"
     },
     "pipeline": {
       "$ref": "#/$defs/PipelineConfig"

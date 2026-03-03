@@ -157,7 +157,7 @@ class BabelfishServer(Reconfigurable):
         if isinstance(config, BabelfishConfig):
             new_device = config.hardware.device
             old_device = self.initial_config.hardware.device
-            current_active = self.initial_config.hardware.active_device
+            current_active = self.initial_config.status.active_device
 
             # Restart is required if:
             # 1. Device changed manually to something else
@@ -169,7 +169,7 @@ class BabelfishServer(Reconfigurable):
                 # If we were in auto, and user selected the explicit active device, no restart needed
                 is_same_as_active = (
                     old_device == "auto"
-                    and new_device == current_active
+                    and new_device == self.initial_config.status.active_device
                     and new_device != "cpu"
                 )
 
@@ -191,9 +191,10 @@ class BabelfishServer(Reconfigurable):
                 # If no restart required, update initial_config to match current state
                 # but preserve runtime stats if the incoming config has them as 0/None
                 # (which happens if the client sends a partial draft)
+                current_active = self.initial_config.status.active_device
                 self.initial_config = config.model_copy(deep=True)
-                if self.initial_config.hardware.active_device is None:
-                    self.initial_config.hardware.active_device = current_active
+                if self.initial_config.status.active_device is None:
+                    self.initial_config.status.active_device = current_active
 
     async def handle_connection(self, websocket):
         logger.info(
@@ -240,13 +241,9 @@ class BabelfishServer(Reconfigurable):
         # 3. Send full config
         config_data = self.config_manager.config.model_dump()
 
-        # If restart is required, clear runtime VRAM stats to avoid showing stale data
+        # If restart is required, clear runtime status to avoid showing stale data
         if self.restart_required:
-            config_data.get("hardware", {}).pop("vram_total_gb", None)
-            config_data.get("hardware", {}).pop("vram_used_baseline_gb", None)
-            config_data.get("hardware", {}).pop("vram_used_model_gb", None)
-            config_data.get("hardware", {}).pop("active_device", None)
-            config_data.get("hardware", {}).pop("active_device_name", None)
+            config_data.pop("status", None)
 
         message = {
             "type": "config",
@@ -275,15 +272,11 @@ class BabelfishServer(Reconfigurable):
                 # Broadcast updated config to ALL clients
                 config_data = self.config_manager.config.model_dump()
 
-                # If restart is required, clear runtime VRAM stats to avoid showing stale data
+                # If restart is required, clear runtime status to avoid showing stale data
                 if self.restart_required:
-                    config_data.get("hardware", {}).pop("vram_total_gb", None)
-                    config_data.get("hardware", {}).pop("vram_used_baseline_gb", None)
-                    config_data.get("hardware", {}).pop("vram_used_model_gb", None)
-                    config_data.get("hardware", {}).pop("active_device", None)
-                    config_data.get("hardware", {}).pop("active_device_name", None)
+                    config_data.pop("status", None)
                     logger.info(
-                        "Cleared VRAM stats from config broadcast due to pending restart"
+                        "Cleared status from config broadcast due to pending restart"
                     )
 
                 update_msg = {

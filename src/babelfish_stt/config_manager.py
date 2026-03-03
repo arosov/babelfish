@@ -193,13 +193,7 @@ class ConfigManager:
         # Exclude runtime-only fields from being saved to disk
         data = self.config.model_dump(
             exclude={
-                "hardware": {
-                    "vram_total_gb",
-                    "vram_used_baseline_gb",
-                    "vram_used_model_gb",
-                    "active_device",
-                    "active_device_name",
-                },
+                "status": True,
             }
         )
 

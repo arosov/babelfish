@@ -14,13 +14,12 @@ class InputStrategy(str, Enum):
 class HardwareConfig(BaseModel):
     device: str = "auto"
     microphone_name: Optional[str] = None
-    onnx_model_dir: Optional[str] = None
-    onnx_execution_provider: Optional[str] = None
     quantization: Optional[str] = (
         None  # None means auto/highest for GPU, default int8 for CPU in engine
     )
 
-    # Runtime Status Fields (Populated by Engine)
+
+class HardwareStatus(BaseModel):
     active_device: Optional[str] = None
     active_device_name: Optional[str] = None
     vram_total_gb: float = 0.0
@@ -99,6 +98,7 @@ class CacheConfig(BaseModel):
 
 class BabelfishConfig(BaseModel):
     hardware: HardwareConfig = Field(default_factory=HardwareConfig)
+    status: HardwareStatus = Field(default_factory=HardwareStatus)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     system_input: SystemInputConfig = Field(default_factory=SystemInputConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)

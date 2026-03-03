@@ -80,21 +80,21 @@ class STTEngine(Reconfigurable):
         mem_after = get_memory_usage(self.device_type)
 
         try:
-            self.config_ref.hardware.active_device = self.device_type
-            self.config_ref.hardware.active_device_name = get_device_name(
+            self.config_ref.status.active_device = self.device_type
+            self.config_ref.status.active_device_name = get_device_name(
                 self.device_type
             )
-            self.config_ref.hardware.vram_total_gb = float(mem_after["total"])
-            self.config_ref.hardware.vram_used_baseline_gb = float(mem_before["used"])
-            self.config_ref.hardware.vram_used_model_gb = float(mem_after["used"])
+            self.config_ref.status.vram_total_gb = float(mem_after["total"])
+            self.config_ref.status.vram_used_baseline_gb = float(mem_before["used"])
+            self.config_ref.status.vram_used_model_gb = float(mem_after["used"])
 
             logger.info(
-                f"📊 VRAM Status: Total={self.config_ref.hardware.vram_total_gb:.2f}GB, "
-                f"Baseline={self.config_ref.hardware.vram_used_baseline_gb:.2f}GB, "
-                f"ModelLoaded={self.config_ref.hardware.vram_used_model_gb:.2f}GB "
-                f"(Delta: {self.config_ref.hardware.vram_used_model_gb - self.config_ref.hardware.vram_used_baseline_gb:.2f}GB)"
+                f"📊 VRAM Status: Total={self.config_ref.status.vram_total_gb:.2f}GB, "
+                f"Baseline={self.config_ref.status.vram_used_baseline_gb:.2f}GB, "
+                f"ModelLoaded={self.config_ref.status.vram_used_model_gb:.2f}GB "
+                f"(Delta: {self.config_ref.status.vram_used_model_gb - self.config_ref.status.vram_used_baseline_gb:.2f}GB)"
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, AttributeError):
             # Handle mocks in tests or missing data
             logger.info(
                 f"📊 VRAM Status: Total={mem_after['total']}GB, Baseline={mem_before['used']}GB, ModelLoaded={mem_after['used']}GB"
