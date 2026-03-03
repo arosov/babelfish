@@ -211,7 +211,7 @@
           "type": "string"
         },
         "force_listen": {
-          "default": "Ctrl+Shift+L",
+          "default": "Left Shift",
           "title": "Force Listen",
           "type": "string"
         }

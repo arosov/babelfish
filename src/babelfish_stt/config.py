@@ -44,7 +44,7 @@ class PipelineConfig(BaseModel):
 
 class ShortcutsConfig(BaseModel):
     toggle_listening: str = Field(default="Ctrl+Space", title="Toggle Listening")
-    force_listen: str = "Ctrl+Shift+L"
+    force_listen: str = Field(default="Left Shift", title="Force Listen")
 
 
 class ActivationDetectionConfig(BaseModel):
