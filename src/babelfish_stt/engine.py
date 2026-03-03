@@ -19,7 +19,7 @@ class STTEngine(Reconfigurable):
     on AMD, Intel, and NVIDIA GPUs across Windows and Linux.
     """
 
-    # config_key = "pipeline"  # Change this to None in main.py registration or remove
+    config_key = "pipeline"
 
     def __init__(self, config: BabelfishConfig):
         self._lock = threading.Lock()
@@ -193,178 +193,11 @@ class STTEngine(Reconfigurable):
             return ["OpenVINOExecutionProvider", "CPUExecutionProvider"]
         return ["CPUExecutionProvider"]
 
-    def can_hot_reload(self, new_device: str) -> bool:
-        """Check if the device can be changed without a process restart."""
-        if new_device == "auto":
-            new_device = self._resolve_device("auto")
-
-        # Normalize cuda:0, dml:0, etc.
-        new_device_resolved = self._resolve_device(new_device)
-        if new_device_resolved == self.device_type:
-            return True
-
-        # Check compatibility for hot-reload
-        try:
-            import onnxruntime as ort
-
-            available = ort.get_available_providers()
-        except ImportError:
-            available = []
-
-        if new_device_resolved == "cpu":
-            return True
-        elif (
-            new_device_resolved.startswith("cuda")
-            and "CUDAExecutionProvider" in available
-        ):
-            return True
-        elif (
-            new_device_resolved.startswith("dml")
-            and "DmlExecutionProvider" in available
-        ):
-            return True
-        elif new_device_resolved == "rocm" and "ROCMExecutionProvider" in available:
-            return True
-        elif (
-            new_device_resolved == "openvino"
-            and "OpenVINOExecutionProvider" in available
-        ):
-            return True
-        elif new_device_resolved == "coreml" and "CoreMLExecutionProvider" in available:
-            return True
-
-        return False
-
     def reconfigure(self, config: BaseModel) -> None:
         """STTEngine reconfigure (called by ConfigManager)."""
-        if not isinstance(config, BabelfishConfig):
-            # ConfigManager passes sub-configs based on config_key ("pipeline"),
-            # but we need "hardware" too. Actually, ConfigManager can pass the full config.
-            # In main.py: config_manager.register(engine)
-            # Since STTEngine has config_key = "pipeline", it only gets PipelineConfig.
-            # Let's change config_key to None so it gets the full BabelfishConfig.
-            return
-
-        new_device = config.hardware.device
-        if new_device == "auto":
-            new_device = self._resolve_device("auto")
-
-        # Normalize cuda:0, dml:0, etc.
-        new_device_resolved = self._resolve_device(new_device)
-        if new_device_resolved == self.device_type:
-            logger.info(
-                f"STT: Device {new_device_resolved} already active. Skipping reload."
-            )
-            return
-
-        # Check compatibility for hot-reload
-        # Compatible if switching between CPU and a provider available in current env
-        try:
-            import onnxruntime as ort
-
-            available = ort.get_available_providers()
-        except ImportError:
-            available = []
-
-        is_compatible = False
-        if new_device_resolved == "cpu":
-            is_compatible = True
-        elif (
-            new_device_resolved.startswith("cuda")
-            and "CUDAExecutionProvider" in available
-        ):
-            is_compatible = True
-        elif (
-            new_device_resolved.startswith("dml")
-            and "DmlExecutionProvider" in available
-        ):
-            is_compatible = True
-        elif new_device_resolved == "rocm" and "ROCMExecutionProvider" in available:
-            is_compatible = True
-        elif (
-            new_device_resolved == "openvino"
-            and "OpenVINOExecutionProvider" in available
-        ):
-            is_compatible = True
-        elif new_device_resolved == "coreml" and "CoreMLExecutionProvider" in available:
-            is_compatible = True
-
-        if not is_compatible:
-            logger.info(
-                f"STT: Device switch {self.device_type} -> {new_device_resolved} requires process restart."
-            )
-            # Note: We don't signal restart_required here, BabelfishServer does that.
-            return
-
-        # Hot-reload the engine
-        logger.info(
-            f"🔄 STT: Hot-reloading engine: {self.device_type} -> {new_device_resolved}"
-        )
-        with self._lock:
-            # 1. Release current model
-            self.model = None
-
-            # 2. Update device type
-            self.device_type = new_device_resolved
-
-            # 3. Reload model with new providers
-            providers = self._get_providers(self.device_type)
-
-            # Quantization Policy
-            if self.device_type != "cpu":
-                quantization = None
-            else:
-                quantization = config.hardware.quantization or "int8"
-
-            # Default model search (re-resolve paths)
-            base_dir = Path(__file__).resolve().parent.parent.parent
-            models_dir = base_dir / "models"
-            model_name = "nemo-parakeet-tdt-0.6b-v3"
-            model_path = models_dir / model_name
-
-            mem_before = get_memory_usage(self.device_type)
-            try:
-                self.model = onnx_asr.load_model(
-                    model_name,
-                    path=str(model_path) if model_path.exists() else None,
-                    quantization=quantization,
-                    providers=providers,
-                )
-            except Exception as e:
-                logger.error(f"Failed to hot-reload onnx-asr model: {e}")
-                # Fallback to CPU
-                self.device_type = "cpu"
-                self.model = onnx_asr.load_model(
-                    model_name,
-                    path=str(model_path) if model_path.exists() else None,
-                    quantization="int8",
-                    providers=["CPUExecutionProvider"],
-                )
-
-            mem_after = get_memory_usage(self.device_type)
-            self.config_ref.hardware.active_device = self.device_type
-            self.config_ref.hardware.active_device_name = get_device_name(
-                self.device_type
-            )
-            self.config_ref.hardware.vram_total_gb = float(mem_after["total"])
-            self.config_ref.hardware.vram_used_baseline_gb = float(mem_before["used"])
-            self.config_ref.hardware.vram_used_model_gb = float(mem_after["used"])
-
-            # 4. Re-calibrate performance if it wasn't manual
-            if config.pipeline.performance.tier != "manual":
-                logger.info("⏱️ STT: Re-calibrating performance after hot-reload...")
-                perf_data = self.benchmark()
-                # Update the config object so following components (pipeline) see the new values
-                config.pipeline.performance.tier = perf_data["tier"]
-                config.pipeline.performance.ghost_throttle_ms = perf_data[
-                    "ghost_throttle_ms"
-                ]
-                config.pipeline.performance.ghost_window_s = perf_data["ghost_window_s"]
-                config.pipeline.performance.min_padding_s = perf_data["min_padding_s"]
-
-            logger.info(
-                f"✅ STT: Engine hot-reloaded successfully on {self.device_type}"
-            )
+        # Currently STTEngine doesn't have much to hot-reload from PipelineConfig
+        # as most hardware settings require a restart which is handled by BabelfishServer.
+        pass
 
     def transcribe(
         self,
@@ -392,9 +225,6 @@ class STTEngine(Reconfigurable):
         start_t = time.perf_counter()
 
         with self._lock:
-            if self.model is None:
-                logger.warning("STT: Model is not loaded. Skipping transcription.")
-                return ""
             # onnx-asr handles the stream/context internally or we can just pass the buffer
             result = self.model.recognize(input_audio, sample_rate=16000)
 
