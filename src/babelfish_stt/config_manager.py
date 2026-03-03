@@ -200,7 +200,6 @@ class ConfigManager:
                     "active_device",
                     "active_device_name",
                 },
-                "cache": {"cache_dir"},
             }
         )
 
