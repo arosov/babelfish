@@ -22,7 +22,7 @@ class STTEngine(Reconfigurable):
     # config_key = "pipeline"  # Change this to None in main.py registration or remove
 
     def __init__(self, config: BabelfishConfig):
-        self._lock = threading.RLock()
+        self._lock = threading.Lock()
         # Resolve target device
         target_device = config.hardware.device
         self.device_type = self._resolve_device(target_device)
