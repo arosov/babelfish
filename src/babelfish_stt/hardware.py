@@ -316,12 +316,23 @@ def _get_macos_memory() -> Dict[str, float]:
 
 
 def find_d3d12info() -> Optional[str]:
-    """Finds the d3d12info executable in common locations."""
+    """Finds the d3d12info executable in common locations including VOGON_APP_CACHE_DIR."""
     if sys.platform != "win32":
         return None
 
+    # Priority 1: Check VOGON_APP_CACHE_DIR
+    cache_dir = os.environ.get("VOGON_APP_CACHE_DIR")
+    if cache_dir:
+        path = Path(cache_dir) / "d3d12info" / "D3d12info" / "D3d12info.exe"
+        if path.exists():
+            return str(path)
+
+    # Legacy Search Paths
     search_paths = [
-        Path(__file__).parent.parent.parent / ".d3d12info" / "D3d12info.exe",
+        Path(__file__).parent.parent.parent
+        / ".d3d12info"
+        / "D3d12info"
+        / "D3d12info.exe",
         Path.home()
         / ".cache"
         / "vogonpoet"
@@ -338,7 +349,7 @@ def find_d3d12info() -> Optional[str]:
 
 
 def _get_d3d12info_memory(device_index: int = 0) -> Dict[str, float]:
-    """Get GPU memory info using d3d12info CLI (DirectX 12)."""
+    """Get GPU memory info using d3d12info CLI (DirectX 12) with LUID-to-WMI mapping."""
     d3d12info_path = find_d3d12info()
 
     if not d3d12info_path:
@@ -357,60 +368,46 @@ def _get_d3d12info_memory(device_index: int = 0) -> Dict[str, float]:
 
         adapter = adapters[device_index]
         desc = adapter.get("DXGI_ADAPTER_DESC3", {})
-        nvapi = adapter.get("NvPhysicalGpuHandle", {})
 
-        total_bytes = int(
-            nvapi.get(
-                "NvAPI_GPU_GetMemoryInfoEx - NV_GPU_MEMORY_INFO_EX::dedicatedVideoMemory",
-                0,
-            )
-        )
-        if total_bytes == 0:
-            total_bytes = int(desc.get("DedicatedVideoMemory", 0))
+        # 1. Total VRAM (Standard DXGI)
+        vram_bytes = int(desc.get("DedicatedVideoMemory", 0))
+        total_gb = vram_bytes / (1024**3)
 
-        available_bytes = int(
-            nvapi.get(
-                "NvAPI_GPU_GetMemoryInfoEx - NV_GPU_MEMORY_INFO_EX::curAvailableDedicatedVideoMemory",
-                0,
-            )
-        )
-
-        used_bytes = (
-            total_bytes - available_bytes
-            if total_bytes > 0 and available_bytes > 0
-            else 0
-        )
-
-        total_gb = total_bytes / (1024**3)
-        used_gb = used_bytes / (1024**3)
-
-        return {"total": total_gb, "used": used_gb}
-    except Exception:
-        return {"total": 0.0, "used": 0.0}
-
-    try:
-        output = subprocess.check_output(
-            [d3d12info_path, "-a", str(device_index), "-j"],
-            stderr=subprocess.DEVNULL,
-        )
-        data = json.loads(output.decode("utf-8"))
-
-        adapters = data.get("Adapters", [])
-        if device_index >= len(adapters):
+        if total_gb <= 0:
             return {"total": 0.0, "used": 0.0}
 
-        adapter = adapters[device_index]
-        desc = adapter.get("DXGI_ADAPTER_DESC3", {})
-        vram_bytes = int(desc.get("DedicatedVideoMemory", 0))
+        # 2. Used VRAM via WMI Performance Counter matched by LUID
+        # This works for AMD, Intel, and NVIDIA.
+        luid_str = desc.get("AdapterLuid")
+        if luid_str:
+            try:
+                # Format LUID for WMI: 00000000-0000E1AE -> luid_0x00000000_0x0000E1AE_phys_0
+                parts = luid_str.split("-")
+                wmi_name = f"luid_0x{parts[0]}_0x{parts[1]}_phys_0"
 
+                ps_cmd = [
+                    "powershell",
+                    "-Command",
+                    f"(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory -Filter \"Name = '{wmi_name}'\").DedicatedUsage",
+                ]
+                usage_out = (
+                    subprocess.check_output(ps_cmd, stderr=subprocess.DEVNULL)
+                    .decode()
+                    .strip()
+                )
+                if usage_out:
+                    used_gb = float(usage_out) / (1024**3)
+                    return {"total": total_gb, "used": used_gb}
+            except Exception:
+                pass
+
+        # 3. Fallback to Budget logic if WMI fails
         local_mem = adapter.get(
             "DXGI_QUERY_VIDEO_MEMORY_INFO[DXGI_MEMORY_SEGMENT_GROUP_LOCAL]", {}
         )
         budget_bytes = int(local_mem.get("Budget", 0))
-
-        total_gb = vram_bytes / (1024**3)
         budget_gb = budget_bytes / (1024**3)
-        used_gb = total_gb - budget_gb if total_gb > 0 else 0.0
+        used_gb = max(0.0, total_gb - budget_gb)
 
         return {"total": total_gb, "used": used_gb}
     except Exception:
@@ -423,11 +420,8 @@ def _get_windows_memory(device_index: int = 0) -> Dict[str, float]:
     if d3d12info_result["total"] > 0:
         return d3d12info_result
 
+    # Fallback to pure WMI if d3d12info is missing or failing
     try:
-        gpu_names = get_windows_gpu_names()
-        if not gpu_names or device_index >= len(gpu_names):
-            return {"total": 0.0, "used": 0.0}
-
         ps_total_cmd = [
             "powershell",
             "-Command",
@@ -603,10 +597,31 @@ class HardwareManager:
 
 
 def get_windows_gpu_names() -> List[str]:
-    """Retrieves ENABLED GPU names on Windows using PowerShell Win32_VideoController."""
+    """Retrieves ENABLED GPU names on Windows using d3d12info (DXGI) or WMI fallback."""
     names = []
     if sys.platform != "win32":
         return names
+
+    # 1. Prefer d3d12info (DXGI) to match DirectML indices exactly
+    d3d12info_path = find_d3d12info()
+    if d3d12info_path:
+        try:
+            output = subprocess.check_output(
+                [d3d12info_path, "-j"],
+                stderr=subprocess.DEVNULL,
+            )
+            data = json.loads(output.decode("utf-8"))
+            for adapter in data.get("Adapters", []):
+                desc = adapter.get("DXGI_ADAPTER_DESC3", {})
+                name = desc.get("Description")
+                if name:
+                    names.append(name.strip())
+            if names:
+                return names
+        except Exception:
+            pass
+
+    # 2. Fallback to WMI if d3d12info fails
     try:
         output = (
             subprocess.check_output(

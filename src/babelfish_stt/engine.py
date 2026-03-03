@@ -172,15 +172,21 @@ class STTEngine(Reconfigurable):
                 ]
         elif device == "dml":
             return [
-                ("DmlExecutionProvider", {"device_id": "0"}),
+                ("DmlExecutionProvider", {"device_id": 0}),
                 "CPUExecutionProvider",
             ]
         elif device.startswith("dml:"):
-            dev_id = device.split(":")[1]
-            return [
-                ("DmlExecutionProvider", {"device_id": dev_id}),
-                "CPUExecutionProvider",
-            ]
+            try:
+                dev_id = int(device.split(":")[1])
+                return [
+                    ("DmlExecutionProvider", {"device_id": dev_id}),
+                    "CPUExecutionProvider",
+                ]
+            except ValueError:
+                return [
+                    ("DmlExecutionProvider", {"device_id": 0}),
+                    "CPUExecutionProvider",
+                ]
         elif device == "rocm":
             return ["ROCMExecutionProvider", "CPUExecutionProvider"]
         elif device == "openvino":

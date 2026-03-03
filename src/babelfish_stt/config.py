@@ -1,6 +1,7 @@
+import os
 from typing import List, Optional
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class InputStrategy(str, Enum):
@@ -89,6 +90,13 @@ class ServerConfig(BaseModel):
 
 class CacheConfig(BaseModel):
     cache_dir: Optional[str] = None
+
+    @model_validator(mode="after")
+    def populate_cache_dir(self) -> "CacheConfig":
+        """Populate cache_dir from environment if not explicitly set."""
+        if self.cache_dir is None:
+            self.cache_dir = os.environ.get("VOGON_APP_CACHE_DIR")
+        return self
 
 
 class BabelfishConfig(BaseModel):

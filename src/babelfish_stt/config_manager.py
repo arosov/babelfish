@@ -11,7 +11,6 @@ from babelfish_stt.config import (
     VoiceConfig,
     UIConfig,
     ServerConfig,
-    HardwareConfig,
 )
 from babelfish_stt.reconfigurable import Reconfigurable
 
@@ -200,7 +199,8 @@ class ConfigManager:
                     "vram_used_model_gb",
                     "active_device",
                     "active_device_name",
-                }
+                },
+                "cache": {"cache_dir"},
             }
         )
 
