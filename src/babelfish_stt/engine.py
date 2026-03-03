@@ -195,12 +195,15 @@ class STTEngine(Reconfigurable):
 
     def can_hot_reload(self, new_device: str) -> bool:
         """Check if the device can be changed without a process restart."""
-        # 1. 'auto' can always be handled by the engine's internal resolver or hot-reloaded if it maps to current
         if new_device == "auto":
+            new_device = self._resolve_device("auto")
+
+        # Normalize cuda:0, dml:0, etc.
+        new_device_resolved = self._resolve_device(new_device)
+        if new_device_resolved == self.device_type:
             return True
 
-        # 2. Check compatibility for hot-reload
-        # We need to know what's PHYSICALLY available vs what's in the environment
+        # Check compatibility for hot-reload
         try:
             import onnxruntime as ort
 
@@ -208,18 +211,27 @@ class STTEngine(Reconfigurable):
         except ImportError:
             available = []
 
-        # If user requests a specific provider, it MUST be in 'available' for hot-reload
-        # Otherwise we need a restart to allow bootstrap.py to sync the right package.
-        if new_device.startswith("cuda"):
-            return "CUDAExecutionProvider" in available
-        if new_device.startswith("dml"):
-            return "DmlExecutionProvider" in available
-        if new_device == "rocm":
-            return "ROCMExecutionProvider" in available
-        if new_device == "cpu":
-            return True  # CPU is always compatible with any ORT package
-        if new_device == "coreml" or new_device == "metal":
-            return "CoreMLExecutionProvider" in available
+        if new_device_resolved == "cpu":
+            return True
+        elif (
+            new_device_resolved.startswith("cuda")
+            and "CUDAExecutionProvider" in available
+        ):
+            return True
+        elif (
+            new_device_resolved.startswith("dml")
+            and "DmlExecutionProvider" in available
+        ):
+            return True
+        elif new_device_resolved == "rocm" and "ROCMExecutionProvider" in available:
+            return True
+        elif (
+            new_device_resolved == "openvino"
+            and "OpenVINOExecutionProvider" in available
+        ):
+            return True
+        elif new_device_resolved == "coreml" and "CoreMLExecutionProvider" in available:
+            return True
 
         return False
 
