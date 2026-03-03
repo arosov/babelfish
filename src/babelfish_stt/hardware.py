@@ -16,18 +16,21 @@ def detect_nvidia() -> bool:
     lib_name = "nvcuda.dll" if sys.platform == "win32" else "libcuda.so.1"
     try:
         # 1. Try direct loading
-        ctypes.CDLL(lib_name)
-        return True
-    except:
-        pass
-    # 2. Try finding via util
-    found_path = ctypes.util.find_library(lib_name)
-    if found_path:
         try:
-            ctypes.CDLL(found_path)
+            ctypes.CDLL(lib_name)
             return True
         except:
             pass
+        # 2. Try finding via util
+        found_path = ctypes.util.find_library(lib_name)
+        if found_path:
+            try:
+                ctypes.CDLL(found_path)
+                return True
+            except:
+                pass
+    except Exception:
+        pass
     return False
 
 
@@ -457,47 +460,156 @@ def _get_windows_memory(device_index: int = 0) -> Dict[str, float]:
 
     return {"total": total_gb, "used": 0.0}
 
-    # 1. Prefer d3d12info (DXGI) to match DirectML indices exactly
-    d3d12info_path = find_d3d12info()
-    if d3d12info_path:
-        try:
-            output = subprocess.check_output(
-                [d3d12info_path, "-j"],
-                stderr=subprocess.DEVNULL,
-            )
-            data = json.loads(output.decode("utf-8"))
-            for adapter in data.get("Adapters", []):
-                desc = adapter.get("DXGI_ADAPTER_DESC3", {})
-                name = desc.get("Description")
-                if name:
-                    names.append(name.strip())
-            if names:
-                return names
-        except Exception:
-            pass
 
-    # 2. Fallback to WMI if d3d12info fails
-    try:
-        output = (
-            subprocess.check_output(
-                [
-                    "powershell",
-                    "-Command",
-                    "Get-CimInstance Win32_VideoController | Where-Object { $_.Status -eq 'OK' } | Select-Object -ExpandProperty Name",
-                ],
-                stderr=subprocess.DEVNULL,
+def find_microphone_index_by_name(name: str) -> Optional[int]:
+    """Resolves a microphone name to its current PortAudio index."""
+    devices = sd.query_devices()
+    for i, dev in enumerate(devices):
+        if dev["max_input_channels"] > 0 and dev["name"] == name:
+            return i
+    return None
+
+
+def list_microphones() -> List[Dict]:
+    """
+    Lists all available audio input devices, filtered to remove virtual/internal noise.
+    """
+    devices = sd.query_devices()
+    input_devices = []
+    best_mic_index = find_best_microphone()
+
+    # Keywords that typically indicate internal/virtual devices we want to hide on Linux
+    noise_keywords = [
+        "monitor",
+        "samplerate",
+        "null",
+        "dmix",
+        "dsnoop",
+        "softvol",
+        "vdata",
+        "equalizer",
+        "output",
+        "ladspa",
+    ]
+
+    for i, dev in enumerate(devices):
+        name = dev["name"].lower()
+        if dev["max_input_channels"] > 0:
+            # Filter logic: if any noise keyword is in the name, skip it
+            # UNLESS it's the current default or specifically prioritized (like USB)
+            is_noise = any(kw in name for kw in noise_keywords)
+
+            if not is_noise or i == best_mic_index:
+                input_devices.append(
+                    {
+                        "index": i,
+                        "name": dev["name"],
+                        "channels": dev["max_input_channels"],
+                        "sample_rate": dev["default_samplerate"],
+                        "is_default": (i == best_mic_index),
+                    }
+                )
+    return input_devices
+
+
+def find_best_microphone() -> Optional[int]:
+    """
+    Heuristically finds the most likely active microphone based on system priority.
+    Prioritizes Audio Servers (PipeWire/Pulse) and system abstractions over raw hardware.
+    Returns None if no input device is found.
+    """
+    devices = sd.query_devices()
+
+    # Keywords that typically indicate internal/virtual devices we want to avoid
+    noise_keywords = ["monitor", "samplerate", "null", "dmix", "dsnoop", "softvol"]
+
+    # Priority list (keywords ordered by preference)
+    priority_keywords = [
+        "pipewire",
+        "pulse",
+        "default",
+        "sysdefault",
+        "usb",
+        "headset",
+        "siberia",
+    ]
+
+    # 1. Try to find a high-priority device that is NOT noise
+    for keyword in priority_keywords:
+        for i, dev in enumerate(devices):
+            name = dev["name"].lower()
+            if dev["max_input_channels"] > 0 and keyword in name:
+                if not any(nk in name for nk in noise_keywords):
+                    return i
+
+    # 2. Fallback to first non-noise input device
+    for i, dev in enumerate(devices):
+        name = dev["name"].lower()
+        if dev["max_input_channels"] > 0:
+            if not any(nk in name for nk in noise_keywords):
+                return i
+
+    # 3. Last resort: First input device (even if it might be noise)
+    for i, dev in enumerate(devices):
+        if dev["max_input_channels"] > 0:
+            return i
+
+    return None
+
+
+class HardwareManager:
+    """
+    Manages hardware discovery and validation.
+    Acts as the 'brain' for hardware resource awareness.
+    """
+
+    def __init__(self):
+        self.gpu_info = {"cuda_available": False, "name": None, "vram_gb": 0.0}
+        self.available_providers = []
+        self.microphones = []
+        self.best_mic_index = None
+
+    def probe(self):
+        """
+        Probes the system for available hardware (GPU and Microphones).
+        Should be called early in the startup sequence.
+        """
+        import logging
+        import onnxruntime as ort
+
+        logging.info("Probing hardware...")
+
+        self.available_providers = ort.get_available_providers()
+        self.gpu_info = get_gpu_info()
+        self.microphones = list_microphones()
+        self.best_mic_index = find_best_microphone()
+
+        if self.gpu_info["cuda_available"]:
+            logging.info(
+                f"GPU Detected: {self.gpu_info['name']} ({self.gpu_info['vram_gb']:.2f} GB VRAM)"
             )
-            .decode("utf-8", errors="ignore")
-            .strip()
-            .split("\n")
-        )
-        for line in output:
-            name = line.strip()
-            if name:
-                names.append(name)
-    except Exception:
-        pass
-    return names
+        elif "ROCMExecutionProvider" in self.available_providers:
+            logging.info("AMD GPU (ROCm) detected via ONNX Runtime.")
+        elif "DmlExecutionProvider" in self.available_providers:
+            logging.info("DirectML support detected via ONNX Runtime.")
+        else:
+            logging.info(
+                "No supported GPU acceleration detected. Falling back to CPU mode."
+            )
+
+        logging.info(f"Found {len(self.microphones)} input device(s).")
+        if self.best_mic_index is not None:
+            mic_name = sd.query_devices(self.best_mic_index)["name"]
+            logging.info(
+                f"Selected best microphone: {mic_name} (index {self.best_mic_index})"
+            )
+        else:
+            logging.error(
+                "CRITICAL: No microphone detected. Babelfish requires an input device to start."
+            )
+            sys.exit(1)
+
+        return self
 
 
 def _get_nvidia_gpus() -> List[Dict]:
