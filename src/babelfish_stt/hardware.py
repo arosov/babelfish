@@ -397,15 +397,18 @@ def _query_dxgi_adapters() -> List[Dict]:
                 p_adapter, 10, [ctypes.POINTER(DXGI_ADAPTER_DESC1)]
             )
             if get_desc(p_adapter, ctypes.byref(desc)) == 0:
-                luid = desc.AdapterLuid
-                wmi_key = f"luid_0x{luid.HighPart:08X}_0x{luid.LowPart:08X}_phys_0"
-                adapters.append(
-                    {
-                        "name": desc.Description.strip(),
-                        "total_gb": desc.DedicatedVideoMemory / (1024**3),
-                        "wmi_key": wmi_key,
-                    }
-                )
+                # Filter out software renderers (Microsoft Basic Render Driver)
+                # DXGI_ADAPTER_FLAG_SOFTWARE = 2
+                if not (desc.Flags & 2):
+                    luid = desc.AdapterLuid
+                    wmi_key = f"luid_0x{luid.HighPart:08X}_0x{luid.LowPart:08X}_phys_0"
+                    adapters.append(
+                        {
+                            "name": desc.Description.strip(),
+                            "total_gb": desc.DedicatedVideoMemory / (1024**3),
+                            "wmi_key": wmi_key,
+                        }
+                    )
 
             # IUnknown::Release is index 2
             release = get_vtable_func(p_adapter, 2, [])
