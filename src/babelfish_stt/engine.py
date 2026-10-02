@@ -202,7 +202,6 @@ class STTEngine(Reconfigurable):
     def transcribe(
         self,
         audio_buffer: np.ndarray,
-        left_context_secs: float = 0.0,
         padding_s: float = 2.0,
     ) -> str:
         if len(audio_buffer) == 0:

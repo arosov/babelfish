@@ -157,11 +157,6 @@
           "title": "Pre Roll Ms",
           "type": "integer"
         },
-        "update_interval_ms": {
-          "default": 100,
-          "title": "Update Interval Ms",
-          "type": "integer"
-        },
         "performance": {
           "$ref": "#/$defs/PerformanceProfile"
         }

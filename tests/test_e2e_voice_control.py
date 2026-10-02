@@ -39,7 +39,6 @@ class TestE2EVoiceControl(unittest.TestCase):
         config.voice.wakeword = "hey"
         config.voice.stop_words = []
         config.pipeline.silence_threshold_ms = 400
-        config.pipeline.update_interval_ms = 100
 
         cm = MagicMock()
         cm.config = config

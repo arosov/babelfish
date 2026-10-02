@@ -37,7 +37,6 @@ class PerformanceProfile(BaseModel):
 class PipelineConfig(BaseModel):
     silence_threshold_ms: int = 400
     pre_roll_ms: int = 300
-    update_interval_ms: int = 100
     performance: PerformanceProfile = Field(default_factory=PerformanceProfile)
 
 

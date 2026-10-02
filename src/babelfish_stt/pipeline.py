@@ -165,7 +165,6 @@ class StandardPipeline(Pipeline):
         self.pre_roll_buffer = deque()
         self.last_speech_time = 0
         self.silence_threshold_ms = 400
-        self.update_interval_ms = 100
         self.last_update_time = 0
 
         # Performance Profile (Self-Calibration)
@@ -185,7 +184,6 @@ class StandardPipeline(Pipeline):
         if isinstance(config, PipelineConfig):
             self.silence_threshold_ms = config.silence_threshold_ms
             self.pre_roll_ms = config.pre_roll_ms
-            self.update_interval_ms = config.update_interval_ms
             self.perf = config.performance
             self.dynamic_throttle_ms = self.perf.ghost_throttle_ms
 

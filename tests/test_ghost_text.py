@@ -292,7 +292,6 @@ def shared_stt_engine():
         hardware=HardwareConfig(device="auto"),
         pipeline=PipelineConfig(
             silence_threshold_ms=400,
-            update_interval_ms=100,
             performance=PerformanceProfile(
                 ghost_throttle_ms=100,
                 ghost_window_s=3.0,

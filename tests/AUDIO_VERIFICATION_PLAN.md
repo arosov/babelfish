@@ -237,7 +237,6 @@ class AudioPipelineFixture:
         return BabelfishConfig(
             pipeline=PipelineConfig(
                 silence_threshold_ms=400,
-                update_interval_ms=100,
             ),
             system_input=SystemInputConfig(
                 enabled=True,
