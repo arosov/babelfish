@@ -66,6 +66,10 @@ This project distills patterns from:
 
 ## Agent skills
 
+### Explore subagent
+
+Use the `explore` subagent for codebase navigation and lookups (finding files by pattern, searching for symbols or keywords, answering "how does X work?" questions). It runs on a free model, so prefer delegating searches to it instead of spending the main session's context — this keeps the primary agent's budget focused on actual engineering work.
+
 ### Issue tracker
 
 GitHub Issues for arosov/babelfish via `gh` CLI. See `docs/agents/issue-tracker.md`.
