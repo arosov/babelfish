@@ -43,6 +43,7 @@ def test_system_input_config_defaults():
     config = SystemInputConfig()
     assert config.enabled is False
     assert config.type_ghost is False
+    assert config.separator.value == "trailing"
 
 
 def test_transcription_window_config_defaults():

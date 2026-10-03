@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from babelfish_stt.input_manager import InputSimulator
+from babelfish_stt.config import SeparatorPolicy
 from pynput.keyboard import Key
 
 
@@ -55,7 +56,7 @@ def test_finalize(simulator, mock_keyboard):
     simulator.finalize("final result")
     # Should backspace 5 times
     assert mock_keyboard.press.call_count == 5
-    mock_keyboard.type.assert_called_once_with("final result")
+    mock_keyboard.type.assert_called_once_with("final result ")
     assert simulator.last_ghost_length == 0
 
 
@@ -71,27 +72,27 @@ def test_type_text_exception_handling(simulator, mock_keyboard):
     mock_keyboard.type.assert_called_once()
 
 
-def test_finalize_adds_space(simulator, mock_keyboard):
-    # First call
+def test_finalize_adds_trailing_space_by_default(simulator, mock_keyboard):
+    # The separator rides with the utterance: every Final ends with a space.
     simulator.finalize("hello")
-    mock_keyboard.type.assert_called_with("hello")
+    mock_keyboard.type.assert_called_with("hello ")
 
-    # Second call, should prepend space
+    # The next Final is typed verbatim — no leading space (the post-Enter
+    # case, solved structurally).
     mock_keyboard.reset_mock()
     simulator.finalize("world")
-    mock_keyboard.type.assert_called_with(" world")
+    mock_keyboard.type.assert_called_with("world ")
 
-    # Third call, already has a tab (whitespace)
-    mock_keyboard.reset_mock()
-    simulator.finalize("\tagain")
-    mock_keyboard.type.assert_called_with("\tagain")
-
-    # Fourth call, previous ended with newline (whitespace)
+    # Ends-with-whitespace guard: text already ending in whitespace is
+    # passed through unchanged.
     mock_keyboard.reset_mock()
     simulator.finalize("test\n")
-    mock_keyboard.reset_mock()
-    simulator.finalize("me")
-    mock_keyboard.type.assert_called_with("me")
+    mock_keyboard.type.assert_called_with("test\n")
+
+
+def test_finalize_leading_policy_is_legacy(simulator, mock_keyboard):
+    simulator.finalize("hello", separator=SeparatorPolicy.LEADING)
+    mock_keyboard.type.assert_called_with("hello")
 
 
 def test_grapheme_backspacing(simulator, mock_keyboard):

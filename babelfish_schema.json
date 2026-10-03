@@ -168,6 +168,15 @@
       "title": "PipelineConfig",
       "type": "object"
     },
+    "SeparatorPolicy": {
+      "enum": [
+        "trailing",
+        "leading",
+        "never"
+      ],
+      "title": "SeparatorPolicy",
+      "type": "string"
+    },
     "ServerConfig": {
       "properties": {
         "host": {
@@ -215,6 +224,10 @@
         "strategy": {
           "$ref": "#/$defs/InputStrategy",
           "default": "clipboard"
+        },
+        "separator": {
+          "$ref": "#/$defs/SeparatorPolicy",
+          "default": "trailing"
         }
       },
       "title": "SystemInputConfig",

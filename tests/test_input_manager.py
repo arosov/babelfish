@@ -148,21 +148,72 @@ class TestFinalizeBehavior:
     """Tests for text finalization and injection."""
 
     def test_finalize_adds_spacing_between_utterances(self, simulator, mock_keyboard):
-        """Should add space between consecutive finalizations."""
+        """Under the default trailing policy, each Final carries its own space."""
         simulator.finalize("hello")
-        mock_keyboard.type.assert_called_with("hello")
+        mock_keyboard.type.assert_called_with("hello ")
 
         mock_keyboard.reset_mock()
         simulator.finalize("world")
-        mock_keyboard.type.assert_called_with(" world")
+        mock_keyboard.type.assert_called_with("world ")
 
-    def test_finalize_preserves_existing_spacing(self, simulator, mock_keyboard):
-        """Should not add extra space if already present."""
+    def test_finalize_policy_matrix(self, simulator, mock_keyboard):
+        """Pin the spacing behavior of each separator policy."""
+        from babelfish_stt.config import SeparatorPolicy
+
+        # Default (no kwarg) is trailing.
         simulator.finalize("hello")
-
+        mock_keyboard.type.assert_called_with("hello ")
         mock_keyboard.reset_mock()
-        simulator.finalize(" world")
+
+        # Trailing: appends unless text ends with whitespace; a second Final
+        # never gets a leading space.
+        simulator.finalize("world", separator=SeparatorPolicy.TRAILING)
+        mock_keyboard.type.assert_called_with("world ")
+        mock_keyboard.reset_mock()
+        simulator.finalize("test\n", separator=SeparatorPolicy.TRAILING)
+        mock_keyboard.type.assert_called_with("test\n")
+        mock_keyboard.reset_mock()
+        simulator.finalize("next", separator=SeparatorPolicy.TRAILING)
+        mock_keyboard.type.assert_called_with("next ")
+        mock_keyboard.reset_mock()
+
+        # Leading (legacy): the old rule verbatim. First call no space;
+        # second gets a leading space; leading-whitespace text passes through.
+        sim2 = InputSimulator(keyboard_controller=mock_keyboard, throttle_s=0.0)
+        sim2.finalize("hello", separator=SeparatorPolicy.LEADING)
+        mock_keyboard.type.assert_called_with("hello")
+        mock_keyboard.reset_mock()
+        sim2.finalize("world", separator=SeparatorPolicy.LEADING)
         mock_keyboard.type.assert_called_with(" world")
+        mock_keyboard.reset_mock()
+        sim2.finalize("\tagain", separator=SeparatorPolicy.LEADING)
+        mock_keyboard.type.assert_called_with("\tagain")
+        mock_keyboard.reset_mock()
+        sim2.finalize("test\n", separator=SeparatorPolicy.LEADING)
+        mock_keyboard.reset_mock()
+        sim2.finalize("me", separator=SeparatorPolicy.LEADING)
+        mock_keyboard.type.assert_called_with("me")
+        mock_keyboard.reset_mock()
+        sim2.finalize(" world", separator=SeparatorPolicy.LEADING)
+        mock_keyboard.type.assert_called_with(" world")
+        mock_keyboard.reset_mock()
+
+        # Never: pure passthrough.
+        simulator.finalize("raw", separator=SeparatorPolicy.NEVER)
+        mock_keyboard.type.assert_called_with("raw")
+        mock_keyboard.reset_mock()
+
+        # Mode-switch safety: a trailing Final, then switch to leading —
+        # no double space, because last_final_char is " ".
+        simulator.finalize("switched", separator=SeparatorPolicy.TRAILING)
+        mock_keyboard.reset_mock()
+        simulator.finalize("after", separator=SeparatorPolicy.LEADING)
+        mock_keyboard.type.assert_called_with("after")
+        mock_keyboard.reset_mock()
+
+        # Empty text: nothing typed, no separator.
+        simulator.finalize("")
+        mock_keyboard.type.assert_not_called()
 
     def test_finalize_clears_ghost_before_typing(self, simulator, mock_keyboard):
         """Should backspace ghost text before typing final."""
@@ -172,7 +223,7 @@ class TestFinalizeBehavior:
         simulator.finalize("final")
 
         assert mock_keyboard.press.call_count == 5
-        mock_keyboard.type.assert_called_with("final")
+        mock_keyboard.type.assert_called_with("final ")
 
 
 class TestEdgeCases:
@@ -246,7 +297,7 @@ class TestInputSimulatorCore:
 
         simulator.finalize("final")
         assert mock_keyboard.press.call_count == 5
-        mock_keyboard.type.assert_called_with("final")
+        mock_keyboard.type.assert_called_with("final ")
         assert simulator.last_ghost_length == 0
 
     def test_clear_previous_empty(self, simulator, mock_keyboard):
@@ -261,17 +312,21 @@ class TestInputSimulatorCore:
         mock_keyboard.type.assert_called_once()
 
     def test_finalize_with_whitespace_handling(self, simulator, mock_keyboard):
-        """Test finalize spacing between utterances."""
+        """Trailing policy: whitespace-ending Final is unchanged; next is verbatim."""
         simulator.finalize("hello")
-        mock_keyboard.type.assert_called_with("hello")
+        mock_keyboard.type.assert_called_with("hello ")
 
         mock_keyboard.reset_mock()
         simulator.finalize("world")
-        mock_keyboard.type.assert_called_with(" world")
+        mock_keyboard.type.assert_called_with("world ")
 
         mock_keyboard.reset_mock()
-        simulator.finalize("\tagain")
-        mock_keyboard.type.assert_called_with("\tagain")
+        simulator.finalize("test\n")
+        mock_keyboard.type.assert_called_with("test\n")
+
+        mock_keyboard.reset_mock()
+        simulator.finalize("me")
+        mock_keyboard.type.assert_called_with("me ")
 
     def test_grapheme_backspacing_emoji(self, simulator, mock_keyboard):
         """Emoji should be handled as single grapheme."""
