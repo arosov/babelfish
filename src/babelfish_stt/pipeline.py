@@ -7,6 +7,7 @@ from collections import deque
 from typing import List, Optional, Any
 from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
+from babelfish_stt.notifier import DesktopNotifier
 from babelfish_stt.config import (
     VoiceConfig,
     UIConfig,
@@ -28,6 +29,7 @@ class Pipeline(Reconfigurable):
         self.on_mode_change = None  # Callback(is_idle: bool)
         self.test_mode = False  # When True, run VAD only and drop audio
         self.server: Any = None  # Will be set by main.py
+        self.notifier: Optional[DesktopNotifier] = None  # Set by main.py
 
     def request_mode(
         self, is_idle: bool, force: bool = False, source_event: Optional[str] = None
@@ -47,8 +49,11 @@ class Pipeline(Reconfigurable):
                     self.reset_state()
                     callback = self.on_mode_change
 
-                if source_event and self.server:
-                    self.server.trigger_event(source_event)
+                if source_event:
+                    if self.notifier:
+                        self.notifier.notify_event(source_event)
+                    if self.server:
+                        self.server.trigger_event(source_event)
 
                 if callback:
                     callback(False)
@@ -71,8 +76,11 @@ class Pipeline(Reconfigurable):
             self.reset_state()
             callback = self.on_mode_change
 
-            if source_event and self.server:
-                self.server.trigger_event(source_event)
+            if source_event:
+                if self.notifier:
+                    self.notifier.notify_event(source_event)
+                if self.server:
+                    self.server.trigger_event(source_event)
 
             if callback:
                 callback(True)

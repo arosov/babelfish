@@ -1,37 +1,164 @@
-# Babelfish STT Server
+# Babelfish STT
 
-High-performance, low-latency Speech-to-Text (STT) backend for system-wide transcription.
+High-performance, low-latency Speech-to-Text (STT) for system-wide transcription
+injection. One local Parakeet TDT model on one device serves two passes:
+the **Ghost** pass (provisional text while speaking, never committed) and the
+**Final** pass (the one committed transcript per **Utterance** — the only text
+injected anywhere). See [AGENTS.md](AGENTS.md) for the philosophy and
+[ADR 0004](docs/adr/0004-one-parakeet-model-on-one-device.md) for why one model
+on one device won.
 
 ## 🚀 Quick Start
 
 Ensure you have [uv](https://github.com/astral-sh/uv) installed.
 
 ```bash
-# Start the server
+# Standalone transcription in your terminal (no flags, no network)
 uv run babelfish
 
-# Start with a specific wakeword
-uv run babelfish --wakeword hey_jarvis
+# Transcribe into whatever app you're focused on
+uv run babelfish --type
+
+# Run as a WebSocket service (VogonPoet mode)
+uv run babelfish --server
+
+# Or use the convenience launcher (honors the shared model cache)
+scripts/run.bat   # Windows
+scripts/run.sh    # Linux
 ```
+
+## 🖥 Two Deployment Modes
+
+### Standalone (default — no flags)
+
+Fully local, no network listener. Transcripts render in the terminal:
+**Ghost** text appears dim while you speak and is replaced wholesale by bold
+**Final** text when the Utterance ends. Desktop toasts fire on wake/stop-word.
+Nothing is ever typed into other apps.
+
+### `--type`
+
+Ghost text is typed live into the focused application (via clipboard/keyboard
+simulation), removed wholesale, and replaced by Final text when the Utterance
+ends — the same behavior VogonPoet drives. Composes with `--server` and
+wake-words. This is an in-memory override, never written to the config file.
+
+### `--server`
+
+Runs service mode: the WebSocket API on port `8123` (status, transcript
+stream, config hot-reload, mic test), as consumed by VogonPoet. Composes with
+`--type`. Note that VogonPoet's `bootstrap.py` passes `--server --port 8123`
+automatically — never start the service by hand for VogonPoet use.
+`--port 8124` overrides the port but **requires** `--server`.
+
+## 🎛 Triggers
+
+- Start in Idle. Toggle mode with `Ctrl+Space`; Push-To-Talk with `Left Shift`
+  (both configurable in `babelfish.config.json`).
+- `--wakeword hey_jarvis` — local openwakeword detection. The first
+  `--wakeword` run downloads a few MB of openwakeword models.
+- `--stopword "stop listening"` — a transcript stop-phrase; if the argument
+  matches an openwakeword model name instead, it is automatically used as an
+  audio stop-word model. The arg distinguishes this for you.
+- `uv run babelfish --wakeword` lists the available wake-words.
+
+## ⚙️ Configuration
+
+Babelfish reads `babelfish.config.json` from the working directory by default.
+When VogonPoet is driving, it uses `%VOGON_APP_DATA_DIR%/babelfish.config.json`.
+Standalone mode reads it once at startup; in `--server` mode nearly all
+settings hot-reload over the WebSocket without a restart.
+
+`--type` sets this block in memory for the session:
+
+```json
+{
+  "system_input": {
+    "enabled": true,
+    "type_ghost": true,
+    "strategy": "clipboard"
+  }
+}
+```
+
+You can persist the same block in your config file instead of using `--type`.
+
+## 📦 Cache & Model Provisioning
+
+The Parakeet model (`nemo-parakeet-tdt-0.6b-v3`, ~2.4GB) is resolved in this
+order:
+
+1. **Shared cache** — `<cache.cache_dir>/models/nemo-parakeet-tdt-0.6b-v3/`,
+   where `cache.cache_dir` comes from an explicit config value or the
+   `VOGON_APP_CACHE_DIR` environment variable (the VogonPoet cache).
+2. **Repo-local** — `models/nemo-parakeet-tdt-0.6b-v3/` in the checkout.
+3. **onnx-asr default** — the Hugging Face cache; auto-downloads ~2.4GB on
+   first use, then stays cached. Standard `HF_HOME` / `HF_HUB_CACHE`
+   environment variables remain respected by HF.
+
+To reuse an existing Parakeet install from VogonPoet instead of downloading
+again:
+
+```bash
+# Windows
+set VOGON_APP_CACHE_DIR=F:\vogonpoet_cache
+uv run babelfish
+```
+
+or set `"cache": { "cache_dir": "F:\\vogonpoet_cache" }` in your config file.
+Ensure the directory contains `models/nemo-parakeet-tdt-0.6b-v3/`.
+
+> ⚠️ **Caveat:** When VogonPoet drives Babelfish, its `bootstrap.py` owns
+> environment sync, model provisioning, and DLL paths — do not hand-sync any
+> of that. Standalone users pick the ONNX Runtime extra themselves (below).
+
+## 🧩 ONNX Runtime Extras
+
+Install via `uv sync --extra <name>`. Extras are mutually exclusive (uv
+enforces it) — pick exactly one for your hardware/OS:
+
+| Extra           | Platform | Backend                     |
+|-----------------|----------|-----------------------------|
+| `cpu`           | any      | CPU (also the macOS path)   |
+| `nvidia-win`    | Windows  | NVIDIA CUDA                 |
+| `nvidia-linux`  | Linux    | NVIDIA CUDA                 |
+| `windows-gpu`   | Windows  | AMD/Intel/NVIDIA via DirectML |
+| `amd-linux`     | Linux    | AMD ROCm                    |
+| `intel-linux`   | Linux    | Intel OpenVINO              |
+
+```powershell
+# Windows + NVIDIA
+uv sync --extra nvidia-win
+# Linux + NVIDIA
+uv sync --extra nvidia-linux
+```
+
+## 🖤 Platforms
+
+Windows and Linux are supported today. macOS is an intended future target:
+the `cpu` extra is expected to work, but it is currently untested.
 
 ## ✨ Features
 
-- **Ultra-Low Latency:** Uses NVIDIA Parakeet TDT via `onnx-asr`.
-- **Two-Pass Pipeline:** Ghost pass for real-time feedback, Final pass for maximum accuracy.
-- **Hardware Agnostic:** Supports CUDA, ROCm, OpenVINO, and DirectML.
-- **Local Wake-word:** Integrated `openwakeword` support.
-- **Global Hotkeys:** PTT and Toggle support via `pynput`.
-- **WebSocket API:** Real-time configuration and transcription streaming.
+- **Ultra-Low Latency:** NVIDIA Parakeet TDT via `onnx-asr`, hardware-accelerated
+  on CUDA, ROCm, OpenVINO, and DirectML.
+- **Two-Pass Pipeline:** Ghost pass for real-time feedback, Final pass for
+  maximum accuracy.
+- **Local Wake-word / Stop-word:** integrated `openwakeword` support.
+- **Global Hotkeys:** PTT and Toggle via `pynput`.
+- **Desktop Notifications:** wake/stop-word toasts in both modes.
+- **WebSocket API (opt-in):** real-time configuration and transcript streaming.
 
 ## 🛠 Tech Stack
 
-- Python 3.12
-- ONNX Runtime (with GPU acceleration)
-- Silero VAD
-- OpenWakeWord
-- WebSockets
+- Python 3.12 (via `uv`)
+- ONNX Runtime (one wheel flavor per hardware)
+- Silero VAD, OpenWakeWord
+- WebSockets, notify-py
 
 ## 📖 Documentation
 
 - [AGENTS.md](AGENTS.md): Project philosophy and evolution.
 - [launcher.md](launcher.md): Detailed CLI usage and developer commands.
+- [GLOSSARY.md](GLOSSARY.md): Load-bearing vocabulary (Ghost, Final, Utterance).
+- [docs/adr](docs/adr/): Architecture decision records.

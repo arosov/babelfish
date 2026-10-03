@@ -19,11 +19,42 @@ os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 logger = logging.getLogger(__name__)
 
 
+def resolve_model_path(
+    cache_dir: Optional[str], base_dir: Path, model_name: str
+) -> Optional[Path]:
+    """
+    Model resolution order:
+    1. Shared cache dir (config `cache.cache_dir`, auto-populated from
+       VOGON_APP_CACHE_DIR) — e.g. VogonPoet's provisioned cache.
+    2. Repo-local models/ directory.
+    3. None -> onnx-asr default path (HF cache; auto-downloads on first use).
+    """
+    candidates = []
+
+    if cache_dir:
+        candidates.append(("shared-cache", Path(cache_dir) / "models" / model_name))
+
+    candidates.append(("repo", base_dir / "models" / model_name))
+
+    for source, candidate in candidates:
+        if candidate.exists():
+            logger.info(f"📦 Model source ({source}): {candidate}")
+            return candidate
+
+    logger.info(
+        "📦 No local model found; onnx-asr will use its default HF cache "
+        "(auto-download on first use)."
+    )
+    return None
+
+
 class STTEngine(Reconfigurable):
     """
     Unified STT engine using onnx-asr for hardware-accelerated inference
     on AMD, Intel, and NVIDIA GPUs across Windows and Linux.
     """
+
+    MODEL_NAME = "nemo-parakeet-tdt-0.6b-v3"
 
     config_key = "pipeline"
 
@@ -34,13 +65,13 @@ class STTEngine(Reconfigurable):
         self.device_type = self._resolve_device(target_device)
         self.config_ref = config  # Keep reference to update status
 
-        # Default model search
-        base_dir = Path(__file__).resolve().parent.parent.parent
-        models_dir = base_dir / "models"
-
-        # We expect bootstrap.py to have provisioned the model here
-        model_name = "nemo-parakeet-tdt-0.6b-v3"
-        model_path = models_dir / model_name
+        # Model resolution order:
+        # 1. Shared cache dir (config `cache.cache_dir`, auto-populated from
+        #    VOGON_APP_CACHE_DIR) — e.g. VogonPoet's provisioned cache.
+        # 2. Repo-local models/ directory (used when running from a checkout
+        #    with a local model copy).
+        # 3. onnx-asr default path (HF cache; auto-downloads on first use).
+        model_path = self._resolve_model_path(config)
 
         # Quantization Policy: full precision everywhere by default.
         # An explicit hardware.quantization setting is still honoured.
@@ -61,8 +92,8 @@ class STTEngine(Reconfigurable):
 
         try:
             self.model = onnx_asr.load_model(
-                model_name,
-                path=str(model_path) if model_path.exists() else None,
+                self.MODEL_NAME,
+                path=str(model_path) if model_path else None,
                 quantization=quantization,
                 providers=providers,
             )
@@ -73,8 +104,8 @@ class STTEngine(Reconfigurable):
                 logger.warning("Retrying with CPU provider...")
                 self.device_type = "cpu"  # Update device type to cpu
                 self.model = onnx_asr.load_model(
-                    model_name,
-                    path=str(model_path) if model_path.exists() else None,
+                    self.MODEL_NAME,
+                    path=str(model_path) if model_path else None,
                     quantization=None,
                     providers=["CPUExecutionProvider"],
                 )
@@ -104,6 +135,17 @@ class STTEngine(Reconfigurable):
             logger.info(
                 f"📊 VRAM Status: Total={mem_after['total']}GB, Baseline={mem_before['used']}GB, ModelLoaded={mem_after['used']}GB"
             )
+
+    def _resolve_model_path(self, config: BabelfishConfig) -> Optional[Path]:
+        """
+        Returns the first existing local model directory, or None to let
+        onnx-asr use its default HF cache (auto-download on first use).
+        """
+        cache_dir = config.cache.cache_dir
+
+        # Repo checkout layout: src/babelfish_stt/engine.py -> repo root
+        base_dir = Path(__file__).resolve().parent.parent.parent
+        return resolve_model_path(cache_dir, base_dir, self.MODEL_NAME)
 
     def _resolve_device(self, device: str) -> str:
         from babelfish_stt.hardware import probe_hardware_facts

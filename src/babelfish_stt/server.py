@@ -2,14 +2,10 @@ import asyncio
 import json
 import logging
 import os
-import shutil
-import subprocess
-import platform
 from typing import Set, Dict, Optional, Any
 
 import websockets
 from pydantic import BaseModel
-from notifypy import Notify
 
 from babelfish_stt.config_manager import ConfigManager
 from babelfish_stt.reconfigurable import Reconfigurable
@@ -76,52 +72,8 @@ class BabelfishServer(Reconfigurable):
         }
         await self.broadcast_message(event_msg)
 
-    def _send_desktop_notification(
-        self, title: str, message: str, timeout_sec: int = 4
-    ):
-        """Sends a cross-platform desktop notification with best-effort timeout support."""
-        if platform.system().lower() == "linux":
-            # On Linux, notify-send is the most reliable way to respect the timeout
-            notify_send = shutil.which("notify-send")
-            if notify_send:
-                try:
-                    subprocess.Popen(
-                        [
-                            notify_send,
-                            "-t",
-                            str(timeout_sec * 1000),
-                            "-a",
-                            "VogonPoet",
-                            title,
-                            message,
-                        ]
-                    )
-                    return
-                except Exception as e:
-                    logger.error(f"notify-send failed: {e}")
-
-        # Fallback for Windows/macOS or if notify-send is missing
-        try:
-            notification = Notify()
-            notification.application_name = "VogonPoet"
-            notification.title = title
-            notification.message = message
-            # notifypy doesn't support timeout directly, but we use it as fallback
-            notification.send(block=False)
-        except Exception as e:
-            logger.error(f"notifypy failed: {e}")
-
     def trigger_event(self, event_name: str):
         logger.info(f"Triggering event: {event_name}")
-
-        # Send desktop notification if enabled
-        if self.config_manager.config.ui.notifications:
-            if event_name == "wakeword_detected":
-                self._send_desktop_notification(
-                    "VogonPoet", "Wake word detected, listening"
-                )
-            elif event_name == "stop_word_detected":
-                self._send_desktop_notification("VogonPoet", "Stop word detected, idle")
 
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(

@@ -34,6 +34,7 @@ from babelfish_stt.display import (
 from babelfish_stt.vad import SileroVAD
 from babelfish_stt.config_manager import ConfigManager
 from babelfish_stt.server import BabelfishServer
+from babelfish_stt.notifier import DesktopNotifier
 from babelfish_stt.wakeword import WakeWordEngine
 from babelfish_stt.pipeline import StandardPipeline, StopWordDetector
 from babelfish_stt.hotkey_manager import HotkeyManager
@@ -186,9 +187,14 @@ async def run_babelfish(
     stopword: Optional[str] = None,
     force_cpu: bool = False,
     port: Optional[int] = None,
+    serve: bool = False,
+    type_into_apps: bool = False,
 ):
     logger.info("=" * 50)
     logger.info("🚀 BABELFISH STT INITIALIZING")
+
+    mode = "SERVICE (--server, WebSocket API enabled)" if serve else "STANDALONE"
+    logger.info(f"   MODE: {mode}")
 
     # 2. Config Load & Validation
     config_manager = ConfigManager()
@@ -200,10 +206,15 @@ async def run_babelfish(
     else:
         logger.info("✅ Configuration validated against hardware.")
 
-    # Override config with CLI flags if provided
+    # Override config with CLI flags if provided (in-memory only, never saved)
     if force_cpu:
         config_manager.config.hardware.device = "cpu"
         logger.info("   MODE: Force CPU Execution (CLI Override)")
+
+    if type_into_apps:
+        config_manager.config.system_input.enabled = True
+        config_manager.config.system_input.type_ghost = True
+        logger.info("   MODE: Typing Ghost/Final text into the focused app (CLI Override)")
 
     if port is not None:
         config_manager.config.server.port = port
@@ -232,36 +243,44 @@ async def run_babelfish(
     if config_manager.config.voice.wakeword:
         logger.info(f"   WAKE-WORD: {config_manager.config.voice.wakeword}")
 
-    # 3. Start Server Early (Async)
-    server = BabelfishServer(config_manager)
-    config_manager.register(server)
+    # 3. Start Server (Service mode only; standalone runs fully offline)
+    server = None
+    if serve:
+        server = BabelfishServer(config_manager)
+        config_manager.register(server)
 
-    await server.start()
-    logger.info(
-        f"   SERVER: WebSockets running on ws://{config_manager.config.server.host}:{config_manager.config.server.port}/config"
-    )
+        await server.start()
+        logger.info(
+            f"   SERVER: WebSockets running on ws://{config_manager.config.server.host}:{config_manager.config.server.port}/config"
+        )
 
-    await asyncio.sleep(0.5)
+        await asyncio.sleep(0.5)
+
     logger.info("=" * 50)
 
     # 4. Initialize Audio Pipeline (Heavy/Blocking)
+    async def status(message: str):
+        """Forward bootstrap progress to WebSocket clients when in service mode."""
+        if server:
+            await server.broadcast_bootstrap_status(message)
+
     async def heavy_init():
         device = config_manager.config.hardware.device
 
-        await server.broadcast_bootstrap_status("Loading Silero VAD...")
+        await status("Loading Silero VAD...")
         vad = await asyncio.to_thread(SileroVAD)
 
-        await server.broadcast_bootstrap_status(f"Loading STT Engine ({device})...")
+        await status(f"Loading STT Engine ({device})...")
         engine = await asyncio.to_thread(STTEngine, config=config_manager.config)
 
         # 5. Hardware Self-Calibration
         if config_manager.config.pipeline.performance.tier == "auto":
-            await server.broadcast_bootstrap_status("Calibrating Performance...")
+            await status("Calibrating Performance...")
             perf_data = await asyncio.to_thread(engine.benchmark)
             config_manager.update({"pipeline": {"performance": perf_data}})
             logger.info(f"✅ Performance calibrated: {perf_data['tier'].upper()}")
 
-        await server.broadcast_bootstrap_status(
+        await status(
             f"Loading WakeWord ({config_manager.config.voice.wakeword or 'None'})..."
         )
         app_data_dir = os.environ.get("VOGON_APP_DATA_DIR")
@@ -274,17 +293,17 @@ async def run_babelfish(
             app_data_dir=app_data_dir,
         )
 
-        await server.broadcast_bootstrap_status("Initializing Audio Stream...")
+        await status("Initializing Audio Stream...")
         streamer = await asyncio.to_thread(
             AudioStreamer,
             microphone_name=config_manager.config.hardware.microphone_name,
         )
 
-        display = MultiDisplay(
-            TerminalDisplay(),
-            ServerDisplay(server),
-            InputDisplay(config_manager),
-        )
+        displays: List[Any] = [TerminalDisplay()]
+        if server:
+            displays.append(ServerDisplay(server))
+        displays.append(InputDisplay(config_manager))
+        display = MultiDisplay(*displays)
         pipeline = StandardPipeline(vad, engine, display)
 
         if pipeline.stop_detector:
@@ -295,21 +314,27 @@ async def run_babelfish(
     logger.info("⏳ Loading engines and models (this may take a few seconds)...")
     vad, engine, ww_engine, streamer, display, pipeline = await heavy_init()
 
-    # Link pipeline to server and register remaining components for hot-reloading
-    server.set_pipeline(pipeline)
-    pipeline.server = server
+    # Initialize the notifier (both modes get wake/stop-word desktop toasts)
+    notifier = DesktopNotifier()
+    config_manager.register(notifier)
+    pipeline.notifier = notifier
+
+    # In service mode, link pipeline to server and register remaining
+    # components for hot-reloading
+    if server:
+        server.set_pipeline(pipeline)
+        pipeline.server = server
+
+        # Update server's internal initial_config to include runtime stats
+        # (active_device, VRAM). This prevents unnecessary restarts when
+        # switching from 'auto' to the detected device.
+        server.initial_config = config_manager.config.model_copy(deep=True)
+        await server.send_initial_state(None)
 
     # Initialize and start global hotkeys
     hotkey_manager = HotkeyManager(pipeline, server)
     hotkey_manager.start(config_manager.config)
     config_manager.register(hotkey_manager)
-
-    # Update server's internal initial_config to include runtime stats (active_device, VRAM)
-    # This prevents unnecessary restarts when switching from 'auto' to the detected device.
-    server.initial_config = config_manager.config.model_copy(deep=True)
-
-    # Broadcast updated config (with VRAM stats and active device) to clients
-    await server.send_initial_state(None)
 
     config_manager.register(vad)
     config_manager.register(engine)
@@ -319,7 +344,7 @@ async def run_babelfish(
     if pipeline.stop_detector:
         config_manager.register(pipeline.stop_detector)
 
-    await server.broadcast_bootstrap_status("Engine Ready!")
+    await status("Engine Ready!")
     logger.info("✅ Initialization complete.")
 
     # 3. Start STT Loop in Background Thread
@@ -348,12 +373,7 @@ async def run_babelfish(
         logger.info("✅ Shutdown complete.")
 
 
-def main():
-    # Configure logging early to ensure probe() output is visible
-    logging.basicConfig(
-        level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s", force=True
-    )
-
+def build_parser() -> argparse.ArgumentParser:
     available_ww = list(openwakeword.MODELS.keys())
 
     parser = argparse.ArgumentParser(
@@ -367,10 +387,25 @@ def main():
     )
 
     parser.add_argument(
+        "--server",
+        action="store_true",
+        help="Run in service mode: expose the WebSocket API (for VogonPoet). "
+        "Default is standalone mode (no network listener).",
+    )
+
+    parser.add_argument(
+        "--type",
+        dest="type_into_apps",
+        action="store_true",
+        help="Type transcripts into the focused application (Ghost live, "
+        "replaced by Final when the turn ends). In-memory override, not saved.",
+    )
+
+    parser.add_argument(
         "--port",
         type=int,
         default=None,
-        help="Server port (default: from config or 8123)",
+        help="WebSocket port in --server mode (default: from config or 8123)",
     )
 
     parser.add_argument(
@@ -387,11 +422,30 @@ def main():
         help="Specific word that stops transcription",
     )
 
-    args = parser.parse_args()
+    return parser
+
+
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.port is not None and not args.server:
+        parser.error("--port requires --server")
+
+    return args
+
+
+def main():
+    # Configure logging early to ensure probe() output is visible
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s", force=True
+    )
+
+    args = parse_args()
 
     if args.wakeword == "LIST_OPTIONS":
         logger.info("Available Wake-words:")
-        for ww in available_ww:
+        for ww in list(openwakeword.MODELS.keys()):
             logger.info(f"  - {ww}")
         sys.exit(0)
 
@@ -405,6 +459,8 @@ def main():
             stopword=args.stopword,
             force_cpu=args.cpu,
             port=args.port,
+            serve=args.server,
+            type_into_apps=args.type_into_apps,
         )
     )
 

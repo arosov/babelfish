@@ -33,13 +33,23 @@ Babelfish is designed to be autonomous and hardware-aware:
 
 ## 📦 Distribution & Orchestration
 
-The server runs as a background service. Interaction is primarily via the `babelfish` CLI tool provided by the package:
-*   `uv run babelfish` - Starts the server with optimal hardware defaults.
+The server runs as a background service when driven by VogonPoet, and is also
+directly usable standalone from a terminal (no flags, no network). Interaction
+is primarily via the `babelfish` CLI tool provided by the package:
+*   `uv run babelfish` - Standalone mode (default): terminal transcripts, no WebSocket listener.
+*   `uv run babelfish --type` - Standalone + type Ghost/Final text into the focused app (in-memory override).
+*   `uv run babelfish --server` - Service mode: WebSocket API for VogonPoet (behaves as before).
 *   `uv run babelfish --wakeword hey_jarvis` - Starts with specific wakeword activation.
 *   `uv run babelfish --wakeword` - Lists available wake-words.
 *   `uv run babelfish --cpu` - Forces CPU execution even if a GPU is available.
-*   `uv run babelfish --port 8124` - Overrides the WebSocket port (default 8123).
+*   `uv run babelfish --port 8124` - Overrides the WebSocket port (requires `--server`; default 8123).
 *   `uv run babelfish --stopword "stop listening"` - Sets a word that ends transcription.
+
+Convenience launchers `scripts/run.bat` / `scripts/run.sh` pipe args through to
+the CLI, default `VOGON_APP_CACHE_DIR` to the shared VogonPoet cache, and reuse
+VogonPoet's managed uv binary when available (falling back to `uv` on PATH).
+Model resolution order: shared cache (`cache.cache_dir` or `VOGON_APP_CACHE_DIR`) →
+repo-local `models/` → onnx-asr HF cache (auto-download).
 
 Detailed execution patterns and developer commands are documented in `launcher.md`.
 
