@@ -8,9 +8,10 @@ backspacing, word stitching, and finalization behavior.
 import pytest
 import numpy as np
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from babelfish_stt.input_manager import InputSimulator
+from pynput.keyboard import Key
 
 
 @pytest.fixture
@@ -28,54 +29,93 @@ def throttled_simulator(mock_keyboard):
     return InputSimulator(keyboard_controller=mock_keyboard, throttle_s=0.1)
 
 
-class TestGhostTextBehavior:
-    """Tests for ghost text update and backspacing behavior."""
+@pytest.fixture
+def mock_pyperclip():
+    """Ghosts are injected via the clipboard strategy; keep tests hermetic."""
+    with patch("babelfish_stt.input_strategies.pyperclip") as m:
+        yield m
 
-    def test_ghost_timing_respects_throttle(self, throttled_simulator, mock_keyboard):
+
+def _backspace_calls(mock_keyboard):
+    """Press calls that are actual backspace keystrokes."""
+    return [
+        c for c in mock_keyboard.press.call_args_list
+        if c.args and c.args[0] == Key.backspace
+    ]
+
+
+class TestGhostTextBehavior:
+    """Tests for ghost text update behavior (stitch, throttle, re-paste)."""
+
+    def test_ghost_timing_respects_throttle(
+        self, throttled_simulator, mock_keyboard, mock_pyperclip
+    ):
         """Ghost updates should be throttled to prevent overwhelming the system."""
         import time
 
         throttled_simulator.update_ghost("hello")
-        call_count_1 = mock_keyboard.type.call_count
+        pastes_1 = mock_pyperclip.copy.call_count
 
-        time.sleep(0.06)
+        time.sleep(0.06)  # Wait slightly more than half the throttle
         throttled_simulator.update_ghost("hello w")
-        call_count_2 = mock_keyboard.type.call_count
+        pastes_2 = mock_pyperclip.copy.call_count
 
-        time.sleep(0.06)
+        time.sleep(0.06)  # Cumulative ~120ms since the last paste
         throttled_simulator.update_ghost("hello wo")
-        call_count_3 = mock_keyboard.type.call_count
+        pastes_3 = mock_pyperclip.copy.call_count
 
-        assert call_count_1 == 1
-        assert call_count_2 == call_count_1
+        assert pastes_1 == 1
+        # Within the 100ms throttle window -> suppressed
+        assert pastes_2 == pastes_1
+        # Past the throttle window -> re-pasted
+        assert pastes_3 == pastes_2 + 1
 
-    def test_ghost_incremental_backspacing(self, simulator, mock_keyboard):
-        """Should only backspace changed suffix, not entire text."""
+    def test_ghost_replacement_clears_and_repastes(
+        self, simulator, mock_keyboard, mock_pyperclip
+    ):
+        """A changed ghost clears the whole displayed text and re-pastes in full."""
+        import grapheme
+
         simulator.update_ghost("hello world")
         mock_keyboard.reset_mock()
+        mock_pyperclip.reset_mock()
 
         simulator.update_ghost("hello there")
 
-        backspace_calls = mock_keyboard.press.call_count
-        type_call = mock_keyboard.type.call_args[0][0]
+        # All 11 graphemes of "hello world" are cleared before re-pasting
+        assert len(_backspace_calls(mock_keyboard)) == 11
+        mock_pyperclip.copy.assert_called_once_with("hello there")
+        assert simulator.last_ghost_length == len(
+            list(grapheme.graphemes("hello there"))
+        )
 
-        assert backspace_calls == 5
-        assert type_call == "there"
+    def test_word_stitching_extends_prefix(self, simulator):
+        """An extended ASR frame keeps the previous words."""
+        assert simulator._stitch_words(["the"], "the quick".split()) == [
+            "the",
+            "quick",
+        ]
 
-    def test_ghost_word_stitching(self, simulator, mock_keyboard):
-        """Word stitching should handle incremental ASR updates correctly."""
-        simulator.update_ghost("the")
-        mock_keyboard.reset_mock()
+    def test_word_stitching_joins_overlapping_windows(self, simulator):
+        """ASR windows that repeat already-typed words are stitched, not duplicated."""
+        assert simulator._stitch_words(["the", "quick"], "quick brown".split()) == [
+            "the",
+            "quick",
+            "brown",
+        ]
 
-        simulator.update_ghost("the quick")
-        type_call_1 = mock_keyboard.type.call_args[0][0]
+    def test_word_stitching_collapses_repeated_words(self, simulator):
+        """STT repetitions of the same word are collapsed."""
+        assert simulator._stitch_words(["the"], ["the", "the", "quick"]) == [
+            "the",
+            "quick",
+        ]
 
-        mock_keyboard.reset_mock()
-        simulator.update_ghost("the quick brown")
-        type_call_2 = mock_keyboard.type.call_args[0][0]
-
-        assert type_call_1 == " quick"
-        assert type_call_2 == " brown"
+    def test_word_stitching_replaces_on_no_overlap(self, simulator):
+        """Unrelated text replaces the previous ghost wholesale."""
+        assert simulator._stitch_words(
+            ["the", "quick", "brown", "fox"], "completely different".split()
+        ) == ["completely", "different"]
 
     def test_ghost_handles_unicode_graphemes(self, simulator, mock_keyboard):
         """Unicode characters should be handled as single graphemes."""
@@ -183,20 +223,20 @@ class TestInputSimulatorCore:
         simulator.type_text("hello")
         mock_keyboard.type.assert_called_once_with("hello")
 
-    def test_update_ghost_first_call(self, simulator, mock_keyboard):
-        """First ghost call should type the text directly."""
+    def test_update_ghost_first_call(self, simulator, mock_keyboard, mock_pyperclip):
+        """First ghost call pastes the text via clipboard."""
         simulator.update_ghost("test")
-        mock_keyboard.type.assert_called_once_with("test")
+        mock_pyperclip.copy.assert_called_once_with("test")
         assert simulator.last_ghost_length == 4
 
-    def test_update_ghost_incremental(self, simulator, mock_keyboard):
-        """Update ghost should only type the delta."""
+    def test_update_ghost_incremental(self, simulator, mock_keyboard, mock_pyperclip):
+        """Even pure extensions re-paste the full ghost via clipboard."""
         simulator.update_ghost("test")
+        mock_pyperclip.reset_mock()
         mock_keyboard.reset_mock()
 
         simulator.update_ghost("testing")
-        assert mock_keyboard.press.call_count == 0
-        mock_keyboard.type.assert_called_once_with("ing")
+        mock_pyperclip.copy.assert_called_once_with("testing")
         assert simulator.last_ghost_length == 7
 
     def test_finalize_basic(self, simulator, mock_keyboard):
@@ -240,7 +280,7 @@ class TestInputSimulatorCore:
 
         mock_keyboard.reset_mock()
         simulator.update_ghost("updated")
-        assert mock_keyboard.press.call_count == 1
+        assert len(_backspace_calls(mock_keyboard)) == 1
 
     def test_grapheme_backspacing_combining(self, simulator, mock_keyboard):
         """Combining characters should be handled correctly."""

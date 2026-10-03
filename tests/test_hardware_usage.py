@@ -47,20 +47,29 @@ class TestHardwareUsage(unittest.TestCase):
         self.assertEqual(usage["used"], 6.0)
 
     @patch("sys.platform", "win32")
+    @patch("babelfish_stt.hardware._query_dxgi_adapters")
     @patch("subprocess.check_output")
-    def test_get_windows_memory(self, mock_output):
+    def test_get_windows_memory(self, mock_output, mock_dxgi):
+        mock_dxgi.return_value = [
+            {
+                "name": "Test GPU",
+                "total_gb": 8.0,
+                "wmi_key": "luid_0x00000000_0x0000ABCD_phys_0",
+                "vendor_id": 4318,
+                "integrated": False,
+            }
+        ]
+
         def side_effect(cmd, **kwargs):
-            if "Get-CimInstance" in cmd:
-                return b"8589934592\n"  # 8GB
-            if "Get-Counter" in cmd:
-                return b"1073741824\n"  # 1GB
+            if "Get-CimInstance" in " ".join(cmd):
+                return b"1073741824\n"  # 1GB dedicated usage
             return b""
 
         mock_output.side_effect = side_effect
 
         usage = get_memory_usage("dml")
         self.assertEqual(usage["total"], 8.0)
-        self.assertEqual(usage["used"], 1.0)
+        self.assertAlmostEqual(usage["used"], 1.0)
 
 
 if __name__ == "__main__":

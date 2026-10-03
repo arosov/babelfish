@@ -28,35 +28,53 @@ class TestStartupConfig(unittest.TestCase):
         cm = ConfigManager(config_path=self.test_config_path)
         self.assertEqual(cm.config.hardware.device, "auto")
 
+    @patch("sounddevice.query_devices")
+    @patch("babelfish_stt.hardware.get_best_gpu_index")
     @patch("onnxruntime.get_available_providers")
     @patch("babelfish_stt.hardware.get_gpu_info")
     @patch("babelfish_stt.hardware.find_best_microphone")
-    def test_generate_optimal_defaults_cuda(self, mock_mic, mock_gpu, mock_providers):
+    def test_generate_optimal_defaults_cuda(
+        self, mock_mic, mock_gpu, mock_providers, mock_best_idx, mock_sd_query
+    ):
         mock_providers.return_value = ["CUDAExecutionProvider", "CPUExecutionProvider"]
         mock_gpu.return_value = {
             "cuda_available": True,
             "name": "RTX 3080",
             "vram_gb": 10.0,
         }
+        mock_best_idx.return_value = 0
         mock_mic.return_value = 0
+
+        def sd_query(*args, **kwargs):
+            if args:  # query_devices(index, "input") -> single device
+                return {"name": "Mic 1", "max_input_channels": 1, "default_samplerate": 48000.0}
+            return [{"name": "Mic 1", "max_input_channels": 1, "default_samplerate": 48000.0}]
+
+        mock_sd_query.side_effect = sd_query
 
         hm = HardwareManager().probe()
         cm = ConfigManager(config_path=self.test_config_path)
 
         cm.generate_optimal_defaults(hm)
 
-        self.assertEqual(cm.config.hardware.device, "cuda")
+        # Device selection is delegated to placement.resolve_device at engine
+        # startup, so optimal defaults always save "auto" regardless of GPU.
+        self.assertEqual(cm.config.hardware.device, "auto")
+        self.assertEqual(cm.config.hardware.microphone_name, "Mic 1")
 
         self.assertTrue(os.path.exists(self.test_config_path))
         with open(self.test_config_path, "r") as f:
             data = json.load(f)
-            self.assertEqual(data["hardware"]["device"], "cuda")
+            self.assertEqual(data["hardware"]["device"], "auto")
+            self.assertEqual(data["hardware"]["microphone_name"], "Mic 1")
 
+    @patch("sounddevice.query_devices")
+    @patch("babelfish_stt.hardware.get_best_gpu_index")
     @patch("onnxruntime.get_available_providers")
     @patch("babelfish_stt.hardware.get_gpu_info")
     @patch("babelfish_stt.hardware.find_best_microphone")
     def test_generate_optimal_defaults_cpu_low_vram(
-        self, mock_mic, mock_gpu, mock_providers
+        self, mock_mic, mock_gpu, mock_providers, mock_best_idx, mock_sd_query
     ):
         mock_providers.return_value = ["CPUExecutionProvider"]
         mock_gpu.return_value = {
@@ -64,14 +82,23 @@ class TestStartupConfig(unittest.TestCase):
             "name": "GTX 1650",
             "vram_gb": 4.0,
         }
+        mock_best_idx.return_value = 0
         mock_mic.return_value = 0
+
+        def sd_query(*args, **kwargs):
+            if args:
+                return {"name": "Mic 1", "max_input_channels": 1, "default_samplerate": 48000.0}
+            return [{"name": "Mic 1", "max_input_channels": 1, "default_samplerate": 48000.0}]
+
+        mock_sd_query.side_effect = sd_query
 
         hm = HardwareManager().probe()
         cm = ConfigManager(config_path=self.test_config_path)
 
         cm.generate_optimal_defaults(hm)
 
-        self.assertEqual(cm.config.hardware.device, "cpu")
+        self.assertEqual(cm.config.hardware.device, "auto")
+        self.assertEqual(cm.config.hardware.microphone_name, "Mic 1")
 
     @patch("babelfish_stt.hardware.get_gpu_info")
     @patch("babelfish_stt.hardware.find_best_microphone")

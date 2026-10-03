@@ -12,7 +12,7 @@ class TestSmartRestart(unittest.TestCase):
         )
         server = BabelfishServer(config_manager)
 
-        server.initial_config.hardware.active_device = "cuda:0"
+        server.initial_config.status.active_device = "cuda:0"
 
         new_config = BabelfishConfig(hardware=HardwareConfig(device="cuda:0"))
         server.reconfigure(new_config)
@@ -25,7 +25,7 @@ class TestSmartRestart(unittest.TestCase):
             hardware=HardwareConfig(device="cuda:0")
         )
         server = BabelfishServer(config_manager)
-        server.initial_config.hardware.active_device = "cuda:0"
+        server.initial_config.status.active_device = "cuda:0"
 
         new_config = BabelfishConfig(hardware=HardwareConfig(device="cpu"))
         server.reconfigure(new_config)
@@ -39,7 +39,7 @@ class TestSmartRestart(unittest.TestCase):
             server=ServerConfig(host="127.0.0.1", port=8123),
         )
         server = BabelfishServer(config_manager)
-        server.initial_config.hardware.active_device = "cpu"
+        server.initial_config.status.active_device = "cpu"
 
         new_config = BabelfishConfig(
             hardware=HardwareConfig(device="cpu"),

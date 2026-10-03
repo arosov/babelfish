@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, patch
 from babelfish_stt.input_manager import InputSimulator
 from pynput.keyboard import Key
 
@@ -14,23 +14,37 @@ def simulator(mock_keyboard):
     return InputSimulator(keyboard_controller=mock_keyboard, throttle_s=0.0)
 
 
+@pytest.fixture
+def mock_pyperclip():
+    """Ghosts are injected via the clipboard strategy; keep tests hermetic."""
+    with patch("babelfish_stt.input_strategies.pyperclip") as m:
+        yield m
+
+
+def _backspace_calls(mock_keyboard):
+    """Press calls that are actual backspace keystrokes."""
+    return [
+        c for c in mock_keyboard.press.call_args_list
+        if c.args and c.args[0] == Key.backspace
+    ]
+
+
 def test_type_text(simulator, mock_keyboard):
     simulator.type_text("hello")
     mock_keyboard.type.assert_called_once_with("hello")
 
 
-def test_update_ghost(simulator, mock_keyboard):
-    # First ghost
+def test_update_ghost(simulator, mock_keyboard, mock_pyperclip):
+    # First ghost is pasted via clipboard in full
     simulator.update_ghost("test")
-    mock_keyboard.type.assert_called_once_with("test")
+    mock_pyperclip.copy.assert_called_once_with("test")
     assert simulator.last_ghost_length == 4
 
-    # Update ghost
+    # Even pure extensions re-paste the full ghost via clipboard
     mock_keyboard.reset_mock()
+    mock_pyperclip.reset_mock()
     simulator.update_ghost("testing")
-    # Should not backspace since "test" is a prefix of "testing"
-    assert mock_keyboard.press.call_count == 0
-    mock_keyboard.type.assert_called_once_with("ing")
+    mock_pyperclip.copy.assert_called_once_with("testing")
     assert simulator.last_ghost_length == 7
 
 
@@ -87,10 +101,10 @@ def test_grapheme_backspacing(simulator, mock_keyboard):
 
     mock_keyboard.reset_mock()
     simulator.update_ghost("updated")
-    # Should only backspace once
-    assert mock_keyboard.press.call_count == 1
+    # The single displayed emoji grapheme is backspaced, then re-pasted
+    assert len(_backspace_calls(mock_keyboard)) == 1
 
-    # Combined characters (NFC normalization)
+    # Combined characters (NFC-aware grapheme counting)
     # 'e' + combining accent (NFD)
     decomposed = "e\u0301"
     mock_keyboard.reset_mock()
@@ -101,4 +115,4 @@ def test_grapheme_backspacing(simulator, mock_keyboard):
     mock_keyboard.reset_mock()
     simulator.finalize("done")
     # Should only backspace once for the accented 'e'
-    assert mock_keyboard.press.call_count == 1
+    assert len(_backspace_calls(mock_keyboard)) == 1
