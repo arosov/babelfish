@@ -29,6 +29,12 @@ full audio buffer. This is the only text that is injected or typed into the focu
 application.
 _Avoid_: corrected, committed, result
 
+**Separator**:
+The space typed after each Final. It belongs to the typing layer, never the
+transcript: it is typed with the Final it follows, and the next Final is
+typed verbatim. Controlled by `system_input.separator`.
+_Avoid_: spacing, gap
+
 ### Passes
 
 **Ghost pass**:
