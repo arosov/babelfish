@@ -1,11 +1,12 @@
 import onnx_asr
+import onnxruntime
 import numpy as np
 import logging
 import os
 import threading
 import sys
 from pathlib import Path
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Dict
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import PipelineConfig, BabelfishConfig
 from babelfish_stt.hardware import get_memory_usage, get_device_name
@@ -17,6 +18,52 @@ from pydantic import BaseModel
 os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 
 logger = logging.getLogger(__name__)
+
+# GPU backend -> (required provider, ORT flavor package), used by
+# _degraded_device_fix to print the exact remediation when ORT lacks the
+# provider a resolved device needs. The uv extra is derived below (cuda
+# is platform-dependent). Mirrors ORT_FLAVOR in scripts/bootstrap.py —
+# the engine-side loud fallback of the bootstrap's verify-and-self-heal.
+_DEGRADED_FIX: Dict[str, tuple] = {
+    "cuda": ("CUDAExecutionProvider", "onnxruntime-gpu"),
+    "dml": ("DmlExecutionProvider", "onnxruntime-directml"),
+    "rocm": ("ROCMExecutionProvider", "onnxruntime-rocm"),
+    "openvino": ("OpenVINOExecutionProvider", "onnxruntime-openvino"),
+    "coreml": ("CoreMLExecutionProvider", "onnxruntime"),
+}
+_BACKEND_EXTRA = {
+    "dml": "windows-gpu",
+    "rocm": "amd-linux",
+    "openvino": "intel-linux",
+    "coreml": "cpu",
+}
+
+
+def _degraded_device_fix(device: str) -> Optional[str]:
+    """Remediation text when ORT lacks the provider `device` needs, else None.
+
+    A resolved GPU device whose provider is missing from
+    `get_available_providers()` usually means another ORT flavor wheel
+    (plain / gpu / directml / openvino / rocm all ship the same top-level
+    `onnxruntime/` package) currently owns the pyd — a shadowed install.
+    """
+    backend = device.partition(":")[0]
+    if backend == "cuda":
+        extra = "nvidia-win" if sys.platform == "win32" else "nvidia-linux"
+    else:
+        extra = _BACKEND_EXTRA.get(backend)
+    entry = _DEGRADED_FIX.get(backend)
+    if not extra or not entry:
+        return None
+    required, package = entry
+    available = list(onnxruntime.get_available_providers())
+    if required in available:
+        return None
+    return (
+        f"Device {device} requested but {required} is not available "
+        f"(providers: {available}). Likely a shadowed ORT install. "
+        f"Fix: uv sync --extra {extra} --reinstall-package {package}"
+    )
 
 
 def resolve_model_path(
@@ -85,6 +132,13 @@ class STTEngine(Reconfigurable):
         # Map Babelfish device to ONNX Runtime providers
         providers = self._get_providers(self.device_type)
 
+        # A GPU device resolved while its provider is missing from the
+        # installed onnxruntime means a shadowed/flavor-mismatched install:
+        # say so loudly instead of silently degrading to CPU.
+        degraded_fix = _degraded_device_fix(self.device_type)
+        if degraded_fix:
+            logger.warning(f"⚠️ {degraded_fix}")
+
         logger.info(f"🚀 Initializing onnx-asr (Providers: {providers})...")
 
         # Measure Baseline Memory (Before loading model)
@@ -101,6 +155,11 @@ class STTEngine(Reconfigurable):
             logger.error(f"Failed to load onnx-asr model: {e}")
             # Fallback to CPU if GPU fails
             if self.device_type != "cpu":
+                # If the GPU load failed because its provider is missing
+                # (shadowed ORT install), say so loudly with the exact fix.
+                fallback_fix = _degraded_device_fix(self.device_type)
+                if fallback_fix:
+                    logger.warning(f"⚠️ {fallback_fix}")
                 logger.warning("Retrying with CPU provider...")
                 self.device_type = "cpu"  # Update device type to cpu
                 self.model = onnx_asr.load_model(

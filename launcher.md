@@ -70,14 +70,22 @@ scripts/run.sh --type --server
 (ADR 0006) and selects its flow from the environment:
 - **Standalone** (no `VOGON_*` variables): detect hardware → `uv sync --extra
   <extra> --reinstall-package <ort-flavor>` unless the `.last_hw_mode`
-  marker matches → provision the Parakeet model if absent → build the DLL
-  env → foreground `uv run --no-sync babelfish <passthrough args>`.
+  marker matches **and** a live ORT-flavor check passes → provision the
+  Parakeet model if absent → build the DLL env → foreground
+  `uv run --no-sync babelfish <passthrough args>`.
 - **Driven** (`VOGON_APP_DATA_DIR` set, as VogonPoet does): same provisioning
   plus a status WebSocket on port 8123 (the UI shows progress), a PID file,
   and a final `babelfish --server --port 8123` launch. The stdout markers the
   frontend scrapes (`BOOTSTRAP SERVER STARTED`, `Launching Babelfish`) and
   the `{"type":"status",...,"vad_state":"bootstrapping"}` status shapes are
   part of the contract — keep them stable when editing the script.
+- The sync gate (`ensure_ort_env`) re-verifies the installed onnxruntime
+  against the mode's execution provider even when the marker matches
+  (heals out-of-band shadow installs, H1), verifies again after each sync
+  and only then writes the marker (so a same-sync ordering race can't
+  record a broken env as success, H2), retries the sync once, and
+  refuses to launch (standalone: exit 1; driven: failure status) if the
+  intended provider is still missing after both attempts.
 - `UV_CMD` picks the uv binary; `VOGON_FORCE_CPU` (or `hardware.device` ==
   `"cpu"` in the config) forces `--cpu` at runtime without changing the
   synced environment.

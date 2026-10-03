@@ -27,9 +27,13 @@ Two modes of the same logic, selected by environment:
 
 Both modes share: `HardwareDetector.get_best_mode()`, the `.last_hw_mode`
 marker plus `uv sync --extra <extra> --reinstall-package <ort-flavor>`
-self-heal (this heals mixed ORT wheel installs), model provisioning from
-`istupakov/parakeet-tdt-0.6b-v3-onnx`, and the DLL injection. The launcher
-scripts only resolve uv, seed the shared cache variables, and delegate.
+self-heal (this heals mixed ORT wheel installs), `verify_ort_flavor` — a
+live check that the installed onnxruntime actually exposes the mode's
+execution provider, which triggers the sync even on a matching marker
+(H1) and only records the marker once the intended provider imports (H2)
+—, model provisioning from `istupakov/parakeet-tdt-0.6b-v3-onnx`, and the
+DLL injection. The launcher scripts only resolve uv, seed the shared
+cache variables, and delegate.
 """
 
 import asyncio
@@ -42,7 +46,7 @@ import json
 import ctypes
 import ctypes.util
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 import websockets
 
@@ -65,7 +69,75 @@ MODEL_DIR_NAME = "nemo-parakeet-tdt-0.6b-v3"
 # This script lives in the babelfish checkout: its parent is the project root.
 BUNDLE_DIR = Path(__file__).resolve().parent.parent
 
+# ORT flavor per hardware mode: (package, provider that must be available).
+# Every flavor wheel installs the same top-level `onnxruntime/` package, so a
+# stale wheel can shadow the intended one and silently degrade to CPU. The
+# marker alone can't catch that (out-of-band venv mutations persist), so
+# `verify_ort_flavor` re-checks the live interpreter on every launch.
+# Providers are listed statically in the pyd — no DLL injection needed.
+ORT_FLAVOR: Dict[str, tuple] = {
+    "cpu": ("onnxruntime", None),
+    "nvidia_win": ("onnxruntime-gpu", "CUDAExecutionProvider"),
+    "nvidia_linux": ("onnxruntime-gpu", "CUDAExecutionProvider"),
+    "amd_linux": ("onnxruntime-rocm", "ROCMExecutionProvider"),
+    "intel_linux": ("onnxruntime-openvino", "OpenVINOExecutionProvider"),
+    "windows_gpu": ("onnxruntime-directml", "DmlExecutionProvider"),
+    "metal": ("onnxruntime", None),
+}
+
 UV_CMD = os.environ.get("UV_CMD", "uv")
+
+
+def verify_ort_flavor(hw_mode: str) -> Tuple[bool, List[str]]:
+    """Check the live venv's ORT against the flavor the hardware mode needs.
+
+    Runs `uv run --no-sync python` and prints the installed onnxruntime
+    version plus `get_available_providers()`. Only spawns `uv run
+    --no-sync`, which does not touch installed packages — safe even while
+    an old babelfish instance still holds `babelfish.exe`.
+    Returns (ok, providers); ok means the required provider (if any) is
+    present. A missing provider means some other flavor wheel currently
+    owns the shared `onnxruntime/` package (shadow install).
+    """
+    package, required_provider = ORT_FLAVOR.get(hw_mode, ("onnxruntime", None))
+    try:
+        result = subprocess.run(
+            [
+                UV_CMD,
+                "run",
+                "--no-sync",
+                "python",
+                "-c",
+                "import onnxruntime; "
+                "print(onnxruntime.__version__); "
+                "print('|'.join(onnxruntime.get_available_providers()))",
+            ],
+            cwd=BUNDLE_DIR,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except Exception as e:
+        logger.warning(f"ORT flavor verification could not run: {e}")
+        return False, []
+
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip().splitlines()
+        reason = stderr[-1] if stderr else f"exit code {result.returncode}"
+        logger.warning(f"ORT flavor verification failed to import: {reason}")
+        return False, []
+
+    lines = [ln.strip() for ln in (result.stdout or "").splitlines() if ln.strip()]
+    version = lines[0] if lines else "unknown"
+    providers = lines[1].split("|") if len(lines) > 1 else []
+    if required_provider and required_provider not in providers:
+        logger.warning(
+            f"ORT flavor mismatch for {hw_mode}: {package} needs "
+            f"{required_provider}, but available providers are {providers} "
+            f"(installed onnxruntime {version}). Likely a shadowed install."
+        )
+        return False, providers
+    return True, providers
 
 # Driven mode is signaled by the same env contract the Kotlin side uses for
 # config/data locations. Setting VOGON_APP_DATA_DIR opts into the
@@ -489,6 +561,63 @@ class EnvironmentManager:
         return env
 
 
+async def ensure_ort_env(
+    env_manager: EnvironmentManager,
+    hw_mode: str,
+    extra: str,
+    run_sync,
+    status,
+) -> bool:
+    """Marker + live-verification gate around `uv sync` (closes H1 + H2).
+
+    - Marker matches but the live ORT flavor check fails (out-of-band venv
+      mutation left a stale shadow wheel) -> run the sync anyway, self-heal.
+    - After a successful sync, verify again and only write the marker when
+      the intended provider is actually importable — so a same-sync
+      ordering race (uv's install order deciding the pyd owner) can't
+      record a broken environment as good.
+
+    `run_sync(cmd)` executes one `uv sync` and returns its exit code;
+    `status(message)` reports progress (WebSocket in driven mode, stderr in
+    standalone). Returns True when the environment is verified good.
+    """
+    package, required_provider = ORT_FLAVOR.get(hw_mode, ("onnxruntime", None))
+
+    if env_manager.check_marker(hw_mode):
+        ok, _providers = verify_ort_flavor(hw_mode)
+        if ok:
+            await status("Environment matches hardware, skipping sync.")
+            return True
+        await status(
+            "Environment marker matches, but ORT flavor verification "
+            f"failed; re-syncing to self-heal ({package})..."
+        )
+
+    for attempt in (1, 2):
+        cmd = [UV_CMD, "sync", "--extra", extra, "--reinstall-package", package]
+        if attempt == 2:
+            await status(f"Retrying dependency sync for {hw_mode}...")
+        ret = await run_sync(cmd)
+        if ret != 0:
+            await status("Sync failed!")
+            return False
+        ok, providers = verify_ort_flavor(hw_mode)
+        if ok:
+            env_manager.write_marker(hw_mode)
+            return True
+        await status(
+            f"ORT flavor verification failed after sync (providers: "
+            f"{providers or 'import failed'})..."
+        )
+
+    await status(
+        f"ORT flavor verification failed: {hw_mode} needs "
+        f"{required_provider or 'a working onnxruntime import'}; two sync "
+        "attempts did not restore it. Not launching."
+    )
+    return False
+
+
 class BootstrapServer:
     """Driven-mode only: a short-lived WebSocket on `PORT` streaming
     provisioning status to the frontend, closed again before the server
@@ -552,6 +681,20 @@ class BootstrapServer:
                     await self.send_update(line_str)
         return await process.wait()
 
+    async def _sync_dependencies(self, hw_mode: str, extra: str) -> bool:
+        """Marker + verification gate (see ensure_ort_env), driven mode.
+
+        Streams sync output to the status socket, returns False (without
+        launching) when the environment cannot be verified good.
+        """
+
+        async def run_sync(cmd):
+            return await self.run_command(cmd, cwd=BUNDLE_DIR)
+
+        return await ensure_ort_env(
+            self.env_manager, hw_mode, extra, run_sync, self.send_update
+        )
+
     async def run_bootstrap(self):
         await self.send_update("Detecting Hardware...")
         hw = self.detector.get_best_mode()
@@ -578,30 +721,8 @@ class BootstrapServer:
         )
 
         # Dependency Sync
-        if not self.env_manager.check_marker(hw_mode):
-            await self.send_update(f"Syncing dependencies for {hw_mode}...")
-
-            cmd = [UV_CMD, "sync", "--extra", extra]
-            # Force reinstall of correct ORT
-            ort_map = {
-                "cpu": "onnxruntime",
-                "nvidia_win": "onnxruntime-gpu",
-                "nvidia_linux": "onnxruntime-gpu",
-                "amd_linux": "onnxruntime-rocm",
-                "windows_gpu": "onnxruntime-directml",
-                "metal": "onnxruntime",
-            }
-            if hw_mode in ort_map:
-                cmd.extend(["--reinstall-package", ort_map[hw_mode]])
-
-            ret = await self.run_command(cmd, cwd=BUNDLE_DIR)
-            if ret == 0:
-                self.env_manager.write_marker(hw_mode)
-            else:
-                await self.send_update("Sync failed!")
-                return
-        else:
-            await self.send_update("Environment matches hardware, skipping sync.")
+        if not await self._sync_dependencies(hw_mode, extra):
+            return
 
         await self.send_update("Starting Babelfish...")
         launch_args, launch_env = HardwareLaunchPlan(self.env_manager).build(hw_mode)
@@ -742,30 +863,23 @@ def run_standalone(argv: List[str]) -> None:
     else:
         print(f"Bootstrap: model already provisioned at {model_dest}", file=sys.stderr)
 
-    # Dependency Sync (self-heals mixed ORT installs via --reinstall-package)
-    if not env_manager.check_marker(hw_mode):
-        print(f"Bootstrap: syncing dependencies for {hw_mode}...", file=sys.stderr)
-        cmd = [UV_CMD, "sync", "--extra", extra]
-        ort_map = {
-            "cpu": "onnxruntime",
-            "nvidia_win": "onnxruntime-gpu",
-            "nvidia_linux": "onnxruntime-gpu",
-            "amd_linux": "onnxruntime-rocm",
-            "windows_gpu": "onnxruntime-directml",
-            "metal": "onnxruntime",
-        }
-        if hw_mode in ort_map:
-            cmd.extend(["--reinstall-package", ort_map[hw_mode]])
+    # Dependency Sync (self-heals mixed ORT installs via --reinstall-package,
+    # gated on a live ORT flavor verification — see ensure_ort_env)
+    async def _run_sync(cmd) -> int:
+        return await asyncio.to_thread(subprocess.call, cmd, cwd=BUNDLE_DIR)
 
-        ret = subprocess.call(cmd, cwd=BUNDLE_DIR)
-        if ret != 0:
-            print("Bootstrap: sync failed!", file=sys.stderr)
-            sys.exit(ret)
-        env_manager.write_marker(hw_mode)
-    else:
-        print(
-            "Bootstrap: environment matches hardware, skipping sync.", file=sys.stderr
+    async def _status(message: str) -> None:
+        print(f"Bootstrap: {message}", file=sys.stderr)
+
+    try:
+        ok = asyncio.run(
+            ensure_ort_env(env_manager, hw_mode, extra, _run_sync, _status)
         )
+    except Exception as e:
+        print(f"Bootstrap: dependency sync error: {e}", file=sys.stderr)
+        ok = False
+    if not ok:
+        sys.exit(1)
 
     # Build the launch command (adds --cpu when forced or hw-locked to CPU,
     # and drops --server/--port: standalone is CLI passthrough)

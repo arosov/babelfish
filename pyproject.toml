@@ -13,7 +13,7 @@ dependencies = [
     "openwakeword",
     "pydantic>=2.12.5",
     "websockets>=14.2",
-    "onnx-asr",
+    "onnx-asr>=0.12.0",
     "huggingface-hub",
     "sounddevice",
     "soxr",
@@ -25,40 +25,54 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Pinned to the newest version each flavor line actually ships (the lines
+# diverged permanently; ORT core is at ~monthly 1.25-1.30 cadence, DML stuck
+# at 1.24, OVEP capped at 1.24.1, ROCm frozen). Bumps are independent
+# per-flavor decisions with benchmark discipline.
 cpu = [
-    "onnxruntime==1.23.2",
+    "onnxruntime==1.30.0",
 ]
 # Unified Windows acceleration (AMD/Intel/NVIDIA)
 windows-gpu = [
-    "onnxruntime-directml",
+    "onnxruntime-directml==1.24.4", # flavor's latest; NO 1.25+ releases exist
 ]
-# Native performance for NVIDIA on Linux
+# Native performance for NVIDIA on Linux.
+# ORT >=1.27 is built for CUDA 13 only (cu12 support removed), and the cu13
+# NVIDIA wheels moved to unprefixed consolidated names — nvidia-cudnn-cu13
+# is the one exception (unprefixed `nvidia-cudnn` is a fake warning stub).
+# No cuBLAS package: cuBLAS is not a declared dependency of ORT 1.30.
 nvidia-linux = [
-    "onnxruntime-gpu==1.23.2",
-    "nvidia-cuda-runtime-cu12",
-    "nvidia-cublas-cu12",
-    "nvidia-cudnn-cu12",
-    "nvidia-cufft-cu12",
-    "nvidia-curand-cu12",
-    "nvidia-cuda-nvrtc-cu12",
+    "onnxruntime-gpu==1.30.0",
+    "nvidia-cuda-runtime~=13.0",
+    "nvidia-cuda-nvrtc~=13.0",
+    "nvidia-cufft~=12.0",
+    "nvidia-curand~=10.0",
+    "nvidia-cudnn-cu13~=9.0",
+    # nvidia-cudnn-cu13 depends on nvidia-cublas unpinned; pinned to the
+    # newest release that ships a Windows wheel (13.8.1.x is Linux-only).
+    "nvidia-cublas==13.8.0.4",
 ]
-# Native performance for NVIDIA on Windows
+# Native performance for NVIDIA on Windows (same cu13 set as nvidia-linux)
 nvidia-win = [
-    "onnxruntime-gpu==1.23.2",
-    "nvidia-cuda-runtime-cu12",
-    "nvidia-cublas-cu12",
-    "nvidia-cudnn-cu12",
-    "nvidia-cufft-cu12",
-    "nvidia-curand-cu12",
-    "nvidia-cuda-nvrtc-cu12",
+    "onnxruntime-gpu==1.30.0",
+    "nvidia-cuda-runtime~=13.0",
+    "nvidia-cuda-nvrtc~=13.0",
+    "nvidia-cufft~=12.0",
+    "nvidia-curand~=10.0",
+    "nvidia-cudnn-cu13~=9.0",
+    "nvidia-cublas==13.8.0.4",
 ]
-# Native performance for AMD on Linux
+# Native performance for AMD on Linux.
+# Dead end: the ROCm EP was removed from ORT's source tree in 1.23, so no
+# official 1.23+ wheels will exist. Every PyPI version of this package
+# (1.22.2.postN included) is a third-party community build, not a Microsoft
+# or AMD one. Future AMD/Linux path is the MIGraphX EP — separate work.
 amd-linux = [
-    "onnxruntime-rocm",
+    "onnxruntime-rocm==1.22.2.post1",
 ]
-# Native performance for Intel on Linux
+# Native performance for Intel on Linux (capped: no 1.24.2+ OVEP wheels exist)
 intel-linux = [
-    "onnxruntime-openvino",
+    "onnxruntime-openvino==1.24.1",
 ]
 
 [tool.uv.sources]
