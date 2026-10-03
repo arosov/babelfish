@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 from babelfish_stt.config import (
     HardwareConfig,
+    HardwareStatus,
     PipelineConfig,
     VoiceConfig,
     UIConfig,
@@ -14,13 +15,15 @@ from babelfish_stt.config import (
 def test_hardware_config_defaults():
     config = HardwareConfig()
     assert config.device == "auto"
-    assert config.vram_total_gb == 0.0
+    assert config.quantization is None
     assert config.microphone_name is None
 
 
-def test_hardware_config_validation():
+def test_hardware_status_validation():
+    status = HardwareStatus()
+    assert status.vram_total_gb == 0.0
     with pytest.raises(ValidationError):
-        HardwareConfig(vram_total_gb="not a float")
+        HardwareStatus(vram_total_gb="not a float")
 
 
 def test_pipeline_config_defaults():
@@ -77,7 +80,7 @@ def test_babelfish_config_serialization():
 def test_babelfish_config_nested_validation():
     # Test that nested validation works
     with pytest.raises(ValidationError):
-        BabelfishConfig(hardware={"vram_total_gb": "not a number"})
+        BabelfishConfig(status={"vram_total_gb": "not a number"})
 
 
 def test_babelfish_config_partial_update():
