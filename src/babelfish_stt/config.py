@@ -11,6 +11,12 @@ class InputStrategy(str, Enum):
     HYBRID = "hybrid"
 
 
+class SeparatorPolicy(str, Enum):
+    TRAILING = "trailing"
+    LEADING = "leading"
+    NEVER = "never"
+
+
 class HardwareConfig(BaseModel):
     device: str = "auto"
     microphone_name: Optional[str] = None
@@ -62,6 +68,7 @@ class SystemInputConfig(BaseModel):
     enabled: bool = False
     type_ghost: bool = False
     strategy: InputStrategy = InputStrategy.CLIPBOARD
+    separator: SeparatorPolicy = SeparatorPolicy.TRAILING
 
 
 class VoiceConfig(BaseModel):

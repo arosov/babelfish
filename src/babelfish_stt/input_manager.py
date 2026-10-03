@@ -15,6 +15,7 @@ from babelfish_stt.input_strategies import (
     HybridStrategy,
 )
 from babelfish_stt.config import InputStrategy as StrategyEnum
+from babelfish_stt.config import SeparatorPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +233,12 @@ class InputSimulator:
         # Fallback: return base_words (keep existing state)
         return base_words
 
-    def finalize(self, text: str, strategy: StrategyEnum = StrategyEnum.DIRECT):
+    def finalize(
+        self,
+        text: str,
+        strategy: StrategyEnum = StrategyEnum.DIRECT,
+        separator: SeparatorPolicy = SeparatorPolicy.TRAILING,
+    ):
         """Finalizes the transcription by clearing any ghost text."""
         # Capture accumulated text before clearing (for testing/verification)
         self.pre_finalize_text = "".join([str(g) for g in self.displayed_graphemes])
@@ -267,12 +273,19 @@ class InputSimulator:
 
         if text:
             text = unicodedata.normalize("NFC", text)
-            if (
-                self.last_final_char
-                and not self.last_final_char.isspace()
-                and not text[0].isspace()
-            ):
-                text = " " + text
+            if separator == SeparatorPolicy.TRAILING:
+                # The separator is typed with this utterance, at the moment of
+                # maximal knowledge — never guessed at the next Final.
+                if not text[-1].isspace():
+                    text += " "
+            elif separator == SeparatorPolicy.LEADING:
+                # Legacy: guess the separator at the next Final (old rule verbatim).
+                if (
+                    self.last_final_char
+                    and not self.last_final_char.isspace()
+                    and not text[0].isspace()
+                ):
+                    text = " " + text
 
             self.type_text(text, strategy)
             self.last_final_char = text[-1]

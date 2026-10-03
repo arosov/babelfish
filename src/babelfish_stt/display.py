@@ -324,7 +324,9 @@ class InputDisplay:
                 self.simulator.finalize("")
             return
 
-        self.simulator.finalize(text, strategy=config.strategy)
+        self.simulator.finalize(
+            text, strategy=config.strategy, separator=config.separator
+        )
 
     def reset(self):
         self.simulator.reset()
