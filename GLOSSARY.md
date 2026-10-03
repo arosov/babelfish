@@ -27,30 +27,17 @@ full audio buffer. This is the only text that is injected or typed into the focu
 application.
 _Avoid_: corrected, committed, result
 
-### Stages and models
+### Passes
 
-**Ghost Stage**:
-The stage that turns in-progress audio into Ghost text, continuously, for as long as the
-utterance runs.
+**Ghost pass**:
+The pass that turns in-progress audio into Ghost text, continuously, for as long as the
+utterance runs. It re-transcribes a sliding window of the buffer on a throttle.
 _Avoid_: first pass, live pass, fast path, streaming pass
 
-**Final Stage**:
-The stage that turns a completed utterance's audio into the Final transcript, once.
+**Final pass**:
+The pass that turns a completed utterance's audio into the Final transcript, once.
 _Avoid_: second pass, batch pass, accurate path
 
-**Ghost model**:
-The model owned by the Ghost Stage. Chosen for low latency on incomplete audio.
-_Avoid_: fast model, live model, streaming model
-
-**Final model**:
-The model owned by the Final Stage. Chosen for whole-utterance accuracy rather than
-latency.
-_Avoid_: accurate model, slow model, batch model
-
-### Hardware
-
-**Placement mode**:
-Which execution providers the two stages run on. `split` (the default) puts the Ghost
-model on the GPU and the Final model on the CPU; `all-gpu` puts both on the GPU; `cpu`
-puts both on the CPU. Decided once at process start and never changed while running.
-_Avoid_: device mode, backend, performance tier
+Both passes are served by the same Parakeet model on one device — see
+[ADR 0004](docs/adr/0004-one-parakeet-model-on-one-device.md). There are no per-pass
+models and no per-pass devices.

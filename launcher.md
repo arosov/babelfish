@@ -48,9 +48,9 @@ Wipes the `uv` cache if dependencies get corrupted.
 
 ## ⚙️ Operational Details
 
-- **WebSocket Port:** Defaults to `5000` (configurable via `config.json`).
+- **WebSocket Port:** Defaults to `8123` (configurable via `config.json` or `--port`).
 - **Models:** Models are stored in the `./models` directory. The primary model is `nemo-parakeet-tdt-0.6b-v3`.
-- **Hardware:** The server benchmarks itself on startup to set the `PerformanceTier`.
+- **Startup Calibration:** The server benchmarks the model on startup to set the Ghost pass cadence (`ghost_throttle_ms`, `ghost_window_s`).
 - **Hotkeys:** 
-  - `F19` (default): Toggle Mode (Listen/Idle).
-  - `F20` (default): Push-To-Talk (PTT).
+  - `Ctrl+Space` (default): Toggle Mode (Listen/Idle).
+  - `Left Shift` (default): Push-To-Talk (PTT).

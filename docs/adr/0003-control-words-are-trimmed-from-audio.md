@@ -9,9 +9,9 @@ was insurance against clipping the first syllable of what you actually said. We 
 instead, because OpenWakeWord is a dedicated keyword-spotting model and it reports exactly
 where the keyword was recognised — so the audio can be cut at a known position rather than
 guessing at word boundaries in generated text. Trimming audio is also model-independent:
-Parakeet and the Ghost model may spell "hey jarvis" differently and it makes no difference,
-whereas matching the configured wake word against either model's output is a heuristic that
-has to tolerate more variation the moment a second model exists. Stripping behaviour is
+how the model spells "hey jarvis" makes no difference,
+whereas matching the configured wake word against generated transcript text is a heuristic
+that has to tolerate whatever spelling the model produces. Stripping behaviour is
 controlled by `--no-strip-control-words`, mostly so it can be turned off while debugging.
 
 **The stop word is expected to be spoken as its own utterance.** Stop-word detection runs
@@ -28,10 +28,10 @@ states the opposite of the current intent. A future reader will "fix" it.
 wake-word path. It now determines how much audio survives the trim, so if the first word
 spoken after the wake word turns out to be clipped, that is the knob to raise.
 
-**Ghost false positives now cost speech.** Stop-word detection on Ghost text
-(`pipeline.py:339-343`) was already a silent-abort path, but the old Ghost output was
-degraded TDT output on partial audio. A fluent decoder is more likely to produce a
-plausible-looking trailing phrase that matches, and `StopWordDetector.detect` matches a
-trailing `endswith`. Misfires should be logged — a detection against a buffer much longer
-than the stop phrase indicates one — but detection behaviour is unchanged, because aborting
-is the correct semantic when the word really is spoken alone.
+**Ghost false positives cost speech.** Stop-word detection on Ghost text
+(`pipeline.py:339-343`) is a silent-abort path, and Ghost output is degraded TDT output on
+partial audio, which can produce a plausible-looking trailing phrase that matches;
+`StopWordDetector.detect` matches a trailing `endswith`. Misfires should be logged — a
+detection against a buffer much longer than the stop phrase indicates one — but detection
+behaviour is unchanged, because aborting is the correct semantic when the word really is
+spoken alone.

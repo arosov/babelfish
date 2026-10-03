@@ -1,5 +1,9 @@
 # Each stage owns its own model
 
+> **SUPERSEDED by [ADR 0004](0004-one-parakeet-model-on-one-device.md).** This decision
+> was never implemented — the code never grew a second model — and is abandoned. Kept for
+> the record.
+
 Babelfish had one model (Parakeet TDT) serving two roles: continuous provisional text
 during an utterance, and a single committed transcript at the end. Rather than give the
 roles different models through a registry of named roles each binding to a configurable

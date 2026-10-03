@@ -1,5 +1,9 @@
 # Placement is decided once per process and both stages share one GPU
 
+> **SUPERSEDED by [ADR 0004](0004-one-parakeet-model-on-one-device.md).** This decision
+> was never implemented — there is one model on one device, and no placement modes — and
+> is abandoned. Kept for the record.
+
 Which execution providers the two stages run on is decided at process start from a
 placement mode, and never changes while running. `split` (the default) runs the Ghost
 model on the GPU and the Final model on the CPU. `all-gpu` runs both on the GPU. `cpu`
