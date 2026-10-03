@@ -9,6 +9,27 @@ def get_schema():
     return BabelfishConfig.model_json_schema()
 
 
+def remove_number_defaults(obj):
+    """Post-process schema to remove defaults for numbers because the Kotlin generator is broken."""
+    if isinstance(obj, dict):
+        is_number = obj.get("type") == "number"
+        if not is_number and "anyOf" in obj:
+            is_number = any(
+                item.get("type") == "number"
+                for item in obj["anyOf"]
+                if isinstance(item, dict)
+            )
+
+        if is_number and "default" in obj:
+            del obj["default"]
+
+        for value in obj.values():
+            remove_number_defaults(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            remove_number_defaults(item)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate or verify the Babelfish configuration JSON schema."
@@ -42,7 +63,11 @@ def main():
             print(f"Error: Schema file {output_path} contains invalid JSON.")
             sys.exit(1)
 
-        # Normalize keys/order for comparison (though json.dump usually is consistent)
+        # Normalize for comparison: apply the same post-processing to the
+        # raw schema that the writer applies (number defaults stripped for
+        # the Kotlin generator), so --check validates the artifact as written.
+        current_schema = get_schema()
+        remove_number_defaults(current_schema)
         if json.dumps(current_schema, sort_keys=True) != json.dumps(
             existing_schema, sort_keys=True
         ):
@@ -53,26 +78,6 @@ def main():
         print(f"Success: Schema file {output_path} is up-to-date.")
 
     else:
-        # Post-process schema to remove defaults for numbers because the Kotlin generator is broken
-        def remove_number_defaults(obj):
-            if isinstance(obj, dict):
-                is_number = obj.get("type") == "number"
-                if not is_number and "anyOf" in obj:
-                    is_number = any(
-                        item.get("type") == "number"
-                        for item in obj["anyOf"]
-                        if isinstance(item, dict)
-                    )
-
-                if is_number and "default" in obj:
-                    del obj["default"]
-
-                for value in obj.values():
-                    remove_number_defaults(value)
-            elif isinstance(obj, list):
-                for item in obj:
-                    remove_number_defaults(item)
-
         remove_number_defaults(current_schema)
 
         with open(output_path, "w") as f:
