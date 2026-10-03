@@ -78,10 +78,16 @@ settings hot-reload over the WebSocket without a restart.
   "system_input": {
     "enabled": true,
     "type_ghost": true,
-    "strategy": "clipboard"
+    "strategy": "clipboard",
+    "separator": "trailing"
   }
 }
 ```
+
+`separator` controls the space between consecutive Final texts, and it hot-reloads:
+`trailing` (the default) types a space at the end of each Final; `leading` types it at
+the start of the next one (the legacy behavior); `never` disables the separator
+entirely.
 
 You can persist the same block in your config file instead of using `--type`.
 
