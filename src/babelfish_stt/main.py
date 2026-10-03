@@ -14,6 +14,15 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 # device selected by highest-VRAM probing is the device ONNX Runtime uses.
 os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 
+# Register the ONNX Runtime / NVIDIA DLL directories before any module below
+# imports onnxruntime (directly, or via onnx_asr / openwakeword). Without this
+# a CUDA provider whose dependencies cannot be resolved fails silently into
+# the engine's CPU fallback. Safety net for paths that skip the bootstrap —
+# see scripts/bootstrap.py and ADR 0006.
+from babelfish_stt.hardware import register_nvidia_dll_dirs  # noqa: E402
+
+register_nvidia_dll_dirs()
+
 import logging
 import numpy as np
 import time

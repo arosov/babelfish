@@ -47,8 +47,10 @@ wake-words. This is an in-memory override, never written to the config file.
 
 Runs service mode: the WebSocket API on port `8123` (status, transcript
 stream, config hot-reload, mic test), as consumed by VogonPoet. Composes with
-`--type`. Note that VogonPoet's `bootstrap.py` passes `--server --port 8123`
-automatically — never start the service by hand for VogonPoet use.
+`--type`. VogonPoet drives the server by invoking babelfish's own
+`scripts/bootstrap.py` with `VOGON_APP_DATA_DIR` set — the bootstrap then
+launches `babelfish --server --port 8123` itself, so never start the service
+by hand for VogonPoet use.
 `--port 8124` overrides the port but **requires** `--server`.
 
 ## 🎛 Triggers
@@ -108,9 +110,14 @@ uv run babelfish
 or set `"cache": { "cache_dir": "F:\\vogonpoet_cache" }` in your config file.
 Ensure the directory contains `models/nemo-parakeet-tdt-0.6b-v3/`.
 
-> ⚠️ **Caveat:** When VogonPoet drives Babelfish, its `bootstrap.py` owns
-> environment sync, model provisioning, and DLL paths — do not hand-sync any
-> of that. Standalone users pick the ONNX Runtime extra themselves (below).
+> ⚠️ **Caveat:** `scripts/bootstrap.py` is owned by babelfish itself — see
+> [ADR 0006](docs/adr/0006-babelfish-owns-its-bootstrap.md). It owns
+> environment sync, model provisioning, and DLL paths in both standalone and
+> driven (VogonPoet-invoked) modes — do not hand-sync any of that. It runs
+> automatically via `scripts/run.bat` / `scripts/run.sh` and, when VogonPoet
+> drives the server, via the same script with the `VOGON_*` env contract set.
+> Manual `uv sync --extra <name>` (below) is still possible for development,
+> but the launchers do not need it.
 
 ## 🧩 ONNX Runtime Extras
 

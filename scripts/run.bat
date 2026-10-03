@@ -28,6 +28,11 @@ rem UvExecutor, so a uv from either source reuses the same artifacts.
 if not defined UV_CACHE_DIR set "UV_CACHE_DIR=%VOGON_APP_CACHE_DIR%\uv"
 if not defined UV_PYTHON_INSTALL_DIR set "UV_PYTHON_INSTALL_DIR=%VOGON_APP_CACHE_DIR%\uv\python"
 
-rem All extra args are passed through to the babelfish CLI
-rem (e.g. run.bat --wakeword hey_jarvis --cpu --type --server)
-"%BABELFISH_UV%" run babelfish %*
+rem The bootstrap re-invokes this same uv for sync + the final CLI launch.
+if not defined UV_CMD set "UV_CMD=%BABELFISH_UV%"
+
+rem Delegate to babelfish's own bootstrap (ADR 0006): hardware detection,
+rem ORT-flavor sync with self-heal, model provisioning, DLL-path injection,
+rem then the babelfish CLI. All args pass through to the CLI
+rem (e.g. run.bat --wakeword hey_jarvis --cpu --type --server).
+"%BABELFISH_UV%" run --no-project --python 3.12.8 "%~dp0bootstrap.py" %*

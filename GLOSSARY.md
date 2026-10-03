@@ -43,3 +43,14 @@ _Avoid_: second pass, batch pass, accurate path
 Both passes are served by the same Parakeet model on one device — see
 [ADR 0004](docs/adr/0004-one-parakeet-model-on-one-device.md). There are no per-pass
 models and no per-pass devices.
+
+### Environment
+
+**Bootstrap**:
+The provisioning step babelfish runs before the engine starts: detect hardware, sync the
+right ORT wheel extra for the machine, provision the Parakeet model if not cached, and
+register the CUDA/cuDNN DLL directories. Lives in `scripts/bootstrap.py` and is owned by
+babelfish, not VogonPoet — see
+[ADR 0006](docs/adr/0006-babelfish-owns-its-bootstrap.md).
+_Avoid_: installer, setup script, env setup
+

@@ -4,6 +4,8 @@ import subprocess
 import shutil
 import sys
 import os
+import sysconfig
+import logging
 import json
 import ctypes
 import ctypes.util
@@ -12,6 +14,109 @@ from pathlib import Path
 from typing import Dict, Optional, List
 
 from babelfish_stt.placement import GpuDevice, HardwareFacts
+
+logger = logging.getLogger(__name__)
+
+
+def _collect_ort_dll_dirs(site_packages: List[Path]) -> List[str]:
+    """Finds the ONNX Runtime `capi/` dir and every pip NVIDIA-package DLL dir
+    under the given site-packages roots, preserving order (capi first).
+
+    Mirrors the bootstrap's `get_env_with_dll_injection()` layout knowledge;
+    keep the two in agreement.
+    """
+    dirs: List[str] = []
+    pattern = "*.dll" if sys.platform == "win32" else "*.so*"
+    for sp in site_packages:
+        sp = Path(sp)
+        for capi in sorted(sp.glob("onnxruntime*/capi")):
+            if capi.is_dir() and str(capi) not in dirs:
+                dirs.append(str(capi))
+        nvidia_root = sp / "nvidia"
+        if nvidia_root.is_dir():
+            for lib_file in sorted(nvidia_root.rglob(pattern)):
+                parent = str(lib_file.parent.resolve())
+                if parent not in dirs:
+                    dirs.append(parent)
+    return dirs
+
+
+_dll_dirs_registered = False
+
+
+def register_nvidia_dll_dirs() -> List[str]:
+    """Registers the ONNX Runtime / NVIDIA DLL directories in-process, before
+    any onnxruntime import.
+
+    Safety net for paths that skip the bootstrap (`uv run babelfish` in tests,
+    CI runs): `scripts/bootstrap.py` already fixes the child process
+    environment, but nothing else does, and on Windows a CUDA provider whose
+    dependencies cannot be resolved fails silently into the engine's CPU
+    fallback. This makes the resolved directories observable in startup logs
+    so such a failure is seen rather than inferred from VRAM deltas.
+
+    Windows: `os.add_dll_directory()` for each dir plus a `PATH` prepend.
+    Linux: prepends `LD_LIBRARY_PATH` (a best effort for any child processes;
+    the bootstrap remains the reliable mechanism there). Idempotent; returns
+    the directories actually registered.
+    """
+    global _dll_dirs_registered
+    if _dll_dirs_registered:
+        return []
+
+    site_packages = _candidate_site_packages()
+    dirs = _collect_ort_dll_dirs(site_packages)
+    _dll_dirs_registered = True
+    if not dirs:
+        return []
+
+    if sys.platform == "win32":
+        for d in dirs:
+            try:
+                os.add_dll_directory(d)
+            except OSError as e:
+                logger.warning(f"Failed to register DLL dir {d}: {e}")
+        # add_dll_directory does not help dependencies loaded by plain name
+        # through PATH search (e.g. cudnn loading cublas); prepend for both.
+        current = os.environ.get("PATH", "")
+        missing = [d for d in dirs if f";{d};" not in f";{current};"]
+        if missing:
+            os.environ["PATH"] = ";".join(missing) + ";" + current
+    else:
+        current = os.environ.get("LD_LIBRARY_PATH", "")
+        missing = [d for d in dirs if f":{d}:" not in f":{current}:"]
+        if missing:
+            os.environ["LD_LIBRARY_PATH"] = ":".join(missing) + (
+                ":" + current if current else ""
+            )
+
+    logger.info(f"Registered ONNX Runtime DLL directories: {', '.join(dirs)}")
+    return dirs
+
+
+def _candidate_site_packages() -> List[Path]:
+    """Locates plausible site-packages roots for the running interpreter.
+
+    Prefers the interpreter's configured purelib (the venv python's own
+    site-packages, where onnxruntime and the nvidia pip packages live), then
+    any sibling-of-src `.venv` layout used in dev checkouts.
+    """
+    candidates: List[Path] = []
+    try:
+        purelib = sysconfig.get_path("purelib")
+        if purelib:
+            candidates.append(Path(purelib))
+    except Exception:
+        pass
+
+    # Dev layout: repo/src/babelfish_stt/... → repo/.venv/Lib/site-packages
+    here = Path(__file__).resolve()
+    for parent in list(here.parents)[:4]:
+        if sys.platform == "win32":
+            candidates.append(parent / ".venv" / "Lib" / "site-packages")
+        else:
+            candidates.extend(sorted(parent.glob(".venv/lib/python*/site-packages")))
+    return candidates
 
 
 def detect_nvidia() -> bool:

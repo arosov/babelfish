@@ -45,9 +45,12 @@ is primarily via the `babelfish` CLI tool provided by the package:
 *   `uv run babelfish --port 8124` - Overrides the WebSocket port (requires `--server`; default 8123).
 *   `uv run babelfish --stopword "stop listening"` - Sets a word that ends transcription.
 
-Convenience launchers `scripts/run.bat` / `scripts/run.sh` pipe args through to
-the CLI, default `VOGON_APP_CACHE_DIR` to the shared VogonPoet cache, and reuse
-VogonPoet's managed uv binary when available (falling back to `uv` on PATH).
+Convenience launchers `scripts/run.bat` / `scripts/run.sh` resolve uv, seed the
+shared cache env vars (`VOGON_APP_CACHE_DIR`, `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`,
+`UV_CMD`), and delegate to babelfish's own `scripts/bootstrap.py` (ADR 0006) —
+the single owner of hardware detection, ORT-flavor sync with self-heal, model
+provisioning, and DLL-path injection. Both standalone and driven (VogonPoet)
+modes run through it; CLI args pass through.
 Model resolution order: shared cache (`cache.cache_dir` or `VOGON_APP_CACHE_DIR`) →
 repo-local `models/` → onnx-asr HF cache (auto-download).
 

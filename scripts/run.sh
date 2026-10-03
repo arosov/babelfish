@@ -32,6 +32,11 @@ fi
 export UV_CACHE_DIR="${UV_CACHE_DIR:-${VOGON_APP_CACHE_DIR}/uv}"
 export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-${VOGON_APP_CACHE_DIR}/uv/python}"
 
-# All extra args are passed through to the babelfish CLI
+# The bootstrap re-invokes this same uv for sync + the final CLI launch.
+export UV_CMD="${UV_CMD:-$BABELFISH_UV}"
+
+# Delegate to babelfish's own bootstrap (ADR 0006): hardware detection,
+# ORT-flavor sync with self-heal, model provisioning, DLL-path injection,
+# then the babelfish CLI. All args pass through to the CLI
 # (e.g. ./run.sh --wakeword hey_jarvis --cpu --type --server)
-exec "$BABELFISH_UV" run babelfish "$@"
+exec "$BABELFISH_UV" run --no-project --python 3.12.8 "$(cd "$(dirname "$0")" && pwd)/bootstrap.py" "$@"

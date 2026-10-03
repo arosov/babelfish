@@ -24,8 +24,13 @@ hot-reload, mic test). Composes with `--type`:
 uv run babelfish --server
 uv run babelfish --server --type
 ```
-VogonPoet's `bootstrap.py` already launches with `--server --port 8123`, so
-manual starts for VogonPoet use are unnecessary.
+Babelfish's own `bootstrap.py` runs before the server in both standalone and
+driven modes, so for VogonPoet use manual starts are unnecessary — set the
+`VOGON_*` env contract and invoke `scripts/bootstrap.py` (or let VogonPoet
+do it). To drive it by hand:
+```bash
+VOGON_APP_DATA_DIR=/path/to/appdata uv run --no-project --python 3.12.8 scripts/bootstrap.py
+```
 
 ### Start with Wake-Word
 Enables `openwakeword` activation.
@@ -45,16 +50,37 @@ uv run babelfish --cpu
 ```
 
 ### Convenience Launchers
-`scripts/run.bat` / `scripts/run.sh` pipe their arguments straight through to
-the CLI and set `VOGON_APP_CACHE_DIR` (if not already set) so the shared
-Parakeet cache is reused instead of re-downloading ~2.4GB. They also reuse
-VogonPoet's uv when present: `%LOCALAPPDATA%\VogonPoet\Cache\bin\uv.exe` on
-Windows (falling back to `uv` on PATH); on Linux, the app cache bin dir
-(`~/.cache/vogonpoet/bin`) if populated, then `uv` on PATH:
+`scripts/run.bat` / `scripts/run.sh` resolve uv, seed the shared cache
+variables (`VOGON_APP_CACHE_DIR`, `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`,
+`UV_CMD`), and delegate everything to babelfish's own
+`scripts/bootstrap.py` — hardware detection, `uv sync` with the right ORT
+extra (with the `.last_hw_mode` marker / `--reinstall-package` self-heal),
+Parakeet model provisioning, and DLL-path injection, then the CLI launch.
+They reuse VogonPoet's uv when present:
+`%LOCALAPPDATA%\VogonPoet\Cache\bin\uv.exe` on Windows (falling back to `uv`
+on PATH); on Linux, the app cache bin dir (`~/.cache/vogonpoet/bin`) if
+populated, then `uv` on PATH:
 ```bash
 scripts/run.bat --wakeword hey_jarvis --cpu
 scripts/run.sh --type --server
 ```
+
+### Bootstrap Modes
+`scripts/bootstrap.py` is the single owner of environment provisioning
+(ADR 0006) and selects its flow from the environment:
+- **Standalone** (no `VOGON_*` variables): detect hardware → `uv sync --extra
+  <extra> --reinstall-package <ort-flavor>` unless the `.last_hw_mode`
+  marker matches → provision the Parakeet model if absent → build the DLL
+  env → foreground `uv run --no-sync babelfish <passthrough args>`.
+- **Driven** (`VOGON_APP_DATA_DIR` set, as VogonPoet does): same provisioning
+  plus a status WebSocket on port 8123 (the UI shows progress), a PID file,
+  and a final `babelfish --server --port 8123` launch. The stdout markers the
+  frontend scrapes (`BOOTSTRAP SERVER STARTED`, `Launching Babelfish`) and
+  the `{"type":"status",...,"vad_state":"bootstrapping"}` status shapes are
+  part of the contract — keep them stable when editing the script.
+- `UV_CMD` picks the uv binary; `VOGON_FORCE_CPU` (or `hardware.device` ==
+  `"cpu"` in the config) forces `--cpu` at runtime without changing the
+  synced environment.
 
 ### Shared Model Cache
 Model resolution order: `cache.cache_dir` (config, or `VOGON_APP_CACHE_DIR`
