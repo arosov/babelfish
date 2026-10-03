@@ -132,6 +132,10 @@
           "title": "Ghost Window S",
           "type": "number"
         },
+        "ghost_padding_s": {
+          "title": "Ghost Padding S",
+          "type": "number"
+        },
         "min_padding_s": {
           "title": "Min Padding S",
           "type": "number"

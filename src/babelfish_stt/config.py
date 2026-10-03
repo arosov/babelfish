@@ -30,6 +30,10 @@ class HardwareStatus(BaseModel):
 class PerformanceProfile(BaseModel):
     ghost_throttle_ms: int = 50
     ghost_window_s: float = 2.5
+    # Padding for Ghost submits only. 1.0 keeps the first, short windows
+    # text-capable: fully unpadded onset windows often transcribe to ""
+    # (observed live: first visible Ghost delayed ~400ms by empty results).
+    ghost_padding_s: float = 1.0
     min_padding_s: float = 2.0
     tier: str = "auto"
 

@@ -220,6 +220,11 @@ class STTEngine(Reconfigurable):
         logger.info(f"⏱️ Calibration: Avg Ghost Latency = {avg_latency:.2f}ms")
 
         # Tier logic
+        # Spacing values are the minimum spacing between Ghost submits.
+        # min_padding_s feeds the Final pass only; the Ghost pass uses
+        # ghost_padding_s (1.0 — bumped from 0.0 after live testing showed
+        # the first unpadded windows transcribe to "", delaying the first
+        # visible Ghost by ~400ms).
         if avg_latency < 40:
             tier = "ultra"
             throttle = 100
@@ -241,19 +246,23 @@ class STTEngine(Reconfigurable):
             window = 1.5
             padding = 1.0
 
+        ghost_padding = 1.0  # keeps the first, short windows text-capable
         if self.device_type == "cpu":
             tier = "cpu"
             throttle = 300
-            window = 0  # Full buffer
+            window = 1.0  # Sliding window: bounded Ghost inference on CPU too
             padding = 0
+            ghost_padding = 0.0  # 1s window already bounds CPU Ghost audio
 
         logger.info(
-            f"⏱️ Calibration complete: Tier={tier.upper()}, Throttle={throttle}ms, Window={window}s"
+            f"⏱️ Calibration complete: Tier={tier.upper()}, Spacing={throttle}ms, "
+            f"Window={window}s"
         )
 
         return {
             "tier": tier,
             "ghost_throttle_ms": throttle,
             "ghost_window_s": window,
+            "ghost_padding_s": ghost_padding,
             "min_padding_s": padding,
         }

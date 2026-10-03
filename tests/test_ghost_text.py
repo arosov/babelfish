@@ -200,8 +200,13 @@ class TestRealSTTIntegration:
                 duration_str = (
                     f" ({ghost.duration_ms:.0f}ms)" if ghost.duration_ms else ""
                 )
+                staleness_str = (
+                    f" staleness={ghost.staleness_ms:.0f}ms"
+                    if ghost.staleness_ms is not None
+                    else ""
+                )
                 print(
-                    f'[TEST]     {i + 1:3d}. {ghost.timestamp_ms:6.0f}ms{duration_str}: "{ghost.text}"'
+                    f'[TEST]     {i + 1:3d}. {ghost.timestamp_ms:6.0f}ms{duration_str}{staleness_str}: "{ghost.text}"'
                 )
         else:
             print(f"[TEST]   Ghosts: 0 updates")
@@ -310,8 +315,13 @@ class TestRealSTTIntegration:
                     duration_str = (
                         f" ({ghost.duration_ms:.0f}ms)" if ghost.duration_ms else ""
                     )
+                    staleness_str = (
+                        f" staleness={ghost.staleness_ms:.0f}ms"
+                        if ghost.staleness_ms is not None
+                        else ""
+                    )
                     print(
-                        f'[TEST]     {i + 1:2d}. {ghost.timestamp_ms:6.0f}ms{duration_str}: "{ghost.text}"'
+                        f'[TEST]     {i + 1:2d}. {ghost.timestamp_ms:6.0f}ms{duration_str}{staleness_str}: "{ghost.text}"'
                     )
                 print()
 

@@ -45,6 +45,9 @@ class GhostUpdate:
     text: str
     grapheme_length: int
     duration_ms: Optional[float] = None
+    # Window-capture -> display staleness, from the pipeline's Phase-1
+    # telemetry (submission -> display wall time).
+    staleness_ms: Optional[float] = None
 
 
 @dataclass
@@ -85,6 +88,7 @@ class AudioPipelineFixture:
         self._audio_finished_time: Optional[float] = None
         self._last_transcription_duration_ms: float = 0
         self._shared_engine: Optional[Any] = None
+        self._pipeline_ref: Optional[Any] = None
 
     def run(
         self,
@@ -245,6 +249,7 @@ class AudioPipelineFixture:
         mock_display.reset = MagicMock()
 
         pipeline = StandardPipeline(vad, stt_engine, mock_display)
+        self._pipeline_ref = pipeline
         pipeline.set_test_mode(False)
         pipeline.reconfigure(config.pipeline)
         pipeline.request_mode(is_idle=False, force=True)
@@ -364,6 +369,7 @@ class AudioPipelineFixture:
         mock_display.reset = MagicMock()
 
         pipeline = StandardPipeline(mock_vad, mock_engine, mock_display)
+        self._pipeline_ref = pipeline
         pipeline.set_test_mode(False)
 
         self._start_time = time.perf_counter()
@@ -429,6 +435,12 @@ class AudioPipelineFixture:
             except ImportError:
                 grapheme_count = len(text)
 
+            staleness_ms = None
+            if self._pipeline_ref is not None:
+                staleness_ms = getattr(
+                    self._pipeline_ref, "_last_ghost_staleness_ms", None
+                )
+
             self._captured_ghosts.append(
                 GhostUpdate(
                     timestamp_ms=(now - self._start_time) * 1000
@@ -437,6 +449,7 @@ class AudioPipelineFixture:
                     text=text,
                     grapheme_length=grapheme_count,
                     duration_ms=getattr(stt_engine, "_last_duration_ms", 0),
+                    staleness_ms=staleness_ms,
                 )
             )
 

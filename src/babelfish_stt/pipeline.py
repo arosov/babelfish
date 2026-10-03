@@ -173,12 +173,14 @@ class StandardPipeline(Pipeline):
         self.pre_roll_buffer = deque()
         self.last_speech_time = 0
         self.silence_threshold_ms = 400
-        self.last_update_time = 0
+
+        # Throttle clock: last Ghost *submit* time. None = never submitted
+        # (spacing considered already elapsed, so the first Ghost can fire on
+        # the onset chunk itself).
+        self.last_submit_ms: Optional[float] = None
 
         # Performance Profile (Self-Calibration)
         self.perf = PerformanceProfile()
-        self.dynamic_throttle_ms = self.perf.ghost_throttle_ms
-        self.inference_history = []
 
         # Thread pool for offloading transcription
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -188,36 +190,23 @@ class StandardPipeline(Pipeline):
         self._generation = 0
         self._future_generation = 0  # Generation of the currently running future
 
+        # Ghost telemetry (window-capture -> submit -> done -> display)
+        self._utterance_start_ms = 0.0
+        self._first_ghost_shown = False
+        self._ghost_window_s = 0.0
+        self._ghost_capture_ms = 0.0
+        self._ghost_submit_wall_ms = 0.0
+        self._last_ghost_staleness_ms = 0.0  # read by the test harness
+        # Audio coverage of the latest Ghost's window, in buffer samples:
+        # (window_start, buffer_end). Lets the display commit aged-out words
+        # by audio time even when the model re-worded the shared region.
+        self._ghost_window_span = (0, 0)
+
     def reconfigure(self, config: BaseModel) -> None:
         if isinstance(config, PipelineConfig):
             self.silence_threshold_ms = config.silence_threshold_ms
             self.pre_roll_ms = config.pre_roll_ms
             self.perf = config.performance
-            self.dynamic_throttle_ms = self.perf.ghost_throttle_ms
-
-    def _apply_dynamic_backoff(self, inference_ms: float):
-        """Adjusts the ghost update throttle based on real-time inference latency.
-        Disabled when initial throttle is 0 (no throttle).
-        """
-        # If user set throttle to 0, never apply dynamic backoff
-        if self.perf.ghost_throttle_ms == 0:
-            self.dynamic_throttle_ms = 0
-            return
-
-        self.inference_history.append(inference_ms)
-        if len(self.inference_history) > 5:
-            self.inference_history.pop(0)
-
-        avg_latency = sum(self.inference_history) / len(self.inference_history)
-
-        # If inference is taking more than 80% of our throttle budget, back off
-        target_throttle = max(self.perf.ghost_throttle_ms, int(avg_latency * 1.25))
-
-        # Smoothly adjust throttle
-        if target_throttle > self.dynamic_throttle_ms:
-            self.dynamic_throttle_ms = min(target_throttle, 1000)  # Max 1s lag
-        elif target_throttle < self.dynamic_throttle_ms:
-            self.dynamic_throttle_ms = max(target_throttle, self.perf.ghost_throttle_ms)
 
     def process_chunk(
         self, chunk: np.ndarray, now_ms: float, is_speech: Optional[bool] = None
@@ -237,30 +226,37 @@ class StandardPipeline(Pipeline):
                     self.pre_roll_buffer.popleft()
                 return False
 
-            # GHOST TIMEOUT: Adaptive timeout based on buffer size and inference history
-            # Calculate expected processing time to avoid false timeouts on long utterances
-            if self.is_speaking:
-                # Base timeout: 5 seconds minimum
-                adaptive_timeout_ms = 5000
+        # GHOST CONSUME: a finished Ghost inference is consumed immediately,
+        # on every chunk — speech AND silence-during-utterance. Display no
+        # longer waits for the spacing gate; staleness drops to inference
+        # time (plus <=32ms chunk granularity).
+        if self._consume_ghost_result(now_ms):
+            return True  # Stop word detected in the Ghost text
 
-                # Add time based on buffer size (assuming RTF of 0.3 for worst-case CPU)
-                # and the current dynamic throttle setting
-                with self._lock:
-                    audio_duration_s = self._buffer_size / 16000.0
-                    # Conservative estimate: 0.5 RTF + current throttle
-                    expected_processing_ms = (
-                        audio_duration_s * 0.5 * 1000
-                    ) + self.dynamic_throttle_ms
-                    # Add 3x safety margin for ghost inferences
-                    adaptive_timeout_ms = max(5000, expected_processing_ms * 3)
+        # GHOST TIMEOUT: Adaptive timeout based on buffer size
+        # Calculate expected processing time to avoid false timeouts on long utterances
+        if self.is_speaking:
+            # Base timeout: 5 seconds minimum
+            adaptive_timeout_ms = 5000
 
-                if now_ms - self.last_speech_time > adaptive_timeout_ms:
-                    logger.warning(
-                        f"🕒 Ghost timeout ({adaptive_timeout_ms / 1000:.1f}s) reached. "
-                        f"Buffer: {audio_duration_s:.1f}s. Resetting state."
-                    )
-                    self.reset_state()
-                    return False
+            # Add time based on buffer size (assuming RTF of 0.3 for worst-case CPU)
+            # and the current throttle setting (minimum spacing)
+            with self._lock:
+                audio_duration_s = self._buffer_size / 16000.0
+                # Conservative estimate: 0.5 RTF + current spacing
+                expected_processing_ms = (
+                    audio_duration_s * 0.5 * 1000
+                ) + self.perf.ghost_throttle_ms
+                # Add 3x safety margin for ghost inferences
+                adaptive_timeout_ms = max(5000, expected_processing_ms * 3)
+
+            if now_ms - self.last_speech_time > adaptive_timeout_ms:
+                logger.warning(
+                    f"🕒 Ghost timeout ({adaptive_timeout_ms / 1000:.1f}s) reached. "
+                    f"Buffer: {audio_duration_s:.1f}s. Resetting state."
+                )
+                self.reset_state()
+                return False
 
         # Handle test mode: run VAD but don't accumulate audio or transcribe
         if self.test_mode:
@@ -283,7 +279,12 @@ class StandardPipeline(Pipeline):
             with self._lock:
                 if not self.is_speaking:
                     self._notify_state_change(True)
-                    self.last_update_time = now_ms
+                    # Prime the throttle clock to "already elapsed": the
+                    # first Ghost submits on this onset chunk, transcribing
+                    # pre-roll + onset.
+                    self.last_submit_ms = None
+                    self._first_ghost_shown = False
+                    self._utterance_start_ms = now_ms
 
                     # Prepend pre-roll buffer if it exists
                     if self.pre_roll_buffer:
@@ -303,6 +304,7 @@ class StandardPipeline(Pipeline):
                         "⚠️ Buffer limit (60s) reached. Forcing finalization."
                     )
 
+                    self._drop_pending_ghost()
                     # Manual Finalization
                     full_audio = np.concatenate(self.active_buffer)
                     # Run transcribe in main thread (blocking but safe here for safety)
@@ -315,126 +317,11 @@ class StandardPipeline(Pipeline):
                     # Continue listening with empty buffer
                     return False
 
-            # Intermediate 'Ghost' Update
-            with self._lock:
-                should_ghost = (
-                    now_ms - self.last_update_time >= self.dynamic_throttle_ms
-                )
-
-            if should_ghost:
-                # Only start new transcription if the previous one is done
-                if (
-                    self._transcription_future is None
-                    or self._transcription_future.done()
-                ):
-                    # Handle result of previous future if it just finished
-                    if self._transcription_future and self._transcription_future.done():
-                        # Capture and reset future immediately to prevent race conditions
-                        future = self._transcription_future
-                        self._transcription_future = None
-                        try:
-                            text, duration_ms = future.result()
-                            self._apply_dynamic_backoff(duration_ms)
-                            # Check generation to ensure result is still valid (not stale)
-                            with self._lock:
-                                if self._generation != self._future_generation:
-                                    logger.debug("Stale ghost result ignored")
-                                    return False
-                            if text:
-                                self.display.update(ghost=text)
-                                if self.stop_detector and self.stop_detector.detect(
-                                    text
-                                ):
-                                    self._handle_stop()
-                                    return True
-                        except Exception as e:
-                            logger.error(f"Ghost transcription error: {e}")
-
-                    # Start new ghost transcription
-                    full_audio = None
-
-                    # EFFICIENT FIRST PASS: Sliding window for ghost results (GPU ONLY)
-                    # Optimization: Avoid concatenating the entire history for ghost updates
-                    if (
-                        self.engine.device_type != "cpu"
-                        and self.perf.ghost_window_s > 0
-                    ):
-                        window_samples = int(self.perf.ghost_window_s * 16000)
-
-                        with self._lock:
-                            if self._buffer_size > window_samples:
-                                # Detect chunk size from active_buffer for alignment
-                                chunk_size = 512
-                                if self.active_buffer:
-                                    chunk_size = len(self.active_buffer[0])
-
-                                # Align window to chunk boundary (round UP to always send >= target)
-                                window_samples_aligned = (
-                                    (window_samples + chunk_size - 1) // chunk_size
-                                ) * chunk_size
-                                if window_samples_aligned == 0:
-                                    window_samples_aligned = chunk_size
-
-                                logger.debug(
-                                    f"[GHOST] Window: {window_samples} -> {window_samples_aligned} samples "
-                                    f"(chunk_size={chunk_size}, buffer_size={self._buffer_size})"
-                                )
-
-                                # Collect just enough chunks from the end
-                                chunks = []
-                                collected = 0
-                                for chunk in reversed(self.active_buffer):
-                                    chunks.append(chunk)
-                                    collected += len(chunk)
-                                    if collected >= window_samples_aligned:
-                                        break
-                                # Concatenate in correct order (chunks were reversed)
-                                full_audio = np.concatenate(chunks[::-1])
-
-                    if full_audio is None:
-                        # Fallback: Capture everything (CPU mode or short buffer)
-                        with self._lock:
-                            full_audio = np.concatenate(self.active_buffer)
-
-                    # Sliding window (redundant check if optimized path was taken, but safe)
-                    if (
-                        self.engine.device_type != "cpu"
-                        and self.perf.ghost_window_s > 0
-                    ):
-                        window_samples = int(self.perf.ghost_window_s * 16000)
-                        if len(full_audio) > window_samples:
-                            # Align to chunk boundary
-                            chunk_size = 512
-                            if self.active_buffer:
-                                chunk_size = len(self.active_buffer[0])
-                            window_samples_aligned = (
-                                (window_samples + chunk_size - 1) // chunk_size
-                            ) * chunk_size
-                            if window_samples_aligned == 0:
-                                window_samples_aligned = chunk_size
-                            full_audio = full_audio[-window_samples_aligned:]
-
-                    logger.debug(
-                        f"[GHOST] Sending {len(full_audio)} samples to STT "
-                        f"({len(full_audio) / 16000:.2f}s, window={self.perf.ghost_window_s}s)"
-                    )
-
-                    # Capture current generation to detect stale results
-                    with self._lock:
-                        self._future_generation = self._generation
-
-                    def _run_transcribe(audio):
-                        t_start = time.perf_counter()
-                        res = self.engine.transcribe(
-                            audio, padding_s=self.perf.min_padding_s
-                        )
-                        return res, (time.perf_counter() - t_start) * 1000
-
-                    self._transcription_future = self.executor.submit(
-                        _run_transcribe, full_audio
-                    )
-                    with self._lock:
-                        self.last_update_time = now_ms
+            # Ghost submit: only on speech chunks, only when the previous
+            # result was consumed AND the minimum spacing between submits has
+            # elapsed. The single worker already guarantees spacing
+            # >= inference time (can't submit while busy).
+            self._maybe_submit_ghost(now_ms)
         else:
             # Silence detected
             with self._lock:
@@ -465,6 +352,12 @@ class StandardPipeline(Pipeline):
 
             # If we've been silent long enough, finalize
             if was_speaking and is_silent_long_enough:
+                # Drop the pending Ghost: the Final is starting. The
+                # in-flight inference still holds engine._lock until it
+                # finishes (ORT can't be preempted) but its result is
+                # discarded via the generation bump.
+                self._drop_pending_ghost()
+
                 with self._lock:
                     full_audio = np.concatenate(self.active_buffer)
 
@@ -488,6 +381,171 @@ class StandardPipeline(Pipeline):
 
         return False
 
+    def _consume_ghost_result(self, now_ms: float) -> bool:
+        """
+        Consume a finished Ghost inference, if any: telemetry, generation
+        check, display, stop-word detection. Called on every chunk so
+        display follows inference completion directly instead of waiting
+        for the spacing gate.
+
+        Returns True if a stop word was detected (state transition).
+        """
+        if self._transcription_future is None or not self._transcription_future.done():
+            return False
+
+        with self._lock:
+            future = self._transcription_future
+            self._transcription_future = None
+
+        try:
+            text, duration_ms = future.result()
+        except Exception as e:
+            logger.error(f"Ghost transcription error: {e}")
+            return False
+
+        with self._lock:
+            if self._generation != self._future_generation:
+                logger.debug("Stale ghost result ignored")
+                return False
+            submit_wall_ms = self._ghost_submit_wall_ms
+            window_s = self._ghost_window_s
+            capture_ms = self._ghost_capture_ms
+
+        if not text:
+            logger.debug(
+                f"[GHOST] Empty result ({duration_ms:.1f}ms, window={window_s:.2f}s)"
+            )
+            return False
+
+        now_wall_ms = time.perf_counter() * 1000
+        staleness_ms = now_wall_ms - submit_wall_ms
+        self._last_ghost_staleness_ms = staleness_ms
+
+        logger.debug(
+            f"[GHOST] Displayed {text!r}: capture={capture_ms:.1f}ms, "
+            f"inference={duration_ms:.1f}ms, staleness={staleness_ms:.1f}ms "
+            f"(window={window_s:.2f}s)"
+        )
+
+        if not self._first_ghost_shown:
+            self._first_ghost_shown = True
+            logger.info(
+                f"⚡ First Ghost: {now_ms - self._utterance_start_ms:.0f}ms after "
+                f"speech onset (inference {duration_ms:.0f}ms, "
+                f"staleness {staleness_ms:.0f}ms)"
+            )
+
+        self.display.update(ghost=text, window=self._ghost_window_span)
+        if self.stop_detector and self.stop_detector.detect(text):
+            self._handle_stop()
+            return True
+
+        return False
+
+    def _maybe_submit_ghost(self, now_ms: float):
+        """
+        Submit a Ghost transcription if the worker is free AND at least
+        `ghost_throttle_ms` has passed since the last submit (minimum
+        spacing between submits, not a display gate). A spacing of 0 means
+        "submit as soon as the worker is free".
+        """
+        with self._lock:
+            spacing_ok = self.last_submit_ms is None or (
+                now_ms - self.last_submit_ms >= self.perf.ghost_throttle_ms
+            )
+            worker_free = (
+                self._transcription_future is None
+                or self._transcription_future.done()
+            )
+        if not (spacing_ok and worker_free):
+            return
+
+        capture_start = time.perf_counter()
+
+        # EFFICIENT FIRST PASS: Sliding window for ghost results (all
+        # devices). Bounded inference instead of transcribing the growing
+        # whole buffer.
+        full_audio = None
+        if self.perf.ghost_window_s > 0:
+            window_samples = int(self.perf.ghost_window_s * 16000)
+
+            with self._lock:
+                if self._buffer_size > window_samples:
+                    # Detect chunk size from active_buffer for alignment
+                    chunk_size = 512
+                    if self.active_buffer:
+                        chunk_size = len(self.active_buffer[0])
+
+                    # Align window to chunk boundary (round UP to always send >= target)
+                    window_samples_aligned = (
+                        (window_samples + chunk_size - 1) // chunk_size
+                    ) * chunk_size
+                    if window_samples_aligned == 0:
+                        window_samples_aligned = chunk_size
+
+                    logger.debug(
+                        f"[GHOST] Window: {window_samples} -> {window_samples_aligned} samples "
+                        f"(chunk_size={chunk_size}, buffer_size={self._buffer_size})"
+                    )
+
+                    # Collect just enough chunks from the end
+                    chunks = []
+                    collected = 0
+                    for buf_chunk in reversed(self.active_buffer):
+                        chunks.append(buf_chunk)
+                        collected += len(buf_chunk)
+                        if collected >= window_samples_aligned:
+                            break
+                    # Concatenate in correct order (chunks were reversed)
+                    full_audio = np.concatenate(chunks[::-1])
+
+        if full_audio is None:
+            # Fallback: Capture everything (buffer shorter than window)
+            with self._lock:
+                full_audio = np.concatenate(self.active_buffer)
+
+        window_audio_s = len(full_audio) / 16000.0
+        capture_done = time.perf_counter()
+
+        # Audio coverage of this Ghost's window: the window holds the LAST
+        # len(full_audio) samples of the buffer.
+        window_start = self._buffer_size - len(full_audio)
+        if window_start < 0:
+            window_start = 0
+
+        logger.debug(
+            f"[GHOST] Sending {len(full_audio)} samples to STT "
+            f"({window_audio_s:.2f}s, window={self.perf.ghost_window_s}s, "
+            f"ghost_padding={self.perf.ghost_padding_s}s)"
+        )
+
+        # Capture current generation to detect stale results
+        with self._lock:
+            self._future_generation = self._generation
+
+        def _run_transcribe(audio):
+            t_start = time.perf_counter()
+            res = self.engine.transcribe(audio, padding_s=self.perf.ghost_padding_s)
+            return res, (time.perf_counter() - t_start) * 1000
+
+        self._transcription_future = self.executor.submit(_run_transcribe, full_audio)
+        with self._lock:
+            self.last_submit_ms = now_ms
+            self._ghost_window_s = window_audio_s
+            self._ghost_window_span = (window_start, self._buffer_size)
+            self._ghost_capture_ms = (capture_done - capture_start) * 1000
+            self._ghost_submit_wall_ms = time.perf_counter() * 1000
+
+    def _drop_pending_ghost(self):
+        """
+        Invalidate an outstanding Ghost submit: bump the generation (its
+        result will be judged stale) and clear the future slot so nothing
+        consumes it against the Final.
+        """
+        with self._lock:
+            self._transcription_future = None
+            self._generation += 1
+
     def _handle_stop(self):
         # Cancel any pending ghost transcription and increment generation to invalidate stale results
         with self._lock:
@@ -501,9 +559,11 @@ class StandardPipeline(Pipeline):
             self.active_buffer = []
             self._buffer_size = 0
             self.pre_roll_buffer.clear()
-            self.last_update_time = 0
+            self.last_submit_ms = None
             self._transcription_future = None
             self._generation += 1  # Invalidate any pending ghost transcriptions
+            self._last_ghost_staleness_ms = 0.0
+            self._ghost_window_span = (0, 0)
             if self.is_speaking:
                 self.is_speaking = False
                 callback = self.on_state_change

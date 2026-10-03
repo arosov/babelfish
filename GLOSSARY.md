@@ -16,9 +16,11 @@ _Avoid_: session, segment, phrase
 ### Transcript text
 
 **Ghost**:
-Provisional transcript text shown while you are still speaking. It is iterated in place
-as you dictate and then replaced wholesale by the Final when speech ends; it is never
-committed anywhere. Named for the fact that it leaves no trace.
+Provisional transcript text shown while you are still speaking. It is iterated
+in place as you dictate — in the terminal display, window updates append
+incrementally and the accumulated Ghost line stays visible after the utterance
+ends — and then the Final succeeds it. It is never committed anywhere; nothing
+is typed or stored from it.
 _Avoid_: interim, preview, partial, draft
 
 **Final**:

@@ -41,9 +41,20 @@ on `PerformanceProfile`, and the tiers in `engine.benchmark()` remain canonical:
 model serving both cadences, measuring its latency against the Ghost throttle is exactly
 the right calibration. ADR 0001's claim that self-calibration is gone is reversed.
 
-**`min_padding_s` is a one-model workaround again.** Right-padding a buffer with zeros
-works around TDT behaviour on incomplete audio; it feeds both passes and no longer needs
-cross-model derivation review.
+**`ghost_throttle_ms` is minimum spacing, not a gate.** Since the reactive-Ghost rework,
+the throttle no longer delays display of an inference that already finished: Ghost text
+is shown as soon as inference completes, and `ghost_throttle_ms` only spaces out Ghost
+*submits* (the last mile — focused-app rendering or typed injection — lives outside
+Babelfish and is tuned per user, so inference speed alone does not set the visual cadence).
+`0` is cleanly defined as "submit as soon as the worker is free". See the
+Reactive Ghost Pass plan.
+
+**`min_padding_s` is a one-model workaround again — Final-only.** Right-padding a buffer
+with zeros works around TDT behaviour on incomplete audio; it now feeds the Final pass
+only. The Ghost pass has its own `ghost_padding_s` (default 1.0 — bumped from 0.0 after
+live testing showed the first, unpadded windows transcribe to empty text, delaying the
+first *visible* Ghost by ~400ms). The one-padding doctrine ("`min_padding_s` feeds both
+passes") is split by this rework.
 
 **Spelling assumptions are safe.** Downstream code may again assume both kinds of
 transcript text come from the same model's formatting.
