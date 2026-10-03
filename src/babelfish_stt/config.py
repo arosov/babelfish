@@ -15,7 +15,7 @@ class HardwareConfig(BaseModel):
     device: str = "auto"
     microphone_name: Optional[str] = None
     quantization: Optional[str] = (
-        None  # None means auto/highest for GPU, default int8 for CPU in engine
+        None  # None means full precision; an explicit "int8" is still honoured
     )
 
 

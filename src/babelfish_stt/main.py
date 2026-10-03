@@ -10,6 +10,9 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
+# nvidia-smi lists GPUs in PCI bus order: pin CUDA ordinals to bus ids so the
+# device selected by highest-VRAM probing is the device ONNX Runtime uses.
+os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 
 import logging
 import numpy as np

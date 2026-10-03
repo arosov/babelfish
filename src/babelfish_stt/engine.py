@@ -1,6 +1,7 @@
 import onnx_asr
 import numpy as np
 import logging
+import os
 import threading
 import sys
 from pathlib import Path
@@ -8,7 +9,12 @@ from typing import Any, Optional, List
 from babelfish_stt.reconfigurable import Reconfigurable
 from babelfish_stt.config import PipelineConfig, BabelfishConfig
 from babelfish_stt.hardware import get_memory_usage, get_device_name
+from babelfish_stt.placement import onnx_providers, resolve_device
 from pydantic import BaseModel
+
+# nvidia-smi reports GPUs in PCI bus order, so pin CUDA ordinals to bus ids
+# before any ONNX Runtime session is created in this process.
+os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +42,13 @@ class STTEngine(Reconfigurable):
         model_name = "nemo-parakeet-tdt-0.6b-v3"
         model_path = models_dir / model_name
 
-        # Quantization Policy:
-        # GPU: Force highest (None)
-        # CPU: Allow config or default to int8
+        # Quantization Policy: full precision everywhere by default.
+        # An explicit hardware.quantization setting is still honoured.
         if self.device_type != "cpu":
             quantization = None
             logger.info("🚀 GPU mode: Forcing highest precision quantization.")
         else:
-            quantization = config.hardware.quantization or "int8"
+            quantization = config.hardware.quantization
             logger.info(f"🐌 CPU mode: Using quantization={quantization}")
 
         # Map Babelfish device to ONNX Runtime providers
@@ -70,7 +75,7 @@ class STTEngine(Reconfigurable):
                 self.model = onnx_asr.load_model(
                     model_name,
                     path=str(model_path) if model_path.exists() else None,
-                    quantization="int8",
+                    quantization=None,
                     providers=["CPUExecutionProvider"],
                 )
             else:
@@ -101,97 +106,12 @@ class STTEngine(Reconfigurable):
             )
 
     def _resolve_device(self, device: str) -> str:
-        try:
-            import onnxruntime as ort
+        from babelfish_stt.hardware import probe_hardware_facts
 
-            available = ort.get_available_providers()
-        except Exception:
-            available = []
-
-        # 1. Handle "Auto" or generic "cuda" requests
-        if device == "auto" or device == "cuda":
-            if "CUDAExecutionProvider" in available:
-                # Find the best GPU index
-                from babelfish_stt.hardware import get_best_gpu_index
-
-                best_idx = get_best_gpu_index()
-                logger.info(f"🤖 Auto-selecting best GPU: cuda:{best_idx}")
-                return f"cuda:{best_idx}"
-
-            # Mac Logic: Prioritize CoreML only on Apple Silicon (arm64)
-            if sys.platform == "darwin":
-                import platform
-
-                arch = platform.machine().lower()
-                if "arm" in arch or "aarch64" in arch:
-                    if "CoreMLExecutionProvider" in available:
-                        return "coreml"
-                # Fallback to CPU for Intel Macs (x86_64) unless manually forced
-
-            if "ROCMExecutionProvider" in available:
-                return "rocm"
-            if "DmlExecutionProvider" in available:
-                return "dml:0"
-
-            return "cpu"
-
-        # 2. Smart fallback for explicit requests
-        if device.startswith("cuda") and "CUDAExecutionProvider" not in available:
-            if "DmlExecutionProvider" in available:
-                logger.warning(
-                    f"Requested '{device}' but CUDA provider not found. Falling back to DirectML."
-                )
-                return "dml:0"
-
-        return device
+        return resolve_device(device, probe_hardware_facts())
 
     def _get_providers(self, device: str) -> List[Any]:
-        if device == "coreml" or (sys.platform == "darwin" and device == "metal"):
-            return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
-
-        # Generic Mac with explicit device selection is handled by specific branches below or fallbacks
-
-        if device == "cuda":
-            # Should have been resolved to cuda:X by _resolve_device, but safe fallback
-            return [("CUDAExecutionProvider", {"device_id": 0}), "CPUExecutionProvider"]
-        elif device.startswith("cuda:"):
-            try:
-                # Extract device ID from string "cuda:1" -> 1
-                dev_id = int(device.split(":")[1])
-                return [
-                    ("CUDAExecutionProvider", {"device_id": dev_id}),
-                    "CPUExecutionProvider",
-                ]
-            except ValueError:
-                logger.warning(
-                    f"Invalid CUDA device format '{device}', falling back to device 0"
-                )
-                return [
-                    ("CUDAExecutionProvider", {"device_id": 0}),
-                    "CPUExecutionProvider",
-                ]
-        elif device == "dml":
-            return [
-                ("DmlExecutionProvider", {"device_id": 0}),
-                "CPUExecutionProvider",
-            ]
-        elif device.startswith("dml:"):
-            try:
-                dev_id = int(device.split(":")[1])
-                return [
-                    ("DmlExecutionProvider", {"device_id": dev_id}),
-                    "CPUExecutionProvider",
-                ]
-            except ValueError:
-                return [
-                    ("DmlExecutionProvider", {"device_id": 0}),
-                    "CPUExecutionProvider",
-                ]
-        elif device == "rocm":
-            return ["ROCMExecutionProvider", "CPUExecutionProvider"]
-        elif device == "openvino":
-            return ["OpenVINOExecutionProvider", "CPUExecutionProvider"]
-        return ["CPUExecutionProvider"]
+        return onnx_providers(device)
 
     def reconfigure(self, config: BaseModel) -> None:
         """STTEngine reconfigure (called by ConfigManager)."""

@@ -7,8 +7,11 @@ import os
 import json
 import ctypes
 import ctypes.util
+import platform
 from pathlib import Path
 from typing import Dict, Optional, List
+
+from babelfish_stt.placement import GpuDevice, HardwareFacts
 
 
 def detect_nvidia() -> bool:
@@ -402,11 +405,16 @@ def _query_dxgi_adapters() -> List[Dict]:
                 if not (desc.Flags & 2):
                     luid = desc.AdapterLuid
                     wmi_key = f"luid_0x{luid.HighPart:08X}_0x{luid.LowPart:08X}_phys_0"
+                    dedicated_gb = desc.DedicatedVideoMemory / (1024**3)
                     adapters.append(
                         {
                             "name": desc.Description.strip(),
-                            "total_gb": desc.DedicatedVideoMemory / (1024**3),
+                            "total_gb": dedicated_gb,
                             "wmi_key": wmi_key,
+                            "vendor_id": desc.VendorId,
+                            # Integrated GPUs share system memory, so their
+                            # dedicated VRAM is tiny (typically ~128 MB).
+                            "integrated": dedicated_gb < 1.0,
                         }
                     )
 
@@ -698,6 +706,164 @@ def get_best_gpu_index() -> int:
 
     except Exception:
         return 0
+
+
+def _list_nvidia_devices() -> List[GpuDevice]:
+    """NVIDIA GPUs keyed by nvidia-smi index (main.py sets CUDA_DEVICE_ORDER=PCI_BUS_ID so CUDA ordinals match)."""
+    if not shutil.which("nvidia-smi"):
+        return []
+    try:
+        output = (
+            subprocess.check_output(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=index,name,memory.total",
+                    "--format=csv,noheader,nounits",
+                ],
+                stderr=subprocess.STDOUT,
+            )
+            .decode("utf-8")
+            .strip()
+            .splitlines()
+        )
+    except Exception:
+        return []
+
+    devices = []
+    for line in output:
+        parts = [p.strip() for p in line.split(",")]
+        try:
+            index = int(parts[0])
+            total_gb = float(parts[-1]) / 1024.0
+        except (ValueError, IndexError):
+            continue
+        devices.append(GpuDevice(f"cuda:{index}", ",".join(parts[1:-1]), total_gb))
+    return devices
+
+
+def _list_directml_devices() -> List[GpuDevice]:
+    """Windows DXGI adapters in enumeration order (matches the dml:<i> device ids)."""
+    if sys.platform != "win32":
+        return []
+    return [
+        GpuDevice(
+            f"dml:{i}",
+            a["name"],
+            a["total_gb"],
+            bool(a.get("integrated", a["total_gb"] < 1.0)),
+        )
+        for i, a in enumerate(_query_dxgi_adapters())
+    ]
+
+
+def _list_rocm_devices() -> List[GpuDevice]:
+    """AMD cards keyed by rocm-smi card index, with per-card VRAM totals."""
+    import re
+
+    smi_path = shutil.which("rocm-smi") or "/opt/rocm/bin/rocm-smi"
+    if not os.path.exists(smi_path):
+        return []
+    try:
+        meminfo = json.loads(
+            subprocess.check_output(
+                [smi_path, "--showmeminfo", "vram", "--json"], stderr=subprocess.STDOUT
+            ).decode("utf-8")
+        )
+    except Exception:
+        return []
+    try:
+        products = json.loads(
+            subprocess.check_output(
+                [smi_path, "--showproductname", "--json"], stderr=subprocess.STDOUT
+            ).decode("utf-8")
+        )
+    except Exception:
+        products = {}
+
+    devices = []
+    for key in sorted(meminfo, key=lambda k: int(re.search(r"\d+", k).group())):
+        match = re.search(r"\d+", key)
+        if not match:
+            continue
+        try:
+            total_gb = float(meminfo[key].get("VRAM Total Memory (B)", 0)) / (1024**3)
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if total_gb <= 0:
+            continue
+        index = int(match.group())
+        card = products.get(key, {}) if isinstance(products, dict) else {}
+        name = card.get("Card series", card.get("Product Name", f"AMD GPU {index}"))
+        devices.append(GpuDevice(f"rocm:{index}", f"{name} (ROCm)", total_gb))
+    return devices
+
+
+def _is_intel_adapter(adapter: Dict) -> bool:
+    if "vendor_id" in adapter:
+        return adapter["vendor_id"] == 0x8086
+    return "intel" in adapter.get("name", "").lower()
+
+
+def _list_openvino_devices() -> List[GpuDevice]:
+    """Intel GPUs as OpenVINO GPU.<n> devices, numbered among themselves.
+
+    On Windows the DXGI adapters are the source of truth (with real VRAM).
+    Elsewhere the OpenVINO runtime's own device list is used when importable,
+    but it reports no VRAM, so those entries carry 0.0 and lose to any
+    enumerated card with a known size.
+    """
+    if sys.platform == "win32":
+        devices = []
+        for adapter in _query_dxgi_adapters():
+            if not _is_intel_adapter(adapter):
+                continue
+            devices.append(
+                GpuDevice(
+                    f"openvino:GPU.{len(devices)}",
+                    adapter["name"],
+                    adapter["total_gb"],
+                    bool(adapter.get("integrated", adapter["total_gb"] < 1.0)),
+                )
+            )
+        return devices
+    try:
+        from openvino.runtime import Core
+
+        names = [d for d in Core().available_devices if d.upper().startswith("GPU")]
+    except Exception:
+        return []
+    return [GpuDevice(f"openvino:{name}", f"{name} (OpenVINO)", 0.0) for name in names]
+
+
+# One enumerator per backend, consulted only when that backend's ONNX Runtime provider is available.
+_GPU_ENUMERATORS = (
+    ("CUDAExecutionProvider", _list_nvidia_devices),
+    ("ROCMExecutionProvider", _list_rocm_devices),
+    ("DmlExecutionProvider", _list_directml_devices),
+    ("OpenVINOExecutionProvider", _list_openvino_devices),
+)
+
+
+def probe_hardware_facts() -> HardwareFacts:
+    """Snapshot of what this machine offers, as input to placement.resolve_device."""
+    try:
+        import onnxruntime as ort
+
+        providers = tuple(ort.get_available_providers())
+    except Exception:
+        providers = ()
+
+    gpus: List[GpuDevice] = []
+    for provider, enumerate_devices in _GPU_ENUMERATORS:
+        if provider in providers:
+            gpus.extend(enumerate_devices())
+
+    return HardwareFacts(
+        providers=providers,
+        gpus=tuple(gpus),
+        platform=sys.platform,
+        machine=platform.machine(),
+    )
 
 
 def list_hardware() -> List[Dict]:
