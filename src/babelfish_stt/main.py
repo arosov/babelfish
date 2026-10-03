@@ -335,8 +335,8 @@ async def run_babelfish(
         pipeline.server = server
 
         # Update server's internal initial_config to include runtime stats
-        # (active_device, VRAM). This prevents unnecessary restarts when
-        # switching from 'auto' to the detected device.
+        # (active_device, VRAM) so a no-op config update doesn't look like a
+        # device change and trigger a restart.
         server.initial_config = config_manager.config.model_copy(deep=True)
         await server.send_initial_state(None)
 

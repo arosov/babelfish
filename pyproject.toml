@@ -27,8 +27,8 @@ dependencies = [
 [project.optional-dependencies]
 # Pinned to the newest version each flavor line actually ships (the lines
 # diverged permanently; ORT core is at ~monthly 1.25-1.30 cadence, DML stuck
-# at 1.24, OVEP capped at 1.24.1, ROCm frozen). Bumps are independent
-# per-flavor decisions with benchmark discipline.
+# at 1.24, OVEP capped at 1.24.1). Bumps are independent per-flavor
+# decisions with benchmark discipline.
 cpu = [
     "onnxruntime==1.30.0",
 ]
@@ -62,15 +62,9 @@ nvidia-win = [
     "nvidia-cudnn-cu13~=9.0",
     "nvidia-cublas==13.8.0.4",
 ]
-# Native performance for AMD on Linux.
-# Dead end: the ROCm EP was removed from ORT's source tree in 1.23, so no
-# official 1.23+ wheels will exist. Every PyPI version of this package
-# (1.22.2.postN included) is a third-party community build, not a Microsoft
-# or AMD one. Future AMD/Linux path is the MIGraphX EP — separate work.
-amd-linux = [
-    "onnxruntime-rocm==1.22.2.post1",
-]
-# Native performance for Intel on Linux (capped: no 1.24.2+ OVEP wheels exist)
+# Native performance for Intel on Linux (capped: no 1.24.2+ OVEP wheels exist).
+# Manual opt-in only: never auto-selected by the bootstrap (ADR 0007) —
+# install the extra yourself and set hardware.device to an openvino id.
 intel-linux = [
     "onnxruntime-openvino==1.24.1",
 ]
@@ -80,7 +74,7 @@ openwakeword = { url = "https://github.com/dscripka/openWakeWord/archive/368c037
 
 [tool.uv]
 conflicts = [
-    [{ extra = "cpu" }, { extra = "nvidia-win" }, { extra = "windows-gpu" }, { extra = "amd-linux" }, { extra = "intel-linux" }],
+    [{ extra = "cpu" }, { extra = "nvidia-win" }, { extra = "nvidia-linux" }, { extra = "windows-gpu" }, { extra = "intel-linux" }],
 ]
 environments = [
     "sys_platform == 'linux'",

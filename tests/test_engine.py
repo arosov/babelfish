@@ -9,7 +9,7 @@ class TestEngine(unittest.TestCase):
     @patch("onnx_asr.load_model")
     @patch("babelfish_stt.engine.get_memory_usage")
     @patch("babelfish_stt.hardware.probe_hardware_facts")
-    def test_auto_resolves_to_the_gpu_with_the_most_vram(
+    def test_bare_cuda_resolves_to_the_gpu_with_the_most_vram(
         self, mock_probe, mock_mem, mock_load
     ):
         from babelfish_stt.placement import GpuDevice, HardwareFacts
@@ -22,7 +22,7 @@ class TestEngine(unittest.TestCase):
             ),
         )
         mock_mem.return_value = {"total": 8.0, "used": 1.0}
-        config = BabelfishConfig(hardware=HardwareConfig(device="auto"))
+        config = BabelfishConfig(hardware=HardwareConfig(device="cuda"))
 
         engine = STTEngine(config=config)
 
@@ -57,7 +57,7 @@ class TestEngine(unittest.TestCase):
         )
         mock_mem.return_value = {"total": 8.0, "used": 1.0}
         mock_load.side_effect = [RuntimeError("CUDA OOM"), MagicMock()]
-        config = BabelfishConfig(hardware=HardwareConfig(device="auto"))
+        config = BabelfishConfig(hardware=HardwareConfig(device="cuda"))
 
         engine = STTEngine(config=config)
 

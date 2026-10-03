@@ -22,17 +22,18 @@ class HardwareFacts:
     machine: str = ""
 
 
-# Backends in the order "auto" prefers them, with the ONNX Runtime provider that enables each.
+# Backends that own an ONNX Runtime provider, with the provider that enables each.
+# OpenVINO is a manual opt-in extra (never auto-selected); coreml/metal stay
+# macOS-only passthroughs.
 _BACKENDS = (
     ("cuda", "CUDAExecutionProvider"),
-    ("rocm", "ROCMExecutionProvider"),
     ("dml", "DmlExecutionProvider"),
     ("openvino", "OpenVINOExecutionProvider"),
 )
 _PROVIDER = dict(_BACKENDS)
 # Used when the backend's provider is available but no device could be enumerated.
 # OpenVINO has none: without an enumerated GPU its default device is the CPU.
-_DEFAULT_DEVICE = {"cuda": "cuda:0", "rocm": "rocm:0", "dml": "dml:0"}
+_DEFAULT_DEVICE = {"cuda": "cuda:0", "dml": "dml:0"}
 
 
 def _best(candidates):
@@ -47,25 +48,41 @@ def _best_of(backend: str, facts: HardwareFacts):
     return _best(candidates).device if candidates else _DEFAULT_DEVICE.get(backend)
 
 
-def _is_apple_silicon(facts: HardwareFacts) -> bool:
-    machine = facts.machine.lower()
-    return facts.platform == "darwin" and ("arm" in machine or "aarch64" in machine)
-
-
 def resolve_device(requested: str, facts: HardwareFacts) -> str:
-    if requested in ("auto", "cuda"):
-        for backend, _ in _BACKENDS:
-            device = _best_of(backend, facts)
-            if device:
-                return device
-        if _is_apple_silicon(facts) and "CoreMLExecutionProvider" in facts.providers:
-            return "coreml"
+    """Resolves a concrete `hardware.device` value to a runnable device id.
+
+    `hardware.device` always holds a concrete backend (ADR 0007): a bare
+    backend name picks that backend's highest-VRAM discrete device, an exact
+    id is honoured as-is, and anything unknown degrades to CPU (with a
+    warning) so a stale config can't wedge the engine. Requests whose
+    provider is not installed also degrade to CPU — there is no backend
+    re-ordering fallback anymore.
+    """
+    if requested == "cpu":
         return "cpu"
-    if requested in _PROVIDER:
-        return _best_of(requested, facts) or requested
-    if requested.startswith("cuda:") and _PROVIDER["cuda"] not in facts.providers:
-        return _best_of("dml", facts) or requested
-    return requested
+
+    backend = requested.partition(":")[0]
+    if backend in _PROVIDER:
+        provider = _PROVIDER[backend]
+        if provider not in facts.providers:
+            logger.warning(
+                f"Device '{requested}' requested but {provider} is not installed; "
+                "falling back to CPU"
+            )
+            return "cpu"
+        if ":" in requested:
+            # Exact id: honoured as pinned, never re-selected by VRAM.
+            return requested
+        return _best_of(backend, facts) or requested
+
+    # macOS passthroughs ("coreml", "metal") and other already-concrete ids.
+    if requested in ("coreml", "metal"):
+        return requested
+
+    logger.warning(
+        f"Unknown device '{requested}' requested; falling back to CPU"
+    )
+    return "cpu"
 
 
 def _index(qualifier: str) -> int:
@@ -86,10 +103,6 @@ def onnx_providers(device: str) -> list:
         return [("CUDAExecutionProvider", {"device_id": _index(qualifier)}), cpu]
     if backend == "dml":
         return [("DmlExecutionProvider", {"device_id": _index(qualifier)}), cpu]
-    if backend == "rocm":
-        if qualifier:
-            return [("ROCMExecutionProvider", {"device_id": _index(qualifier)}), cpu]
-        return ["ROCMExecutionProvider", cpu]
     if backend == "openvino":
         if qualifier:
             return [("OpenVINOExecutionProvider", {"device_type": qualifier}), cpu]

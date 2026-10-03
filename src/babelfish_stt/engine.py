@@ -27,13 +27,11 @@ logger = logging.getLogger(__name__)
 _DEGRADED_FIX: Dict[str, tuple] = {
     "cuda": ("CUDAExecutionProvider", "onnxruntime-gpu"),
     "dml": ("DmlExecutionProvider", "onnxruntime-directml"),
-    "rocm": ("ROCMExecutionProvider", "onnxruntime-rocm"),
     "openvino": ("OpenVINOExecutionProvider", "onnxruntime-openvino"),
     "coreml": ("CoreMLExecutionProvider", "onnxruntime"),
 }
 _BACKEND_EXTRA = {
     "dml": "windows-gpu",
-    "rocm": "amd-linux",
     "openvino": "intel-linux",
     "coreml": "cpu",
 }
@@ -44,7 +42,7 @@ def _degraded_device_fix(device: str) -> Optional[str]:
 
     A resolved GPU device whose provider is missing from
     `get_available_providers()` usually means another ORT flavor wheel
-    (plain / gpu / directml / openvino / rocm all ship the same top-level
+    (plain / gpu / directml / openvino all ship the same top-level
     `onnxruntime/` package) currently owns the pyd — a shadowed install.
     """
     backend = device.partition(":")[0]

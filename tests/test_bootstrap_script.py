@@ -7,6 +7,7 @@ exists), so it is imported here directly from its path.
 import importlib.util
 import asyncio
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -117,53 +118,127 @@ def test_gpu_mode_without_force_has_no_cpu_flag(bootstrap):
 
 
 class TestHardwareDetectorModes:
-    def test_nvidia_windows_uses_nvidia_win(self, bootstrap, monkeypatch):
-        detector = bootstrap.HardwareDetector()
-        monkeypatch.setattr(bootstrap.HardwareDetector, "detect_nvidia", lambda s: True)
+    """Windows defaults to DirectML; CUDA is an explicit opt-in. On Linux the
+    CUDA flavor is only synced when an NVIDIA GPU is actually detected."""
+
+    def _detector(self, bootstrap, monkeypatch, platform="win32", nvidia=False, gpus=()):
+        """Builds a HardwareDetector with faked platform + detection."""
+
+        class _FakeSys:
+            stderr = sys.stderr
+
+            def __init__(self):
+                self.platform = platform
+
+        monkeypatch.setattr(bootstrap, "sys", _FakeSys())
         monkeypatch.setattr(
-            bootstrap.HardwareDetector, "get_all_gpus", lambda s: ["NVIDIA GPU"]
+            bootstrap.HardwareDetector, "detect_nvidia", lambda *args: nvidia
         )
+        monkeypatch.setattr(bootstrap.HardwareDetector, "detect_metal", lambda s: False)
+        monkeypatch.setattr(bootstrap.HardwareDetector, "get_all_gpus", lambda s: list(gpus))
+        return bootstrap.HardwareDetector()
+
+    def test_nvidia_windows_defaults_to_directml(self, bootstrap, monkeypatch):
+        # No config file: 'auto' migrates to the platform default 'dml'
+        # (win32), so even an NVIDIA machine syncs windows-gpu first.
+        detector = self._detector(bootstrap, monkeypatch, platform="win32", nvidia=True, gpus=["NVIDIA GPU"])
+        hw = detector.get_best_mode()
+        assert hw == {
+            "hw_mode": "windows_gpu",
+            "extra": "windows-gpu",
+            "desc": "DirectML",
+        }
+
+    def test_nvidia_windows_cuda_config_uses_nvidia_win(self, bootstrap, monkeypatch):
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cuda:0")
+        detector = self._detector(bootstrap, monkeypatch, platform="win32", nvidia=True, gpus=["NVIDIA GPU"])
         hw = detector.get_best_mode()
         assert hw == {
             "hw_mode": "nvidia_win",
             "extra": "nvidia-win",
-            "desc": "NVIDIA GPU",
+            "desc": "NVIDIA GPU (CUDA)",
         }
 
-    def test_nvidia_dml_config_uses_windows_gpu(self, bootstrap, monkeypatch, tmp_path):
+    def test_nvidia_dml_config_uses_windows_gpu(self, bootstrap, monkeypatch):
         monkeypatch.setattr(
             bootstrap, "_read_config_device", lambda: "dml:0"
         )
-        detector = bootstrap.HardwareDetector()
-        monkeypatch.setattr(bootstrap.HardwareDetector, "detect_nvidia", lambda s: True)
-        monkeypatch.setattr(
-            bootstrap.HardwareDetector, "get_all_gpus", lambda s: ["NVIDIA GPU"]
-        )
+        detector = self._detector(bootstrap, monkeypatch, platform="win32", nvidia=True, gpus=["NVIDIA GPU"])
         hw = detector.get_best_mode()
         assert hw["extra"] == "windows-gpu"
         assert "DirectML" in hw["desc"]
 
-    def test_amd_linux(self, bootstrap, monkeypatch):
-        detector = bootstrap.HardwareDetector()
-        monkeypatch.setattr(bootstrap.HardwareDetector, "detect_nvidia", lambda s: False)
-        monkeypatch.setattr(
-            bootstrap.HardwareDetector, "detect_amd_linux", lambda s: True
-        )
-        monkeypatch.setattr(bootstrap.HardwareDetector, "get_all_gpus", lambda s: [])
+    def test_windows_cpu_config_still_syncs_windows_gpu(self, bootstrap, monkeypatch):
+        # Runtime --cpu (via HardwareLaunchPlan) handles a 'cpu' device; the
+        # synced environment stays the Windows default.
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cpu")
+        detector = self._detector(bootstrap, monkeypatch, platform="win32", nvidia=False, gpus=[])
         hw = detector.get_best_mode()
-        if sys.platform == "win32":
-            assert hw["extra"] == "windows-gpu"
-        else:
-            assert hw["extra"] == "amd-linux"
+        assert hw["extra"] == "windows-gpu"
+
+    def test_windows_cuda_config_without_nvidia_warns_but_honors_request(
+        self, bootstrap, monkeypatch, caplog
+    ):
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cuda")
+        detector = self._detector(bootstrap, monkeypatch, platform="win32", nvidia=False, gpus=[])
+        with caplog.at_level(logging.WARNING, logger="babelfish_bootstrap"):
+            hw = detector.get_best_mode()
+        assert hw["extra"] == "nvidia-win"
+        assert any("no NVIDIA GPU was detected" in r.message for r in caplog.records)
+
+    def test_windows_legacy_rocm_config_migrates_to_platform_default(
+        self, bootstrap, monkeypatch, caplog
+    ):
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "rocm:0")
+        detector = self._detector(bootstrap, monkeypatch, platform="win32", nvidia=False, gpus=[])
+        with caplog.at_level(logging.INFO, logger="babelfish_bootstrap"):
+            hw = detector.get_best_mode()
+        assert hw["extra"] == "windows-gpu"
+        assert any("Migrating legacy device 'rocm:0' → 'dml'" in r.message for r in caplog.records)
+
+    def test_linux_nvidia_defaults_to_cuda(self, bootstrap, monkeypatch):
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cuda")
+        detector = self._detector(bootstrap, monkeypatch, platform="linux", nvidia=True)
+        hw = detector.get_best_mode()
+        assert hw == {
+            "hw_mode": "nvidia_linux",
+            "extra": "nvidia-linux",
+            "desc": "NVIDIA GPU",
+        }
+
+    def test_linux_without_nvidia_defaults_to_cpu(self, bootstrap, monkeypatch):
+        detector = self._detector(bootstrap, monkeypatch, platform="linux", nvidia=False, gpus=["AMD GPU"])
+        hw = detector.get_best_mode()
+        assert hw["hw_mode"] == "cpu"
+        assert hw["extra"] == "cpu"
+
+    def test_linux_cuda_config_without_nvidia_syncs_cpu_flavor(
+        self, bootstrap, monkeypatch, caplog
+    ):
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cuda:0")
+        detector = self._detector(bootstrap, monkeypatch, platform="linux", nvidia=False)
+        with caplog.at_level(logging.WARNING, logger="babelfish_bootstrap"):
+            hw = detector.get_best_mode()
+        assert hw["hw_mode"] == "cpu"
+        assert hw["extra"] == "cpu"
+        assert any("will degrade to CPU" in r.message for r in caplog.records)
+
+    def test_linux_dml_config_is_invalid_and_falls_back_to_cpu(
+        self, bootstrap, monkeypatch, caplog
+    ):
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "dml:1")
+        detector = self._detector(bootstrap, monkeypatch, platform="linux", nvidia=True)
+        with caplog.at_level(logging.WARNING, logger="babelfish_bootstrap"):
+            hw = detector.get_best_mode()
+        assert hw["hw_mode"] == "cpu"
+        assert hw["extra"] == "cpu"
+        assert any("invalid on Linux" in r.message for r in caplog.records)
 
     def test_no_gpu_falls_back_to_cpu(self, bootstrap, monkeypatch):
-        detector = bootstrap.HardwareDetector()
-        monkeypatch.setattr(bootstrap.HardwareDetector, "detect_nvidia", lambda s: False)
-        monkeypatch.setattr(
-            bootstrap.HardwareDetector, "detect_amd_linux", lambda s: False
-        )
-        monkeypatch.setattr(bootstrap.HardwareDetector, "detect_metal", lambda s: False)
-        monkeypatch.setattr(bootstrap.HardwareDetector, "get_all_gpus", lambda s: [])
+        # On Linux there is no DirectML fallback: without an NVIDIA driver
+        # the CPU flavor is synced. (Windows always syncs windows-gpu — see
+        # test_windows_cpu_config_still_syncs_windows_gpu.)
+        detector = self._detector(bootstrap, monkeypatch, platform="linux", nvidia=False, gpus=())
         hw = detector.get_best_mode()
         assert hw["hw_mode"] == "cpu"
         assert hw["extra"] == "cpu"
@@ -191,7 +266,6 @@ def _all_detector_modes(bootstrap):
     return [
         {"hw_mode": "nvidia_win", "extra": "nvidia-win"},
         {"hw_mode": "nvidia_linux", "extra": "nvidia-linux"},
-        {"hw_mode": "amd_linux", "extra": "amd-linux"},
         {"hw_mode": "windows_gpu", "extra": "windows-gpu"},
         {"hw_mode": "metal", "extra": "cpu"},
         {"hw_mode": "cpu", "extra": "cpu"},

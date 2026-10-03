@@ -73,6 +73,14 @@ scripts/run.sh --type --server
   marker matches **and** a live ORT-flavor check passes → provision the
   Parakeet model if absent → build the DLL env → foreground
   `uv run --no-sync babelfish <passthrough args>`.
+- **Flavor from `hardware.device` (ADR 0007):** the device is the source of
+  truth — Windows syncs `windows-gpu` (DirectML) unless the device starts
+  with `cuda` (→ `nvidia-win`); Linux syncs `nvidia-linux` only when the
+  device asks for CUDA *and* an NVIDIA driver is detected, else `cpu`;
+  `intel-linux` is a manual opt-in and never auto-selected. Legacy device
+  values (`""`, `"auto"`, `rocm*`) map to the platform default (`dml` on
+  Windows; `cuda` on Linux with NVIDIA, else `cpu`) with one log line — the
+  running server migrates the config file itself.
 - **Driven** (`VOGON_APP_DATA_DIR` set, as VogonPoet does): same provisioning
   plus a status WebSocket on port 8123 (the UI shows progress), a PID file,
   and a final `babelfish --server --port 8123` launch. The stdout markers the

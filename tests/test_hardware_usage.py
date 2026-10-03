@@ -17,18 +17,6 @@ class TestHardwareUsage(unittest.TestCase):
         self.assertEqual(usage["total"], 8.0)
         self.assertEqual(usage["used"], 1.0)
 
-    @patch("shutil.which")
-    @patch("os.path.exists")
-    @patch("subprocess.check_output")
-    def test_get_rocm_memory(self, mock_output, mock_exists, mock_which):
-        mock_which.return_value = "/usr/bin/rocm-smi"
-        mock_exists.return_value = True
-        mock_output.return_value = b'{"card0": {"VRAM Total Memory (B)": "8589934592", "VRAM Total Used (B)": "1073741824"}}'
-
-        usage = get_memory_usage("rocm")
-        self.assertEqual(usage["total"], 8.0)
-        self.assertEqual(usage["used"], 1.0)
-
     @patch("sys.platform", "darwin")
     @patch("subprocess.check_output")
     def test_get_macos_memory(self, mock_output):

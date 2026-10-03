@@ -11,6 +11,7 @@ from babelfish_stt.config import (
     VoiceConfig,
     UIConfig,
     ServerConfig,
+    platform_default_device,
 )
 from babelfish_stt.reconfigurable import Reconfigurable
 
@@ -91,7 +92,26 @@ class ConfigManager:
                 except Exception as e:
                     logger.warning(f"Failed to migrate microphone index to name: {e}")
 
+            # --- Migration: legacy device values -> platform default (ADR 0007) ---
+            device = hardware.get("device")
+            if device in ("", "auto") or (
+                isinstance(device, str) and device.startswith("rocm")
+            ):
+                new_device = platform_default_device()
+                logger.info(f"Migrating legacy device '{device}' to '{new_device}'")
+                hardware["device"] = new_device
+                data["hardware"] = hardware
+                migrated = True
+            else:
+                migrated = False
+
             config = BabelfishConfig.model_validate(data)
+
+            if migrated:
+                # Persist the migrated value so bootstrap / the UI see the
+                # same concrete device on the next launch.
+                self.config = config
+                self.save()
 
             return config
         except (json.JSONDecodeError, Exception) as e:
@@ -112,11 +132,6 @@ class ConfigManager:
             with open(self.config_path, "r") as f:
                 data = json.load(f)
             config = BabelfishConfig.model_validate(data)
-
-            # Auto mode is always valid as long as we have hardware manager
-            # to perform the detection during engine init.
-            if config.hardware.device == "auto":
-                return True
 
             if hw:
                 # Validate microphone name
@@ -151,27 +166,11 @@ class ConfigManager:
         """
         logger.info("Generating optimal default configuration...")
 
-        # Determine device based on priority and VRAM
-        # Priority: CUDA > ROCm > DirectML > OpenVINO > CPU
-        device = "cpu"
-
-        if hw.gpu_info["cuda_available"] or "CUDAExecutionProvider" in hw.available_providers:
-            from babelfish_stt.hardware import get_best_gpu_index
-
-            idx = get_best_gpu_index()
-            device = f"cuda:{idx}"
-            logger.info(
-                f"CUDA capable hardware detected. Selecting {device} mode (VRAM: {hw.gpu_info['vram_gb']:.2f}GB)."
-            )
-        elif "ROCMExecutionProvider" in hw.available_providers:
-            device = "rocm"
-            logger.info("ROCm provider detected. Selecting ROCm mode.")
-        elif "DmlExecutionProvider" in hw.available_providers:
-            device = "dml:0"
-            logger.info("DirectML provider detected. Selecting dml:0 mode.")
-        elif "OpenVINOExecutionProvider" in hw.available_providers:
-            device = "openvino"
-            logger.info("OpenVINO provider detected. Selecting OpenVINO mode.")
+        # A concrete platform default, decided at config creation (ADR 0007):
+        # "dml" on Windows; "cuda" on Linux with an NVIDIA driver (driver
+        # detection works pre-ORT-install), else "cpu".
+        device = platform_default_device()
+        logger.info(f"Platform default device: {device}")
 
         # Find name for best microphone
         best_mic_name = None
@@ -184,7 +183,7 @@ class ConfigManager:
                 pass
 
         self.config = BabelfishConfig(
-            hardware=HardwareConfig(device="auto", microphone_name=best_mic_name),
+            hardware=HardwareConfig(device=device, microphone_name=best_mic_name),
             pipeline=PipelineConfig(),
         )
         self.save()

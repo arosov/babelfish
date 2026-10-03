@@ -78,7 +78,7 @@ def shared_stt_engine():
     print(f"\n[FIXTURE] Loading STT Engine...")
     start_time = time.perf_counter()
     config = BabelfishConfig(
-        hardware=HardwareConfig(device="auto"),
+        hardware=HardwareConfig(device="cpu"),
         pipeline=PipelineConfig(
             silence_threshold_ms=400,
             performance=PerformanceProfile(

@@ -133,11 +133,18 @@ enforces it) — pick exactly one for your hardware/OS:
 | Extra           | Platform | Backend                     |
 |-----------------|----------|-----------------------------|
 | `cpu`           | any      | CPU (also the macOS path)   |
-| `nvidia-win`    | Windows  | NVIDIA CUDA                 |
-| `nvidia-linux`  | Linux    | NVIDIA CUDA                 |
-| `windows-gpu`   | Windows  | AMD/Intel/NVIDIA via DirectML |
-| `amd-linux`     | Linux    | AMD ROCm                    |
-| `intel-linux`   | Linux    | Intel OpenVINO              |
+| `nvidia-win`    | Windows  | NVIDIA CUDA (opt-in)        |
+| `nvidia-linux`  | Linux    | NVIDIA CUDA (default)       |
+| `windows-gpu`   | Windows  | AMD/Intel/NVIDIA via DirectML (default) |
+| `intel-linux`   | Linux    | Intel OpenVINO (manual opt-in) |
+
+Defaults are decided at config creation and are never `"auto"` —
+`hardware.device` is always a concrete backend
+([ADR 0007](docs/adr/0007-no-auto-concrete-backends-and-rocm-removed.md)):
+Windows starts on DirectML (picking `cuda`/`cuda:N` in the UI syncs
+`nvidia-win` on demand); Linux starts on CUDA when an NVIDIA driver is
+detected, else CPU. Linux + AMD runs on CPU (the ROCm execution provider was
+removed from ONNX Runtime ≥ 1.23).
 
 ```powershell
 # Windows + NVIDIA
@@ -154,7 +161,7 @@ the `cpu` extra is expected to work, but it is currently untested.
 ## ✨ Features
 
 - **Ultra-Low Latency:** NVIDIA Parakeet TDT via `onnx-asr`, hardware-accelerated
-  on CUDA, ROCm, OpenVINO, and DirectML.
+  on CUDA, OpenVINO, and DirectML.
 - **Two-Pass Pipeline:** Ghost pass for real-time feedback, Final pass for
   maximum accuracy.
 - **Local Wake-word / Stop-word:** integrated `openwakeword` support.

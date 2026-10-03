@@ -307,7 +307,7 @@ class AudioPipelineFixture:
     def _default_config(self) -> BabelfishConfig:
         """Create default test configuration matching production GPU (ultra tier)."""
         return BabelfishConfig(
-            hardware=HardwareConfig(device="auto"),
+            hardware=HardwareConfig(device="cpu"),
             pipeline=PipelineConfig(
                 silence_threshold_ms=400,
                 performance=PerformanceProfile(

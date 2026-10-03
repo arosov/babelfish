@@ -79,7 +79,6 @@ ORT_FLAVOR: Dict[str, tuple] = {
     "cpu": ("onnxruntime", None),
     "nvidia_win": ("onnxruntime-gpu", "CUDAExecutionProvider"),
     "nvidia_linux": ("onnxruntime-gpu", "CUDAExecutionProvider"),
-    "amd_linux": ("onnxruntime-rocm", "ROCMExecutionProvider"),
     "intel_linux": ("onnxruntime-openvino", "OpenVINOExecutionProvider"),
     "windows_gpu": ("onnxruntime-directml", "DmlExecutionProvider"),
     "metal": ("onnxruntime", None),
@@ -207,6 +206,19 @@ def _read_config_device() -> str:
     return "auto"
 
 
+def _platform_default_device() -> str:
+    """The concrete backend a fresh/legacy config starts on (ADR 0007).
+
+    Windows defaults to DirectML; Linux defaults to CUDA when an NVIDIA
+    driver is present, else CPU. Decided at config creation — never "auto".
+    """
+    if sys.platform == "win32":
+        return "dml"
+    if sys.platform == "linux":
+        return "cuda" if HardwareDetector.detect_nvidia() else "cpu"
+    return "cpu"
+
+
 class HardwareDetector:
     @staticmethod
     def detect_nvidia() -> bool:
@@ -228,20 +240,6 @@ class HardwareDetector:
                     return True
                 except Exception:
                     pass
-        except Exception:
-            pass
-        return False
-
-    @staticmethod
-    def detect_amd_linux() -> bool:
-        """Detects AMD GPU on Linux by checking for ROCm devices or libraries."""
-        if sys.platform != "linux":
-            return False
-        if os.path.exists("/dev/kfd"):
-            return True
-        try:
-            if ctypes.util.find_library("libhsa-runtime64.so.1"):
-                return True
         except Exception:
             pass
         return False
@@ -356,74 +354,36 @@ class HardwareDetector:
         detected_caps = []
         if self.detect_nvidia():
             detected_caps.append("NVIDIA")
-        if self.detect_amd_linux():
-            detected_caps.append("AMD (ROCm)")
         if self.detect_metal():
             detected_caps.append("Apple Metal")
 
         all_gpu_names = self.get_all_gpus()
         logger.info(f"Hardware Detection: Caps={detected_caps}, GPUs={all_gpu_names}")
 
-        # Check for user preference in config (specifically for DML vs CUDA on Windows)
+        # `hardware.device` is the source of truth (ADR 0007); detection only
+        # gates the Linux CUDA flavor. Legacy values ('', 'auto', rocm*) map
+        # to the platform default — the config file itself is NOT rewritten
+        # here (runtime config_manager migration owns that).
         config_device = _read_config_device()
+        if config_device in ("", "auto") or config_device.startswith("rocm"):
+            default = _platform_default_device()
+            logger.info(f"Migrating legacy device '{config_device}' → '{default}'")
+            config_device = default
 
-        # Hardware-based Auto-detection
-        # We always prefer the best available GPU environment for the hardware,
-        # even if the user currently requested CPU mode in the config.
-        # This avoids re-syncing environments when switching between CPU/GPU.
-        is_nvidia = "NVIDIA" in detected_caps or any(
+        # NVIDIA presence: driver libraries, or a GPU name from enumeration.
+        nvidia_present = "NVIDIA" in detected_caps or any(
             "nvidia" in g.lower() for g in all_gpu_names
         )
-        is_amd = "AMD (ROCm)" in detected_caps or any(
-            "amd" in g.lower() or "ati" in g.lower() for g in all_gpu_names
-        )
 
-        if is_nvidia:
-            if sys.platform == "win32":
-                # On Windows, NVIDIA can run either CUDA or DirectML.
-                # DirectML requires a different onnxruntime package.
-                # If the user explicitly requested DML, we must use the windows_gpu environment.
-                if config_device.startswith("dml"):
-                    logger.info(
-                        f"NVIDIA GPU detected but user requested DirectML ({config_device}). Using windows-gpu extra."
-                    )
-                    return {
-                        "hw_mode": "windows_gpu",
-                        "extra": "windows-gpu",
-                        "desc": "NVIDIA GPU (DirectML mode)",
-                    }
-                logger.info("NVIDIA GPU detected. Using nvidia-win extra.")
-                return {
-                    "hw_mode": "nvidia_win",
-                    "extra": "nvidia-win",
-                    "desc": "NVIDIA GPU",
-                }
-            logger.info("NVIDIA GPU detected. Using nvidia-linux extra.")
-            return {
-                "hw_mode": "nvidia_linux",
-                "extra": "nvidia-linux",
-                "desc": "NVIDIA GPU",
-            }
-
-        if is_amd:
-            if sys.platform == "win32":
-                return {
-                    "hw_mode": "windows_gpu",
-                    "extra": "windows-gpu",
-                    "desc": "AMD GPU (DirectML)",
-                }
-            return {
-                "hw_mode": "amd_linux",
-                "extra": "amd-linux",
-                "desc": "AMD ROCm GPU",
-            }
-
-        # Smart Mac Detection
+        # Smart Mac Detection (device-independent; macOS is low priority)
         if "Apple Metal" in detected_caps:
             import platform
 
             arch = platform.machine().lower()
             if "arm" in arch or "aarch64" in arch:
+                if config_device == "cpu":
+                    logger.info("Apple Silicon detected but device is 'cpu'. Using CPU.")
+                    return {"hw_mode": "cpu", "extra": "cpu", "desc": "Apple Silicon (CPU mode)"}
                 # Apple Silicon -> CoreML Capable
                 return {
                     "hw_mode": "metal",
@@ -438,12 +398,56 @@ class HardwareDetector:
                     "desc": "Intel Mac (CPU Mode)",
                 }
 
-        if sys.platform == "win32" and all_gpu_names:
+        if sys.platform == "win32":
+            # Windows is DirectML-first: the windows-gpu wheel is small and
+            # works on every GPU vendor. CUDA is an explicit opt-in via
+            # hardware.device ("cuda"/"cuda:N") and syncs nvidia-win on demand.
+            if config_device.startswith("cuda"):
+                if not nvidia_present:
+                    logger.warning(
+                        f"hardware.device '{config_device}' requests CUDA but no "
+                        "NVIDIA GPU was detected; honoring the request anyway."
+                    )
+                logger.info(f"Device {config_device}: using nvidia-win extra.")
+                return {
+                    "hw_mode": "nvidia_win",
+                    "extra": "nvidia-win",
+                    "desc": "NVIDIA GPU (CUDA)",
+                }
             return {
                 "hw_mode": "windows_gpu",
                 "extra": "windows-gpu",
-                "desc": "Windows Generic GPU (DirectML)",
+                "desc": "DirectML",
             }
+
+        if sys.platform == "linux":
+            if config_device.startswith("cuda"):
+                if not nvidia_present:
+                    logger.warning(
+                        f"hardware.device '{config_device}' requests CUDA but no "
+                        "NVIDIA GPU was detected; syncing the CPU flavor — the "
+                        "runtime will degrade to CPU."
+                    )
+                    return {
+                        "hw_mode": "cpu",
+                        "extra": "cpu",
+                        "desc": "CPU (CUDA requested, no NVIDIA driver)",
+                    }
+                logger.info("NVIDIA GPU detected. Using nvidia-linux extra.")
+                return {
+                    "hw_mode": "nvidia_linux",
+                    "extra": "nvidia-linux",
+                    "desc": "NVIDIA GPU",
+                }
+            if config_device.startswith("dml"):
+                logger.warning(
+                    f"Device '{config_device}' (DirectML) is invalid on Linux; using CPU."
+                )
+                return {"hw_mode": "cpu", "extra": "cpu", "desc": "CPU"}
+            # 'cpu' and anything else. intel-linux is a manual opt-in extra
+            # and is never selected here.
+            logger.info(f"Device {config_device}: using cpu extra.")
+            return {"hw_mode": "cpu", "extra": "cpu", "desc": "CPU"}
 
         return {"hw_mode": "cpu", "extra": "cpu", "desc": "CPU"}
 

@@ -17,7 +17,7 @@ A two-model design (a streaming Nemotron decoder for the Ghost pass beside Parak
 ## 🛠 Tech Stack
 
 *   **Backend:** Python 3.12+, managed via `uv`.
-*   **STT Engine:** NVIDIA Parakeet TDT via `onnx-asr`, one model instance serving both passes. Supports CUDA (NVIDIA), ROCm (AMD), OpenVINO (Intel), and DirectML (Windows Unified) — one ONNX Runtime wheel flavor per install.
+*   **STT Engine:** NVIDIA Parakeet TDT via `onnx-asr`, one model instance serving both passes. Supports CUDA (NVIDIA), OpenVINO (Intel), and DirectML (Windows Unified) — one ONNX Runtime wheel flavor per install. `hardware.device` is always a concrete backend: Windows defaults to DirectML, Linux to CUDA (NVIDIA driver present) else CPU; ROCm is removed ([ADR 0007](docs/adr/0007-no-auto-concrete-backends-and-rocm-removed.md)).
 *   **Wake-word / Stop-word:** `openwakeword` for local, low-power keyword detection (Start/Stop triggers).
 *   **Communication:** WebSockets for bidirectional communication with the frontend (configuration, status, and transcripts).
 *   **Global Control:** `pynput` for system-wide hotkeys (Push-To-Talk, Toggle mode).
@@ -26,7 +26,7 @@ A two-model design (a streaming Nemotron decoder for the Ghost pass beside Parak
 ## 🧠 Philosophy: Server as the Brain
 
 Babelfish is designed to be autonomous and hardware-aware:
-*   **Hardware Auto-Discovery:** Probes for GPU capabilities (NVIDIA/AMD/Intel/DirectML) on startup and resolves the best available device for the engine. Multi-GPU is supported by picking the highest-VRAM discrete card; the choice is made once at process start.
+*   **Concrete Device Resolution:** `hardware.device` always names a concrete backend (no `"auto"`). The bootstrap syncs the ORT wheel flavor that device needs (Windows: `windows-gpu` by default, `nvidia-win` only for an explicit CUDA request; Linux: `nvidia-linux` only when the device asks for CUDA *and* an NVIDIA driver is detected), and `placement.resolve_device` honors the device, degrading to CPU with a warning when its provider is missing or the value is stale. Multi-GPU is supported by picking the highest-VRAM discrete card within the requested backend; the choice is made once at process start.
 *   **Startup Self-Calibration:** A startup benchmark calibrates the Ghost pass cadence (`ghost_throttle_ms`, `ghost_window_s` in `PerformanceProfile`) to the model's measured latency.
 *   **Dynamic Configuration:** Supports hot-reloading of nearly all settings (wakewords, sensitivities, hotkeys) via the WebSocket API without restarting the engine.
 *   **Unified Pipeline:** Manages the entire audio lifecycle: VAD (Silero) -> Wake-word (OpenWakeWord) -> Ghost pass -> Final pass -> Injection/Display. Control-word audio trimming is accepted intent ([ADR 0003](docs/adr/0003-control-words-are-trimmed-from-audio.md)) but **not yet implemented** — control-word audio currently stays in the transcription buffer.

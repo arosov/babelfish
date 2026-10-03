@@ -50,36 +50,6 @@ class TestGpuEnumeration(unittest.TestCase):
         )
 
     @patch("onnxruntime.get_available_providers")
-    @patch("shutil.which")
-    @patch("os.path.exists")
-    @patch("subprocess.check_output")
-    def test_rocm_cards_are_enumerated_with_per_card_vram(
-        self, mock_output, mock_exists, mock_which, mock_providers
-    ):
-        mock_providers.return_value = ["ROCMExecutionProvider", "CPUExecutionProvider"]
-        mock_which.return_value = "/usr/bin/rocm-smi"
-        mock_exists.return_value = True
-
-        def side_effect(cmd, **kwargs):
-            if "--showmeminfo" in cmd:
-                return b'{"card0": {"VRAM Total Memory (B)": "8589934592"}, "card1": {"VRAM Total Memory (B)": "25769803776"}}'
-            if "--showproductname" in cmd:
-                return b'{"card0": {"Card series": "Radeon RX 6600"}, "card1": {"Card series": "Radeon RX 7900 XTX"}}'
-            return b"{}"
-
-        mock_output.side_effect = side_effect
-
-        facts = probe_hardware_facts()
-
-        self.assertEqual(
-            facts.gpus,
-            (
-                GpuDevice("rocm:0", "Radeon RX 6600 (ROCm)", 8.0),
-                GpuDevice("rocm:1", "Radeon RX 7900 XTX (ROCm)", 24.0),
-            ),
-        )
-
-    @patch("onnxruntime.get_available_providers")
     @patch("babelfish_stt.hardware._query_dxgi_adapters")
     def test_openvino_lists_intel_adapters_numbered_among_themselves(
         self, mock_adapters, mock_providers

@@ -6,7 +6,6 @@ import sys
 import os
 import sysconfig
 import logging
-import json
 import ctypes
 import ctypes.util
 import platform
@@ -142,20 +141,6 @@ def detect_nvidia() -> bool:
     return False
 
 
-def detect_amd_linux() -> bool:
-    """Detects AMD GPU on Linux by checking for ROCm devices or libraries."""
-    if sys.platform != "linux":
-        return False
-    if os.path.exists("/dev/kfd"):
-        return True
-    try:
-        if ctypes.util.find_library("libhsa-runtime64.so.1"):
-            return True
-    except:
-        pass
-    return False
-
-
 def detect_metal() -> bool:
     """Detects Apple Silicon / Metal support."""
     if sys.platform != "darwin":
@@ -257,25 +242,6 @@ def get_device_name(device_type: str = "cpu") -> str:
                 pass
         return f"NVIDIA GPU (CUDA)"
 
-    if device_type == "rocm":
-        # Try to get name via rocm-smi
-        smi_path = shutil.which("rocm-smi") or "/opt/rocm/bin/rocm-smi"
-        if os.path.exists(smi_path):
-            try:
-                output = subprocess.check_output(
-                    [smi_path, "--showproductname", "--json"]
-                ).decode("utf-8")
-                import json
-
-                data = json.loads(output)
-                for card in data.values():
-                    name = card.get("Card series", card.get("Product Name"))
-                    if name:
-                        return f"{name} (ROCm)"
-            except Exception:
-                pass
-        return "AMD GPU (ROCm)"
-
     if device_type.startswith("dml") and sys.platform == "win32":
         names = get_windows_gpu_names()
         device_id = 0
@@ -309,7 +275,7 @@ def get_device_name(device_type: str = "cpu") -> str:
 def get_memory_usage(device_type: str = "cpu") -> Dict[str, float]:
     """
     Generic dispatcher to get memory usage for the active device type.
-    Supported: cuda, rocm, dml (Windows), metal (macOS).
+    Supported: cuda, dml (Windows), metal (macOS).
     Returns {"total": 0.0, "used": 0.0} if not available.
     """
     if device_type.startswith("cuda"):
@@ -320,9 +286,6 @@ def get_memory_usage(device_type: str = "cpu") -> Dict[str, float]:
             except ValueError:
                 pass
         return _get_nvidia_memory(device_id)
-
-    if device_type == "rocm":
-        return _get_rocm_memory()
 
     if device_type.startswith("dml") and sys.platform == "win32":
         device_id = 0
@@ -366,32 +329,6 @@ def _get_nvidia_memory(device_index: int = 0) -> Dict[str, float]:
         }
     except Exception:
         return {"total": 0.0, "used": 0.0}
-
-
-def _get_rocm_memory() -> Dict[str, float]:
-    """AMD ROCm (Linux) specific memory query."""
-    # Try common locations if not in PATH
-    smi_path = shutil.which("rocm-smi") or "/opt/rocm/bin/rocm-smi"
-    if not os.path.exists(smi_path):
-        return {"total": 0.0, "used": 0.0}
-
-    try:
-        # Get JSON output for easier parsing
-        output = subprocess.check_output(
-            [smi_path, "--showmeminfo", "vram", "--json"], stderr=subprocess.STDOUT
-        ).decode("utf-8")
-        import json
-
-        data = json.loads(output)
-        # rocm-smi JSON structure can vary, but usually it's keyed by 'cardX'
-        for card in data.values():
-            total = float(card.get("VRAM Total Memory (B)", 0)) / (1024**3)
-            used = float(card.get("VRAM Total Used (B)", 0)) / (1024**3)
-            if total > 0:
-                return {"total": total, "used": used}
-    except Exception:
-        pass
-    return {"total": 0.0, "used": 0.0}
 
 
 def _get_macos_memory() -> Dict[str, float]:
@@ -704,8 +641,6 @@ class HardwareManager:
             logging.info(
                 f"GPU Detected: {self.gpu_info['name']} ({self.gpu_info['vram_gb']:.2f} GB VRAM)"
             )
-        elif "ROCMExecutionProvider" in self.available_providers:
-            logging.info("AMD GPU (ROCm) detected via ONNX Runtime.")
         elif "DmlExecutionProvider" in self.available_providers:
             logging.info("DirectML support detected via ONNX Runtime.")
         else:
@@ -861,48 +796,6 @@ def _list_directml_devices() -> List[GpuDevice]:
     ]
 
 
-def _list_rocm_devices() -> List[GpuDevice]:
-    """AMD cards keyed by rocm-smi card index, with per-card VRAM totals."""
-    import re
-
-    smi_path = shutil.which("rocm-smi") or "/opt/rocm/bin/rocm-smi"
-    if not os.path.exists(smi_path):
-        return []
-    try:
-        meminfo = json.loads(
-            subprocess.check_output(
-                [smi_path, "--showmeminfo", "vram", "--json"], stderr=subprocess.STDOUT
-            ).decode("utf-8")
-        )
-    except Exception:
-        return []
-    try:
-        products = json.loads(
-            subprocess.check_output(
-                [smi_path, "--showproductname", "--json"], stderr=subprocess.STDOUT
-            ).decode("utf-8")
-        )
-    except Exception:
-        products = {}
-
-    devices = []
-    for key in sorted(meminfo, key=lambda k: int(re.search(r"\d+", k).group())):
-        match = re.search(r"\d+", key)
-        if not match:
-            continue
-        try:
-            total_gb = float(meminfo[key].get("VRAM Total Memory (B)", 0)) / (1024**3)
-        except (ValueError, TypeError, AttributeError):
-            continue
-        if total_gb <= 0:
-            continue
-        index = int(match.group())
-        card = products.get(key, {}) if isinstance(products, dict) else {}
-        name = card.get("Card series", card.get("Product Name", f"AMD GPU {index}"))
-        devices.append(GpuDevice(f"rocm:{index}", f"{name} (ROCm)", total_gb))
-    return devices
-
-
 def _is_intel_adapter(adapter: Dict) -> bool:
     if "vendor_id" in adapter:
         return adapter["vendor_id"] == 0x8086
@@ -943,7 +836,6 @@ def _list_openvino_devices() -> List[GpuDevice]:
 # One enumerator per backend, consulted only when that backend's ONNX Runtime provider is available.
 _GPU_ENUMERATORS = (
     ("CUDAExecutionProvider", _list_nvidia_devices),
-    ("ROCMExecutionProvider", _list_rocm_devices),
     ("DmlExecutionProvider", _list_directml_devices),
     ("OpenVINOExecutionProvider", _list_openvino_devices),
 )
@@ -985,15 +877,11 @@ def list_hardware() -> List[Dict]:
         # Fallback if nvidia-smi missing but driver components found
         devices.append({"id": "cuda", "name": "NVIDIA GPU (CUDA)"})
 
-    # 2. AMD (ROCm)
-    if detect_amd_linux():
-        devices.append({"id": "rocm", "name": "AMD GPU (ROCm)"})
-
-    # 3. Apple Metal
+    # 2. Apple Metal
     if detect_metal():
         devices.append({"id": "metal", "name": "Apple Metal"})
 
-    # 4. Windows DirectML
+    # 3. Windows DirectML
     # List all GPUs from Win32_VideoController - these are enabled GPUs visible to Windows
     # Note: DirectML may enumerate in different order, but this is the best we can do
     # without using platform-specific APIs. The device_id in selection maps to this order.

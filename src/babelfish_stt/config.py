@@ -1,7 +1,24 @@
 import os
+import sys
 from typing import List, Optional
 from enum import Enum
 from pydantic import BaseModel, Field, model_validator
+
+
+def platform_default_device() -> str:
+    """The concrete backend a fresh config starts on (ADR 0007).
+
+    Windows defaults to DirectML (small wheel, works on every GPU vendor);
+    Linux defaults to CUDA when an NVIDIA driver is present, else CPU.
+    Decided at config creation — never at runtime, and never "auto".
+    """
+    if sys.platform == "win32":
+        return "dml"
+    if sys.platform == "linux":
+        from babelfish_stt.hardware import detect_nvidia
+
+        return "cuda" if detect_nvidia() else "cpu"
+    return "cpu"
 
 
 class InputStrategy(str, Enum):
@@ -18,7 +35,9 @@ class SeparatorPolicy(str, Enum):
 
 
 class HardwareConfig(BaseModel):
-    device: str = "auto"
+    # A concrete backend id: "dml"/"dml:N", "cuda"/"cuda:N", "cpu", or a
+    # specific id from `list_hardware` (never "auto" — ADR 0007).
+    device: str = Field(default_factory=platform_default_device)
     microphone_name: Optional[str] = None
     quantization: Optional[str] = (
         None  # None means full precision; an explicit "int8" is still honoured

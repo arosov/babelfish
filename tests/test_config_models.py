@@ -9,14 +9,38 @@ from babelfish_stt.config import (
     SystemInputConfig,
     TranscriptionWindowConfig,
     BabelfishConfig,
+    platform_default_device,
 )
 
 
 def test_hardware_config_defaults():
     config = HardwareConfig()
-    assert config.device == "auto"
+    # A concrete platform default, never "auto" (ADR 0007)
+    assert config.device == platform_default_device()
+    assert config.device != "auto"
     assert config.quantization is None
     assert config.microphone_name is None
+
+
+def test_platform_default_device_is_concrete(monkeypatch):
+    """win32 -> dml; Linux -> cuda only with an NVIDIA driver; darwin -> cpu."""
+    from babelfish_stt import config as config_module
+
+    monkeypatch.setattr(config_module.sys, "platform", "win32")
+    assert config_module.platform_default_device() == "dml"
+
+    monkeypatch.setattr(config_module.sys, "platform", "darwin")
+    assert config_module.platform_default_device() == "cpu"
+
+    monkeypatch.setattr(config_module.sys, "platform", "linux")
+
+    import babelfish_stt.hardware as hardware_module
+
+    monkeypatch.setattr(hardware_module, "detect_nvidia", lambda: True)
+    assert config_module.platform_default_device() == "cuda"
+
+    monkeypatch.setattr(hardware_module, "detect_nvidia", lambda: False)
+    assert config_module.platform_default_device() == "cpu"
 
 
 def test_hardware_status_validation():
@@ -93,4 +117,4 @@ def test_babelfish_config_partial_update():
     # but we can check if validation works on partial dicts if we were to use them
     validated = BabelfishConfig.model_validate({**config.model_dump(), **updated_data})
     assert validated.pipeline.silence_threshold_ms == 500
-    assert validated.hardware.device == "auto"  # preserved
+    assert validated.hardware.device == platform_default_device()  # preserved

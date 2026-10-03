@@ -377,7 +377,7 @@ class TestGhostUpdateKeyboardSequence:
         print(f"\n[FIXTURE] Loading STT Engine for keyboard sequence test...")
         start_time = time.perf_counter()
         config = BabelfishConfig(
-            hardware=HardwareConfig(device="auto"),
+            hardware=HardwareConfig(device="cpu"),
             pipeline=PipelineConfig(
                 silence_threshold_ms=400,
                 performance=PerformanceProfile(
@@ -445,7 +445,7 @@ class TestGhostUpdateKeyboardSequence:
         start_time = time.perf_counter()
 
         config = BabelfishConfig(
-            hardware=HardwareConfig(device="auto"),
+            hardware=HardwareConfig(device="cpu"),
             pipeline=PipelineConfig(
                 silence_threshold_ms=400,
                 performance=PerformanceProfile(

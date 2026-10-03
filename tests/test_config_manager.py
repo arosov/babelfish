@@ -1,6 +1,7 @@
+import json
 import os
 import pytest
-from babelfish_stt.config import BabelfishConfig
+from babelfish_stt.config import BabelfishConfig, platform_default_device
 from babelfish_stt.config_manager import ConfigManager
 
 
@@ -9,7 +10,59 @@ def test_config_manager_load_default(tmp_path):
     manager = ConfigManager(config_path=str(config_file))
 
     # Should load defaults if file doesn't exist
-    assert manager.config.hardware.device == "auto"
+    assert manager.config.hardware.device == platform_default_device()
+
+
+def test_config_manager_migrates_legacy_auto_device(tmp_path, caplog):
+    """An old config's 'auto' device is rewritten to the platform default."""
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"hardware": {"device": "auto"}}))
+
+    with caplog.at_level("INFO"):
+        manager = ConfigManager(config_path=str(config_file))
+
+    assert manager.config.hardware.device == platform_default_device()
+    assert any("Migrating legacy device 'auto'" in r.message for r in caplog.records)
+
+    # Persisted so bootstrap / the UI see the same concrete device next launch
+    data = json.loads(config_file.read_text())
+    assert data["hardware"]["device"] == platform_default_device()
+
+
+def test_config_manager_migrates_legacy_empty_device(tmp_path):
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"hardware": {"device": ""}}))
+
+    manager = ConfigManager(config_path=str(config_file))
+
+    assert manager.config.hardware.device == platform_default_device()
+    data = json.loads(config_file.read_text())
+    assert data["hardware"]["device"] == platform_default_device()
+
+
+def test_config_manager_migrates_legacy_rocm_device(tmp_path, monkeypatch):
+    import babelfish_stt.config_manager as cm_module
+
+    monkeypatch.setattr(cm_module, "platform_default_device", lambda: "dml")
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"hardware": {"device": "rocm:0"}}))
+
+    manager = ConfigManager(config_path=str(config_file))
+
+    assert manager.config.hardware.device == "dml"
+    data = json.loads(config_file.read_text())
+    assert data["hardware"]["device"] == "dml"
+
+
+def test_config_manager_keeps_concrete_device(tmp_path):
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"hardware": {"device": "dml:1"}}))
+
+    manager = ConfigManager(config_path=str(config_file))
+
+    assert manager.config.hardware.device == "dml:1"
+    data = json.loads(config_file.read_text())
+    assert data["hardware"]["device"] == "dml:1"
 
 
 def test_config_manager_save_load(tmp_path):
@@ -42,7 +95,7 @@ def test_config_manager_invalid_json(tmp_path):
     # Should probably fall back to defaults or raise error
     # Let's say it falls back to defaults but logs a warning
     manager = ConfigManager(config_path=str(config_file))
-    assert manager.config.hardware.device == "auto"
+    assert manager.config.hardware.device == platform_default_device()
 
 
 def test_config_manager_save_failure(tmp_path, monkeypatch):

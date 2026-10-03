@@ -111,22 +111,10 @@ class BabelfishServer(Reconfigurable):
             old_device = self.initial_config.hardware.device
             current_active = self.initial_config.status.active_device
 
-            # Restart is required if:
-            # 1. Device changed manually to something else
-            # 2. We are switching from auto to a specific device that ISN'T the current active one
-            # Note: We NEVER trigger a restart if changing from 'auto' to 'auto'
-            hw_changed = False
-
-            if new_device != old_device:
-                # If we were in auto, and user selected the explicit active device, no restart needed
-                is_same_as_active = (
-                    old_device == "auto"
-                    and new_device == self.initial_config.status.active_device
-                    and new_device != "cpu"
-                )
-
-                if not is_same_as_active:
-                    hw_changed = True
+            # Restart is required whenever the device changes: with concrete
+            # backends (ADR 0007) there is no "auto" pass-through to compare
+            # against the active device.
+            hw_changed = new_device != old_device
 
             server_changed = (
                 config.server.host != self.initial_config.server.host
