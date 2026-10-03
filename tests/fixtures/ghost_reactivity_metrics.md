@@ -82,6 +82,66 @@ they stay visible in the live tail, so nothing is lost. Replay on joke.wav:
 ghost sum went 452 → 342 chars with the doubling gone, utterance opening and
 ending both intact.
 
+## Round 4 — CUDA vs DirectML on the same NVIDIA card (ORT flavor A/B)
+
+RTX 2080 SUPER (8GB), driver 591.86. Harness `uv run pytest -s -m slow -k
+test_single_file_transcription`, ultra profile (spacing 100ms, window 3.0s).
+Same run twice — once with `nvidia-win` (`onnxruntime-gpu` 1.23.2, CUDA EP),
+once with `windows-gpu` (`onnxruntime-directml` 1.24.2, DML EP). All 6 files
+passed both times; **WERs byte-identical** between backends (joke 3.03%, rest 0.00%).
+
+### Per-file first ghost + ghost count
+
+| file | CUDA first ghost / ghosts | DML first ghost / ghosts |
+|---|---|---|
+| multiple_words | 158ms / 22 | 486ms / 20 |
+| unicode_speech | 259ms / 16 | 126ms / 15 |
+| fast_speech | 318ms / 16 | 132ms / 15 |
+| hello_hello | 270ms / 17 | 124ms / 17 |
+| joke (18.6s) | 252ms / 97 | 118ms (536ms on isolated rerun) / 97 |
+| multi_utterance | 129ms / 25 | 72ms / 25 |
+
+### Ghost inference durations (display-completion wall time)
+
+| backend | n | avg | min | max |
+|---|---|---|---|---|
+| CUDA (all files) | 193 | 186ms | 113ms | 252ms |
+| DML (all files) | 189 | 224ms | 52ms | 481ms |
+| CUDA (joke only) | 97 | 206ms | 122ms | 252ms |
+| DML (joke only) | 96 | 278ms | 56ms | 793ms |
+
+Conclusions:
+
+- **DML is ~1.2× slower on average, not the feared 1.5–3×** for this
+  encoder/decoder pair on ORT 1.24. Ghost cadence is identical in practice
+  (joke: 97 ghosts on both) — the reactive loop is inference-bound on both.
+- **DML's cost is variance, not average**: CUDA spans 113–252ms (tight);
+  DML spans 52ms–793ms with occasional slow spikes (suspect per-call D3D12
+  overhead / lazy pipeline compilation). The spikes are what a user perceives
+  as DML feeling slower.
+- **First-ghost wall time is dominated by jitter on both backends** — several
+  DML files showed *faster* first ghosts than CUDA. Backend choice is not the
+  first-ghost lever; the ~1s `ghost_padding_s` floor is.
+- CPU tier on the same machine: ~213ms avg on a *1s* window vs CUDA's 186ms
+  avg on *3s* windows — GPU (either flavor) is mandatory for fluent cadence.
+
+### Packaging pitfall (directml silently vanishing)
+
+`openwakeword` depends on plain `onnxruntime` unconditionally, so the generic
+wheel is ALWAYS in the venv — and both `onnxruntime` and
+`onnxruntime-directml` ship the same top-level `onnxruntime/` package: the
+last-installed wheel owns `capi/onnxruntime_pybind11_state.pyd` and shadows
+the other. A stale shadow degrades DirectML to `['Azure', 'CPU']` providers
+silently (engine then runs on CPU while reporting a GPU was detected).
+
+Rules that keep DML alive:
+- After `uv sync --extra windows-gpu`, force
+  `--reinstall-package onnxruntime-directml` (bootstrap.py already does this).
+- NEVER `--reinstall-package onnxruntime` on a windows-gpu env — it lands last
+  and shadows DML.
+- Verify after any sync:
+  `get_available_providers()` must contain `DmlExecutionProvider`.
+
 ## Harness encoding note
 
 On Windows consoles set `PYTHONIOENCODING=utf-8` when running with `-s`, or
