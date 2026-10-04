@@ -307,6 +307,63 @@ class TestAppendDiffTyping:
         assert sim.accumulated_text == "alpha beta delta echo"
 
 
+class TestFinalizeResetsOrdering:
+    """The audio thread's real ordering: display.finalize() enqueues the
+    Final, then pipeline.reset_state() calls display.reset() immediately.
+    The Final's erase must be computed from the mirrors as they stood
+    when the Final was enqueued — not after the reset wiped them — or
+    the ghost line stays on screen with the Final pasted after it."""
+
+    def test_final_after_reset_still_erases_the_ghost(self, mock_pyperclip):
+        mock_keyboard = MagicMock()
+        sim = InputSimulator(
+            keyboard_controller=mock_keyboard, throttle_s=0.0
+        )
+        sim.enqueue_ghost("ghost line on screen", None)
+        assert sim.flush()
+        assert sim.accumulated_text == "ghost line on screen"
+
+        # The audio thread's real ordering: enqueue the Final, then
+        # reset() — before the worker ever runs the Final's erase.
+        sim.enqueue_finalize("FINAL", separator=SeparatorPolicy.TRAILING)
+        sim.reset()
+
+        assert sim.flush(0.5), "worker did not drain after reset"
+
+        backspace_count = len(_backspace_calls(mock_keyboard))
+        total_graphemes = len("ghost line on screen")
+        assert backspace_count == total_graphemes, (
+            f"Final erased {backspace_count} graphemes, "
+            f"expected {total_graphemes} (the ghost must be erased when "
+            f"the Final lands, not skipped)"
+        )
+        pasted = [c.args[0] for c in mock_pyperclip.copy.call_args_list]
+        assert pasted[-1] == "FINAL "
+        # No post-Final garbage: the ghost text appears exactly once as
+        # a paste, the Final exactly once
+        assert pasted.count("ghost line on screen") == 1
+        assert pasted.count("FINAL ") == 1
+        sim.stop()
+
+    def test_reset_without_final_drops_pending_ghost(self, mock_pyperclip):
+        """Stop-word path: reset() with no Final — a pending ghost frame
+        must not apply after the cleanup."""
+        mock_keyboard = MagicMock()
+        sim = InputSimulator(keyboard_controller=mock_keyboard, throttle_s=0.0)
+        sim.enqueue_ghost("hello", None)
+        assert sim.flush()
+
+        sim.enqueue_ghost("hello world", None)  # pending, not yet applied
+        sim.reset()
+        assert sim.flush(0.5)
+
+        pasted = [c.args[0] for c in mock_pyperclip.copy.call_args_list]
+        assert pasted == ["hello"], (
+            f"a pending ghost frame applied after reset: {pasted}"
+        )
+        sim.stop()
+
+
 class TestTypingWorker:
     """The typing worker: the audio thread enqueues and returns
     immediately; frames apply paced, ghost frames coalescing latest-wins,

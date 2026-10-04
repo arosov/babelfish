@@ -193,17 +193,23 @@ class InputSimulator:
         self._after_finalize = True
 
     def reset(self):
-        """Resets the state without backspacing."""
+        """Resets the composition state and orders the screen cleanup
+        through the typing worker.
+
+        The mirrors describe what is on screen and belong to the typing
+        worker: clearing them here (the audio thread runs this right
+        after enqueueing the Final, via pipeline.reset_state) made the
+        queued Final see empty mirrors and skip its erase — the ghost
+        line stayed on screen with the Final pasted after it. The CLEAR
+        is queued behind the Final so the worker erases the mirror state
+        it owns, in order.
+        """
         self.composer.reset()
-        self._last_applied = None
-        self._clear_mirrors()
-        self._mirror_trusted = True
-        self.pre_finalize_text = ""
-        self._after_finalize = False
         self.last_ghost_time = 0.0
-        # Drop a trailing pending ghost frame; a pending Final still
-        # belongs on screen, so a CLEAR is queued behind it.
         with self._cond:
+            # Drop pending ghost frames: any Final already superseded
+            # them, and a stop-word lock has none — either way, a ghost
+            # frame must not apply after this cleanup.
             while self._queue and self._queue[-1][0] == _GHOST:
                 self._queue.pop()
             self._queue.append((_CLEAR, None))
@@ -382,11 +388,14 @@ class InputSimulator:
         self._after_finalize = True
 
     def _apply_clear(self):
-        if self.displayed_graphemes:
-            self._send_backspaces(self._grapheme_len(self._mirror_text()))
+        """Utterance-boundary cleanup, ordered behind the Final (audio-
+        thread reset_state enqueues it): the Final already erased the
+        screen, so this only drops the mirrors' leftover utterance state —
+        no backspaces, or the erase would eat the Final just typed."""
         self._clear_mirrors()
         self._last_applied = None
         self.last_ghost_time = 0.0
+        self._after_finalize = True
 
     # ------------------------------------------------------------------
     # Typing primitives (mirrors + ADR 0009 mechanics)
