@@ -349,16 +349,28 @@ class InputSimulator:
             # Normal case: the committed prefix only grew. Erase the live
             # tail, paste the committed delta + live. The per-update cost
             # is bounded by the window, never the line.
-            self._send_backspaces(self._grapheme_len(self.typed_live))
+            bs = self._grapheme_len(self.typed_live)
             text = " ".join(committed_words[len(typed_c):] + live_words)
+            logger.info(
+                f"[TYPE] ghost: erase {bs}, paste {len(text)} chars "
+                f"(delta mode; c={len(typed_c)}/{len(committed_words)}, "
+                f"l={len(typed_l)}/{len(live_words)}) {text!r}"
+            )
+            self._send_backspaces(bs)
             if text:
                 self._paste(text)
         else:
             # Rare case: the composer's dedup trim reached into previously
             # typed committed words — full erase + repaste for this frame
             # only.
-            self._send_backspaces(self._grapheme_len(self._mirror_text()))
-            self._paste(" ".join(target_words))
+            bs = self._grapheme_len(self._mirror_text())
+            text = " ".join(target_words)
+            logger.info(
+                f"[TYPE] ghost: erase {bs}, paste {len(text)} chars "
+                f"(FULL repaste; typed_c={typed_c!r}) {text!r}"
+            )
+            self._send_backspaces(bs)
+            self._paste(text)
 
         self._set_mirrors(committed_words, live_words)
         self.last_ghost_time = time.time()
@@ -402,11 +414,14 @@ class InputSimulator:
                 # describe the screen. Safer to leave ghost text than to
                 # erase the user's content.
                 logger.warning(
-                    f"Untrusted mirror state in finalize: skipping "
+                    f"[TYPE] final: untrusted mirror state — skipping "
                     f"{total} backspaces to prevent over-erasure. "
                     f"Will type final text without clearing."
                 )
             else:
+                logger.info(
+                    f"[TYPE] final: erase {total}, paste {len(text)} chars"
+                )
                 self._send_backspaces(total)
 
         self._clear_mirrors()
