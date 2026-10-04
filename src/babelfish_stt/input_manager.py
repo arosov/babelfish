@@ -212,7 +212,11 @@ class InputSimulator:
             # frame must not apply after this cleanup.
             while self._queue and self._queue[-1][0] == _GHOST:
                 self._queue.pop()
-            self._queue.append((_CLEAR, None))
+            # A CLEAR right behind a Final needs no backspaces (the Final
+            # just erased the screen); without a Final (stop-word lock,
+            # empty-ghost) the displayed ghost must be erased here.
+            needs_erase = not (self._queue and self._queue[-1][0] == _FINAL)
+            self._queue.append((_CLEAR, needs_erase))
             self._cond.notify()
 
     # ------------------------------------------------------------------
@@ -304,7 +308,7 @@ class InputSimulator:
                 if kind == _FINAL:
                     self._apply_final(payload)
                 elif kind == _CLEAR:
-                    self._apply_clear()
+                    self._apply_clear(payload)
                 else:
                     # Throttle pacing lives here: ghost keystroke bursts
                     # are spaced at least throttle_s apart.
@@ -326,12 +330,12 @@ class InputSimulator:
         committed_words = list(committed_words)
         live_words = list(live_words)
 
-        # Stale state after a Final the user may have edited/moved the
-        # cursor past: start fresh without backspaces.
-        if self._after_finalize and (self.typed_committed or self.typed_live):
-            self._clear_mirrors()
-            self._after_finalize = False
-            self._mirror_trusted = True
+        # NOTE: _after_finalize does not gate ghost frames here: the
+        # ordered CLEAR behind the Final owns boundary cleanup (the old
+        # stale-clear branch fired one frame LATE — when the mirrors were
+        # empty it passed through, then wiped the mirrors mid-utterance
+        # on the NEXT frame with no backspaces, orphaning the utterance's
+        # first ghost on screen).
 
         # Apply-time dedup: an identical re-transcription over an
         # identical window is skipped; the key records only after a frame
@@ -387,11 +391,15 @@ class InputSimulator:
         self._type_final(text, separator)
         self._after_finalize = True
 
-    def _apply_clear(self):
+    def _apply_clear(self, needs_erase: bool):
         """Utterance-boundary cleanup, ordered behind the Final (audio-
-        thread reset_state enqueues it): the Final already erased the
-        screen, so this only drops the mirrors' leftover utterance state —
-        no backspaces, or the erase would eat the Final just typed."""
+        thread reset_state enqueues it). After a Final the screen is
+        already erased: only the mirrors' leftover utterance state is
+        dropped (a backspace burst here would eat the Final just typed).
+        Without a Final (stop-word lock, empty-ghost), the displayed
+        ghost must be erased here."""
+        if needs_erase and self.displayed_graphemes:
+            self._send_backspaces(self._grapheme_len(self._mirror_text()))
         self._clear_mirrors()
         self._last_applied = None
         self.last_ghost_time = 0.0
