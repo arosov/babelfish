@@ -393,7 +393,7 @@ class InputSimulator:
         bs = self._grapheme_len(old_line) - self._grapheme_len(prefix_str)
         text = (" " if p else "") + " ".join(target_words[p:])
 
-        logger.info(
+        logger.debug(
             f"[TYPE] ghost: erase {bs}, paste {len(text)} chars "
             f"(word-diff; p={p}/{len(old_words)}"
             f"+{len(target_words)}; c={len(typed_c)}/{len(committed_words)}) "
@@ -457,7 +457,7 @@ class InputSimulator:
                     f"Will type final text without clearing."
                 )
             else:
-                logger.info(
+                logger.debug(
                     f"[TYPE] final: erase {total}, paste {len(text)} chars"
                 )
                 self._send_backspaces(total)
