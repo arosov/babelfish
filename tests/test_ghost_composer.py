@@ -154,6 +154,127 @@ class TestWindowComposition(unittest.TestCase):
         self.assertEqual(composer.committed, ["hello"])
         self.assertEqual(composer.line, "hello world goodbye")
 
+    def test_capture_pair_6_7_window_did_not_slide(self):
+        """Minimized from the red replay capture (dictation_fr.wav, frames
+        6->7): the window START never moved (still growing — nothing aged
+        out), but the new Ghost is a shorter re-transcription of the same
+        audio, and a coincidental 1-word tail/head run ("la") aligned the
+        boundary at j=2, committing 9 words the new Ghost still re-covers.
+        The composed line then showed the same stretch twice — the start
+        of the live pile-up."""
+        composer = GhostComposer()
+        composer.update(
+            "La médiathèque centre ville est un peu plus de la clé.", (0, 22016)
+        )
+        composer.update("La médiathèque centre ville est un peu.", (0, 24064))
+        # Nothing aged out of a window that never slid: nothing may commit
+        self.assertEqual(composer.committed, [])
+        self.assertEqual(
+            composer.line, "La médiathèque centre ville est un peu."
+        )
+
+    def test_capture_pair_46_47_tiny_retranscription(self):
+        """Minimized from the red replay capture (frames 46->47): the new
+        Ghost re-transcribes only a 2-word fragment of the shared region
+        while the window slid ~128ms of a ~3s window (~0.8 words of audio
+        truth). The old composer trusted the text alignment and committed
+        10 words; the audio bound allows at most two."""
+        composer = GhostComposer()
+        composer.update(
+            "école de pré-apprentissage. Celle-ci avait été construite "
+            "à la place de l'autre.",
+            (60416, 108544),
+        )
+        composer.update("de pré-apprentissage.", (62464, 110592))
+        # Audio bound: ceil(12 * 2048/48128) + 1 = 2 words max
+        self.assertLessEqual(len(composer.committed), 2)
+        # Whatever was committed must still read as one coherent line,
+        # not a pile-up
+        words = composer.line.split()
+        self.assertLessEqual(len(words), 15)
+
+
+class TestSpanIsGroundTruth(unittest.TestCase):
+    """The audio span bounds every commit; text only refines within it."""
+
+    def test_one_word_coincidental_run_never_commits(self):
+        """A single shared word ("la") at the tail/head boundary aligns
+        nothing: the commit is bounded by the audio slide, never the
+        whole live tail."""
+        composer = GhostComposer()
+        composer.update("on va essayer la", (0, 16000))
+        composer.update("la réponse est simple", (5120, 21120))
+        # Audio bound: ceil(4 * 5120/16000) + 1 = 3; the coincidental
+        # alignment may not push past it
+        self.assertLessEqual(len(composer.committed), 3)
+        # The new ghost's text appears exactly once
+        self.assertEqual(composer.line.count("la réponse est simple"), 1)
+
+    def test_bound_clamps_eager_text_alignment(self):
+        """The text alignment wants to commit 4 words; the audio span
+        (the window slid 0.25s of a 1s window, ~2 words + margin) says
+        at most 3. The bound wins."""
+        composer = GhostComposer()
+        composer.update("one two three four five six seven", (0, 16000))
+        composer.update("five six seven eight", (4000, 20000))
+        # Text alignment: j=3 ("five six seven") -> commit 4 words.
+        # Audio bound: ceil(7 * 4000/16000) + 1 = 3.
+        self.assertLessEqual(len(composer.committed), 3)
+        self.assertEqual(composer.committed, ["one", "two", "three"])
+
+    def test_degenerate_ghost_commits_nothing_but_displays(self):
+        """A Ghost claiming ~6x more words than its window can hold is a
+        TDT repetition seam: no text alignment and no dedup may derive
+        from it — the aged-out head still commits by audio time, and the
+        loop text still displays live."""
+        composer = GhostComposer()
+        composer.update("hello world", (0, 16000))
+        looped = " ".join(["la"] * 48)  # ~48 words in a 1s window
+        composer.update(looped, (16000, 32000))
+        # The aged-out head committed by audio truth (the whole previous
+        # window left); nothing was derived from the loop text itself
+        self.assertEqual(composer.committed, ["hello", "world"])
+        self.assertEqual(composer.live, looped.split())  # still displayed
+        self.assertIn("hello world", composer.line)
+
+    def test_after_degenerate_prev_commits_stay_bounded(self):
+        """The frame after a degenerate Ghost: the garbage word count must
+        not inflate the audio bound."""
+        composer = GhostComposer()
+        composer.update("hello world", (0, 16000))
+        looped = " ".join(["la"] * 48)
+        composer.update(looped, (16000, 32000))  # degenerate
+        before = len(composer.committed)
+        # Next frame: sane text again, window slid 1600 samples (~100ms)
+        composer.update("bonjour le monde", (17600, 33600))
+        delta = len(composer.committed) - before
+        # Unclamped, the 48-word garbage would bound the commit at
+        # ceil(48 * 0.1) + 1 = 6; clamped to the window's plausible
+        # budget (8 words), the audio bound allows at most 2.
+        self.assertLessEqual(delta, 2)
+
+    def test_word_loss_pattern_keeps_the_opening(self):
+        """The old algorithm's failure mode (word loss: over-deleting
+        committed words on churny subset re-transcriptions) must not lose
+        the utterance opening. Sequence modeled on the red capture's
+        growing-window frames 4-8 (subset re-transcriptions, window start
+        pinned at 0)."""
+        composer = GhostComposer()
+        sequence = [
+            ("La médiathèque centre.", (0, 17920)),
+            ("La médiathèque centre ville est un peu plus de la clé.", (0, 22016)),
+            ("La médiathèque centre ville est un peu.", (0, 24064)),
+            ("La médiathèque centre-ville est installée.", (0, 26112)),
+            ("La médiathèque centre ville est installée depuis.", (0, 28160)),
+        ]
+        for ghost, window in sequence:
+            composer.update(ghost, window)
+            self.assertTrue(
+                composer.line.startswith("La médiathèque"),
+                f"opening lost at {ghost!r}: {composer.line!r}",
+            )
+        self.assertLessEqual(len(composer.line.split()), 12)
+
 
 class TestFastSpeechRegression(unittest.TestCase):
     """ADR 0010's regression test: a fast-speech ghost sequence (short
