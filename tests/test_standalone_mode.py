@@ -1,6 +1,7 @@
 import unittest
 import subprocess
 import sys
+import logging
 from pathlib import Path
 from unittest.mock import patch, MagicMock, call
 
@@ -59,6 +60,44 @@ class TestArgParsing(unittest.TestCase):
         args = parse_args(["--server", "--port", "8124"])
 
         self.assertEqual(args.port, 8124)
+
+    def test_log_level_defaults_to_info(self):
+        from babelfish_stt.main import parse_args
+
+        args = parse_args([])
+
+        self.assertEqual(args.log_level, "info")
+
+    def test_log_level_accepts_debug_case_insensitively(self):
+        from babelfish_stt.main import parse_args
+
+        self.assertEqual(parse_args(["--log-level", "debug"]).log_level, "debug")
+        self.assertEqual(parse_args(["--log-level", "DEBUG"]).log_level, "debug")
+
+    def test_invalid_log_level_fails(self):
+        from babelfish_stt.main import parse_args
+
+        with self.assertRaises(SystemExit) as ctx, \
+                patch("sys.stderr", new=MagicMock()):
+            parse_args(["--log-level", "verbose"])
+
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_main_configures_log_level_from_flag(self):
+        from babelfish_stt.main import main
+
+        argv = ["babelfish", "--log-level", "debug"]
+        with patch("sys.argv", argv), \
+                patch("babelfish_stt.main.HardwareManager") as mock_hw, \
+                patch("babelfish_stt.main.asyncio.run") as mock_run, \
+                patch("babelfish_stt.main.logging.basicConfig") as mock_config:
+            main()
+
+        mock_config.assert_called_once()
+        self.assertEqual(
+            mock_config.call_args.kwargs["level"], logging.DEBUG
+        )
+        mock_hw.assert_called_once()
 
     def test_main_passes_serve_and_type_to_run_babelfish(self):
         from babelfish_stt.main import main

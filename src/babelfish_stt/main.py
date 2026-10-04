@@ -575,6 +575,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Specific word that stops transcription",
     )
 
+    parser.add_argument(
+        "--log-level",
+        dest="log_level",
+        type=str.lower,
+        choices=["debug", "info", "warning", "error"],
+        default="info",
+        help="Root log level (default: info). 'debug' also enables the "
+        "[TYPE] typed-delivery diagnostics (per-apply erase/paste "
+        "decisions, input_manager).",
+    )
+
     return parser
 
 
@@ -598,12 +609,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def main():
-    # Configure logging early to ensure probe() output is visible
-    logging.basicConfig(
-        level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s", force=True
-    )
-
     args = parse_args()
+
+    # Configure logging early (before probe) so probe output is visible.
+    # The default (info) keeps the [TYPE] typed-delivery diagnostics hidden;
+    # --log-level debug enables them for live validation runs without code
+    # edits.
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper()),
+        format="%(levelname)s:%(name)s:%(message)s",
+        force=True,
+    )
 
     if args.wakeword == "LIST_OPTIONS":
         logger.info("Available Wake-words:")
