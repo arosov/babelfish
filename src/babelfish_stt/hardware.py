@@ -16,6 +16,34 @@ from babelfish_stt.placement import GpuDevice, HardwareFacts
 
 logger = logging.getLogger(__name__)
 
+# A healthy nvidia-smi query completes in well under 0.2s. A hang means a
+# wedged driver or monitoring-tool contention, and startup must not stall
+# silently on it — every nvidia-smi call is bounded and degrades to its
+# caller's existing failure fallback on timeout.
+NVIDIA_SMI_TIMEOUT_S = 10.0
+
+
+def _nvidia_smi_output(args: List[str]) -> bytes:
+    """Runs nvidia-smi with a bounded timeout; returns raw stdout bytes.
+
+    Timeout and fallback live in one place: on timeout a single warning is
+    logged and the TimeoutExpired re-raises, so each caller's existing
+    `except` fallback applies unchanged (behavior on timeout = behavior on
+    error). Also raises on nonzero exit, as check_output always did.
+    """
+    try:
+        return subprocess.check_output(
+            ["nvidia-smi", *args],
+            stderr=subprocess.STDOUT,
+            timeout=NVIDIA_SMI_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            f"⚠️ nvidia-smi probe timed out after {NVIDIA_SMI_TIMEOUT_S:.0f}s "
+            "(wedged driver or monitoring-tool contention); using fallback."
+        )
+        raise
+
 
 def _collect_ort_dll_dirs(site_packages: List[Path]) -> List[str]:
     """Finds the ONNX Runtime `capi/` dir and every pip NVIDIA-package DLL dir
@@ -168,13 +196,8 @@ def get_gpu_info() -> Dict:
     try:
         if shutil.which("nvidia-smi"):
             output = (
-                subprocess.check_output(
-                    [
-                        "nvidia-smi",
-                        "--query-gpu=name,memory.total",
-                        "--format=csv,noheader,nounits",
-                    ],
-                    stderr=subprocess.STDOUT,
+                _nvidia_smi_output(
+                    ["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"]
                 )
                 .decode("utf-8")
                 .strip()
@@ -215,14 +238,12 @@ def get_device_name(device_type: str = "cpu") -> str:
         if shutil.which("nvidia-smi"):
             try:
                 output = (
-                    subprocess.check_output(
+                    _nvidia_smi_output(
                         [
-                            "nvidia-smi",
                             f"--id={device_id}",
                             "--query-gpu=name,memory.total",
                             "--format=csv,noheader,nounits",
-                        ],
-                        stderr=subprocess.STDOUT,
+                        ]
                     )
                     .decode("utf-8")
                     .strip()
@@ -309,14 +330,12 @@ def _get_nvidia_memory(device_index: int = 0) -> Dict[str, float]:
 
     try:
         output = (
-            subprocess.check_output(
+            _nvidia_smi_output(
                 [
-                    "nvidia-smi",
                     f"--id={device_index}",
                     "--query-gpu=memory.total,memory.used",
                     "--format=csv,noheader,nounits",
-                ],
-                stderr=subprocess.STDOUT,
+                ]
             )
             .decode("utf-8")
             .strip()
@@ -674,13 +693,8 @@ def _get_nvidia_gpus() -> List[Dict]:
 
     try:
         output = (
-            subprocess.check_output(
-                [
-                    "nvidia-smi",
-                    "--query-gpu=name,memory.total",
-                    "--format=csv,noheader,nounits",
-                ],
-                stderr=subprocess.STDOUT,
+            _nvidia_smi_output(
+                ["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"]
             )
             .decode("utf-8")
             .strip()
@@ -717,13 +731,8 @@ def get_best_gpu_index() -> int:
         # Get memory.total for all GPUs
         # Format: "4096, 8192"
         output = (
-            subprocess.check_output(
-                [
-                    "nvidia-smi",
-                    "--query-gpu=memory.total",
-                    "--format=csv,noheader,nounits",
-                ],
-                stderr=subprocess.STDOUT,
+            _nvidia_smi_output(
+                ["--query-gpu=memory.total", "--format=csv,noheader,nounits"]
             )
             .decode("utf-8")
             .strip()
@@ -754,13 +763,11 @@ def _list_nvidia_devices() -> List[GpuDevice]:
         return []
     try:
         output = (
-            subprocess.check_output(
+            _nvidia_smi_output(
                 [
-                    "nvidia-smi",
                     "--query-gpu=index,name,memory.total",
                     "--format=csv,noheader,nounits",
-                ],
-                stderr=subprocess.STDOUT,
+                ]
             )
             .decode("utf-8")
             .strip()

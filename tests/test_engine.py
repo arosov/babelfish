@@ -1,8 +1,18 @@
 import unittest
 from unittest.mock import patch, MagicMock
+from pathlib import Path
 import numpy as np
 from babelfish_stt.engine import STTEngine
 from babelfish_stt.config import BabelfishConfig, HardwareConfig
+
+
+def _cuda_facts():
+    from babelfish_stt.placement import GpuDevice, HardwareFacts
+
+    return HardwareFacts(
+        providers=("CUDAExecutionProvider", "CPUExecutionProvider"),
+        gpus=(GpuDevice("cuda:0", "NVIDIA GeForce RTX 2080 SUPER", 8.0),),
+    )
 
 
 class TestEngine(unittest.TestCase):
@@ -66,6 +76,126 @@ class TestEngine(unittest.TestCase):
         _, kwargs = mock_load.call_args
         self.assertEqual(kwargs["providers"], ["CPUExecutionProvider"])
         self.assertIsNone(kwargs["quantization"])
+
+    @patch("babelfish_stt.engine.STTEngine._resolve_model_path", return_value=Path("m"))
+    @patch(
+        "babelfish_stt.engine.time.perf_counter",
+        side_effect=[0.0, 0.08, 0.0, 0.08, 0.0, 0.08],
+    )
+    @patch("onnx_asr.load_model")
+    @patch("babelfish_stt.engine.get_memory_usage")
+    def test_phase_timers_logged_in_order(self, mock_mem, mock_load, mock_pc, mock_rp):
+        """The three ⏱️ lines appear around the load, in plan order."""
+        mock_mem.return_value = {"total": 8.0, "used": 1.0}
+        config = BabelfishConfig(hardware=HardwareConfig(device="cpu"))
+
+        with self.assertLogs("babelfish_stt.engine", level="INFO") as logs:
+            STTEngine(config=config)
+
+        messages = [r.getMessage() for r in logs.records]
+        init_idx = next(i for i, m in enumerate(messages) if "Initializing onnx-asr" in m)
+        probe_indexes = [i for i, m in enumerate(messages) if "Memory probe" in m]
+        load_idx = next(i for i, m in enumerate(messages) if "⏱️ Model load" in m)
+        vram_idx = next(i for i, m in enumerate(messages) if "VRAM Status" in m)
+
+        self.assertEqual(len(probe_indexes), 2)
+        self.assertLess(init_idx, probe_indexes[0])
+        self.assertLess(probe_indexes[0], load_idx)
+        self.assertLess(load_idx, probe_indexes[1])
+        self.assertLess(probe_indexes[1], vram_idx)
+
+    @patch("babelfish_stt.engine.MODEL_LOAD_TIMEOUT_S", 0.1)
+    @patch("babelfish_stt.engine.STTEngine._resolve_model_path", return_value=Path("m"))
+    @patch("onnx_asr.load_model")
+    @patch("babelfish_stt.engine.get_memory_usage")
+    @patch("babelfish_stt.hardware.probe_hardware_facts")
+    def test_model_load_timeout_falls_back_to_cpu(
+        self, mock_probe, mock_mem, mock_load, mock_rp
+    ):
+        """A wedged GPU load trips the cap and routes into the CPU fallback."""
+        import time as time_mod
+
+        mock_probe.return_value = _cuda_facts()
+        mock_mem.return_value = {"total": 8.0, "used": 1.0}
+        cpu_model = MagicMock(name="cpu_model")
+
+        def slow_gpu_load(*args, **kwargs):
+            if kwargs.get("providers") != ["CPUExecutionProvider"]:
+                time_mod.sleep(0.3)  # wedged past the patched 0.1s cap
+                return MagicMock(name="gpu_model")
+            return cpu_model
+
+        mock_load.side_effect = slow_gpu_load
+        config = BabelfishConfig(hardware=HardwareConfig(device="cuda"))
+
+        with self.assertLogs("babelfish_stt.engine", level="WARNING") as logs:
+            engine = STTEngine(config=config)
+
+        self.assertTrue(
+            any("exceeded" in r.getMessage() for r in logs.records),
+            [r.getMessage() for r in logs.records],
+        )
+        # Same end state as today's failure path: CPU engine, healthy model.
+        self.assertEqual(engine.device_type, "cpu")
+        _, kwargs = mock_load.call_args
+        self.assertEqual(kwargs["providers"], ["CPUExecutionProvider"])
+        self.assertIs(engine.model, cpu_model)
+
+    @patch("babelfish_stt.engine.MODEL_LOAD_TIMEOUT_S", 0.2)
+    @patch("babelfish_stt.engine.STTEngine._resolve_model_path", return_value=None)
+    @patch("onnx_asr.load_model")
+    @patch("babelfish_stt.engine.get_memory_usage")
+    def test_model_load_without_local_path_skips_cap(self, mock_mem, mock_load, mock_rp):
+        """No local model dir means first-run HF download: no cap applies."""
+        import time as time_mod
+
+        class _Sentinel(Exception):
+            pass
+
+        def slow_download(*args, **kwargs):
+            time_mod.sleep(0.4)  # well past the patched 0.2s cap
+            raise _Sentinel("download failed")
+
+        mock_load.side_effect = slow_download
+        config = BabelfishConfig(hardware=HardwareConfig(device="cpu"))
+
+        # The cap would raise TimeoutError; the sentinel proves the call ran
+        # in-line (uncapped) and its exception propagated unchanged.
+        with self.assertRaises(_Sentinel):
+            STTEngine(config=config)
+
+        mock_load.assert_called_once()
+
+    @patch("onnx_asr.load_model")
+    @patch("babelfish_stt.engine.get_memory_usage")
+    def test_vram_status_includes_free(self, mock_mem, mock_load):
+        """A successful probe surfaces Free VRAM in the status line."""
+        mock_mem.return_value = {"total": 8.0, "used": 1.8}
+        config = BabelfishConfig(hardware=HardwareConfig(device="cpu"))
+
+        with self.assertLogs("babelfish_stt.engine", level="INFO") as logs:
+            STTEngine(config=config)
+
+        vram_line = next(
+            r.getMessage() for r in logs.records if "VRAM Status" in r.getMessage()
+        )
+        self.assertIn("Free=6.20GB", vram_line)
+        self.assertIn("Total=8.00GB", vram_line)
+
+    @patch("onnx_asr.load_model")
+    @patch("babelfish_stt.engine.get_memory_usage")
+    def test_vram_status_degraded_shape_without_free(self, mock_mem, mock_load):
+        """A failed probe (zero total) keeps the legacy shape, no Free."""
+        mock_mem.return_value = {"total": 0.0, "used": 0.0}
+        config = BabelfishConfig(hardware=HardwareConfig(device="cpu"))
+
+        with self.assertLogs("babelfish_stt.engine", level="INFO") as logs:
+            STTEngine(config=config)
+
+        vram_line = next(
+            r.getMessage() for r in logs.records if "VRAM Status" in r.getMessage()
+        )
+        self.assertNotIn("Free=", vram_line)
 
     @patch("onnx_asr.load_model")
     @patch("babelfish_stt.engine.get_memory_usage")

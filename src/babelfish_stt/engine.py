@@ -5,6 +5,7 @@ import logging
 import os
 import threading
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional, List, Dict
 from babelfish_stt.reconfigurable import Reconfigurable
@@ -18,6 +19,15 @@ from pydantic import BaseModel
 os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 
 logger = logging.getLogger(__name__)
+
+# Generous cap around the first CUDA session creation (DLL load + context
+# build + encoder-weights read). The healthy path is ~3s; if this cap trips,
+# the load is wedged (driver contention, AV scan) and we fail loudly into the
+# existing CPU fallback instead of hanging startup forever. Applies only when
+# a local model dir resolved: with no local copy, load_model auto-downloads
+# from the HF cache inside the same call, and a first-run download can
+# legitimately take longer than this cap.
+MODEL_LOAD_TIMEOUT_S = 60.0
 
 # GPU backend -> (required provider, ORT flavor package), used by
 # _degraded_device_fix to print the exact remediation when ORT lacks the
@@ -140,14 +150,17 @@ class STTEngine(Reconfigurable):
         logger.info(f"🚀 Initializing onnx-asr (Providers: {providers})...")
 
         # Measure Baseline Memory (Before loading model)
+        probe_start = time.perf_counter()
         mem_before = get_memory_usage(self.device_type)
+        logger.info(f"⏱️ Memory probe: {time.perf_counter() - probe_start:.2f}s")
 
         try:
-            self.model = onnx_asr.load_model(
+            self.model = self._load_model_bounded(
                 self.MODEL_NAME,
                 path=str(model_path) if model_path else None,
                 quantization=quantization,
                 providers=providers,
+                log_label=f"Model load ({self.device_type})",
             )
         except Exception as e:
             logger.error(f"Failed to load onnx-asr model: {e}")
@@ -160,17 +173,20 @@ class STTEngine(Reconfigurable):
                     logger.warning(f"⚠️ {fallback_fix}")
                 logger.warning("Retrying with CPU provider...")
                 self.device_type = "cpu"  # Update device type to cpu
-                self.model = onnx_asr.load_model(
+                self.model = self._load_model_bounded(
                     self.MODEL_NAME,
                     path=str(model_path) if model_path else None,
                     quantization=None,
                     providers=["CPUExecutionProvider"],
+                    log_label="Model load (cpu, fallback)",
                 )
             else:
                 raise
 
         # Measure Memory After loading and update config
+        probe_start = time.perf_counter()
         mem_after = get_memory_usage(self.device_type)
+        logger.info(f"⏱️ Memory probe: {time.perf_counter() - probe_start:.2f}s")
 
         try:
             self.config_ref.status.active_device = self.device_type
@@ -181,17 +197,84 @@ class STTEngine(Reconfigurable):
             self.config_ref.status.vram_used_baseline_gb = float(mem_before["used"])
             self.config_ref.status.vram_used_model_gb = float(mem_after["used"])
 
-            logger.info(
-                f"📊 VRAM Status: Total={self.config_ref.status.vram_total_gb:.2f}GB, "
+            vram_status = (
+                f"Total={self.config_ref.status.vram_total_gb:.2f}GB, "
                 f"Baseline={self.config_ref.status.vram_used_baseline_gb:.2f}GB, "
                 f"ModelLoaded={self.config_ref.status.vram_used_model_gb:.2f}GB "
                 f"(Delta: {self.config_ref.status.vram_used_model_gb - self.config_ref.status.vram_used_baseline_gb:.2f}GB)"
             )
+            # Free VRAM at baseline distinguishes a repeat stall: driver
+            # contention (probe itself slow/timed out), VRAM exhaustion
+            # (used ≈ total before load), or AV scanning (time concentrated
+            # in the model-load timer above).
+            if self.config_ref.status.vram_total_gb > 0:
+                free_gb = (
+                    self.config_ref.status.vram_total_gb
+                    - self.config_ref.status.vram_used_baseline_gb
+                )
+                vram_status = f"Free={free_gb:.2f}GB, " + vram_status
+            logger.info(f"📊 VRAM Status: {vram_status}")
         except (TypeError, ValueError, AttributeError):
             # Handle mocks in tests or missing data
             logger.info(
                 f"📊 VRAM Status: Total={mem_after['total']}GB, Baseline={mem_before['used']}GB, ModelLoaded={mem_after['used']}GB"
             )
+
+    def _load_model_bounded(self, *args, log_label: str, **kwargs) -> Any:
+        """onnx_asr.load_model with a generous wall-clock cap.
+
+        Runs the load in a worker thread and waits up to
+        MODEL_LOAD_TIMEOUT_S. On timeout the load cannot be abandoned
+        safely in-thread (an interrupted ORT session creation has no
+        termination guarantee), so the worker is left to finish as a
+        daemon whose result is discarded — no half-initialized model is
+        ever kept — and the timeout re-raises so the caller routes into
+        its existing CPU-fallback path. Skipped entirely when no local
+        model resolved (first-run HF auto-download inside load_model can
+        legitimately outlast the cap).
+        """
+        if kwargs.get("path") is None:
+            return onnx_asr.load_model(*args, **kwargs)
+
+        start = time.perf_counter()
+        # A plain daemon thread, not a ThreadPoolExecutor: the executor
+        # registers an atexit hook that joins its workers, so a wedged load
+        # would block interpreter shutdown even after shutdown(wait=False).
+        # A daemon thread with a captured result is why the timeout can
+        # abandon the attempt safely — see MODEL_LOAD_TIMEOUT_S.
+        outcome: Dict[str, Any] = {}
+
+        def _load() -> None:
+            try:
+                outcome["model"] = onnx_asr.load_model(*args, **kwargs)
+            except BaseException as e:  # noqa: BLE001 - captured, not raised here
+                outcome["error"] = e
+
+        worker = threading.Thread(
+            target=_load, name="model-load", daemon=True
+        )
+        worker.start()
+        worker.join(timeout=MODEL_LOAD_TIMEOUT_S)
+        elapsed = time.perf_counter() - start
+
+        if worker.is_alive():
+            # Wedged load (driver contention, AV scan?). The worker is left
+            # to finish as a daemon; its result is never read, so a
+            # half-initialized model is never kept. Surface a loud,
+            # actionable timeout and route into the CPU fallback.
+            logger.warning(
+                f"⏱️ {log_label} exceeded {MODEL_LOAD_TIMEOUT_S:.0f}s — "
+                "wedged load (driver contention, AV scan?); abandoning the "
+                "GPU attempt (worker left to finish, result discarded) and "
+                "falling back to CPU."
+            )
+            raise TimeoutError(f"{log_label} exceeded {MODEL_LOAD_TIMEOUT_S:.0f}s")
+
+        if "error" in outcome:
+            raise outcome["error"]
+
+        logger.info(f"⏱️ {log_label}: {elapsed:.2f}s")
+        return outcome["model"]
 
     def _resolve_model_path(self, config: BabelfishConfig) -> Optional[Path]:
         """
