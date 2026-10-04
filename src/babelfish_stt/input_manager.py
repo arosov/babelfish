@@ -360,30 +360,61 @@ class InputSimulator:
             # leading words of the live tail that are character-identical
             # to what is on screen and rewrite only the changed suffix:
             # the rewrite is bounded by the words that actually changed,
-            # not the window.
+            # not the window. The erase is computed from the OLD screen
+            # words (what is actually there to remove) — computing it
+            # from the new words ate extra characters left of the
+            # utterance start.
             live_before = self.typed_live
             live_words_before = typed_l
+            delta_words = committed_words[len(typed_c):]
             keep = 0
-            for new_w, old_w in zip(live_words, live_words_before):
-                if new_w == old_w:
-                    keep += 1
-                else:
-                    break
-            # Erase the changed tail (including inter-word spaces); keep
-            # the trailing space after the kept prefix when words remain.
-            erase_words = len(live_words_before) - keep
-            bs = 0
-            if erase_words:
-                suffix = " ".join(live_words[keep:] if keep else live_words_before)
-                bs = self._grapheme_len(
-                    (" " if keep else "") + suffix
+            if not delta_words:
+                # The keep-optimization only applies when nothing needs
+                # to be inserted before the live tail (a committed delta
+                # would have to land between typed_committed and the
+                # kept words, which are at the end of the line).
+                for new_w, old_w in zip(live_words, live_words_before):
+                    if new_w == old_w:
+                        keep += 1
+                    else:
+                        break
+
+            if not delta_words and keep == len(live_words_before):
+                # All old live words kept: only new words appended after
+                # them (or nothing). The inter-word separator must be
+                # pasted.
+                bs = 0
+                text = " ".join(live_words[keep:])
+                if text and keep:
+                    text = " " + text
+            elif not delta_words:
+                # Erase exactly the discarded old suffix (with its
+                # leading separator); paste the new changed suffix
+                # without one (the kept prefix re-supplies it).
+                old_suffix = " ".join(live_words_before[keep:])
+                bs = self._grapheme_len(old_suffix)
+                text = " ".join(live_words[keep:]) if keep else " ".join(
+                    live_words
                 )
-            text = " ".join(committed_words[len(typed_c):] + live_words[keep:])
-            kept_prefix = " ".join(live_words[:keep])
+                if keep and text:
+                    text = " " + text
+                if not keep:
+                    # keep == 0 erases the whole old live tail; the
+                    # committed/live separator before it stays on screen
+                    # and re-separates the paste.
+                    pass
+            else:
+                # A committed delta must land between typed_committed and
+                # the live tail: erase the whole live tail, paste delta +
+                # live (the old separator space stays on screen).
+                bs = self._grapheme_len(self.typed_live)
+                text = " ".join(delta_words + live_words)
+            kept_note = keep if not delta_words else "n/a"
             logger.info(
-                f"[TYPE] ghost: erase {bs}, paste {len(text)} chars "
-                f"(delta mode; keep {keep}/{len(live_words_before)} live "
-                f"words; c={len(typed_c)}/{len(committed_words)}) {text!r}"
+                f"[TYPE] ghost: erase {bs}, paste {len(text or '')} chars "
+                f"(delta mode; keep {kept_note}/{len(live_words_before)} "
+                f"live words; c={len(typed_c)}/{len(committed_words)}) "
+                f"{(text or '')!r}"
             )
             self._send_backspaces(bs)
             if text:

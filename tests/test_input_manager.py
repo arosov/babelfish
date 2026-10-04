@@ -85,10 +85,10 @@ class TestGhostTextBehavior:
 
         simulator.update_ghost("hello there")
 
-        # "hello" (5? — 6 graphemes incl. the joining space) is kept:
-        # only " world" (6 graphemes) is erased and " there" pasted
-        assert len(_backspace_calls(mock_keyboard)) == 6
-        mock_pyperclip.copy.assert_called_once_with("there")
+        # "hello" is kept: only "world" (5 graphemes — the separator
+        # space re-separates the paste) is erased and " there" pasted
+        assert len(_backspace_calls(mock_keyboard)) == 5
+        mock_pyperclip.copy.assert_called_once_with(" there")
         assert simulator.last_ghost_length == len(
             list(grapheme.graphemes("hello there"))
         )
@@ -435,8 +435,7 @@ class TestTypingWorker:
         assert sim.accumulated_text == "hello world from the worker"
         # Latest-wins: the burst applied as ONE frame — the last paste is
         # the full changed suffix against the previous screen state
-        assert pasted[-1] == "from the worker"
-        assert "from" not in pasted[:-1] or True
+        assert pasted[-1] == " from the worker"
         sim.stop()
 
     def test_enqueue_returns_immediately_under_slow_typing(self, mock_pyperclip):
