@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from babelfish_stt.input_manager import InputSimulator
+from babelfish_stt.config import SeparatorPolicy
 from pynput.keyboard import Key
 
 
@@ -248,6 +249,178 @@ class TestEdgeCases:
         """Should handle empty finalize gracefully."""
         simulator.finalize("")
         mock_keyboard.assert_not_called()
+
+
+class TestAppendDiffTyping:
+    """Append-diff typing properties (the rework of ADR 0010's typing):
+    per-update keystroke cost is bounded by the live tail (the window),
+    never the composed line."""
+
+    def test_pasted_text_is_delta_plus_live_never_full_line(self, simulator, mock_keyboard, mock_pyperclip):
+        """In a clean sequence (no dedup trim), each paste carries only
+        the committed delta + live — never a full-line repaste after the
+        first frame."""
+        sim = simulator
+        sim.update_ghost("alpha beta gamma delta", (0, 16000))
+        first_paste = mock_pyperclip.copy.call_args_list[0].args[0]
+        assert first_paste == "alpha beta gamma delta"
+
+        mock_pyperclip.reset_mock()
+        for ghost, window in [
+            ("beta gamma delta epsilon", (4000, 20000)),
+            ("gamma delta epsilon zeta", (8000, 24000)),
+        ]:
+            committed_before = len(sim.composer.committed)
+            sim.update_ghost(ghost, window=window)
+            pasted = [c.args[0] for c in mock_pyperclip.copy.call_args_list]
+            mock_pyperclip.reset_mock()
+            # One paste per applied frame, carrying delta + live only
+            assert len(pasted) == 1
+            live_words = sim.composer.live
+            delta_words = sim.composer.committed[committed_before:]
+            assert pasted[0] == " ".join(delta_words + live_words)
+
+    def test_rare_full_repaste_when_dedup_reaches_typed_committed(
+        self, simulator, mock_keyboard, mock_pyperclip
+    ):
+        """When the composer's dedup trim reaches into previously typed
+        committed words, that frame falls back to full erase + repaste —
+        once."""
+        sim = simulator
+        sim.update_ghost("alpha beta gamma", (0, 16000))
+        # Commit all three, then the trim pulls "gamma" back out: the
+        # typed committed prefix ("alpha beta") shrinks to ("alpha")
+        sim.update_ghost("gamma delta", (16000, 32000))
+        assert sim.typed_committed == "alpha beta"
+
+        mock_keyboard.reset_mock()
+        mock_pyperclip.reset_mock()
+        sim.update_ghost("beta delta echo", (24000, 40000))
+        # committed shrank to ["alpha"]: not an extension of the typed
+        # committed prefix -> rare path
+        assert sim.composer.committed == ["alpha"]
+        full_line = "alpha beta gamma delta"
+        assert len(_backspace_calls(mock_keyboard)) == len(full_line)
+        # Exactly one paste: the full composed line
+        pasted = [c.args[0] for c in mock_pyperclip.copy.call_args_list]
+        assert pasted == ["alpha beta delta echo"]
+        assert sim.accumulated_text == "alpha beta delta echo"
+
+
+class TestTypingWorker:
+    """The typing worker: the audio thread enqueues and returns
+    immediately; frames apply paced, ghost frames coalescing latest-wins,
+    a Final superseding any pending ghost frame."""
+
+    def _blocking_keyboard(self):
+        """A keyboard whose first backspace blocks until released —
+        pins the worker mid-apply so queue states are observable."""
+        import threading
+
+        from pynput.keyboard import Key
+
+        release = threading.Event()
+        started = threading.Event()
+        mock_keyboard = MagicMock()
+
+        def slow_press(key):
+            if key == Key.backspace and not started.is_set():
+                started.set()
+                assert release.wait(timeout=5), "worker was never released"
+            # pynput Controller.press has no return value to mirror
+
+        mock_keyboard.press.side_effect = slow_press
+        return mock_keyboard, started, release
+
+    def test_finalize_supersedes_pending_ghost(self, mock_pyperclip):
+        mock_keyboard, started, release = self._blocking_keyboard()
+        sim = InputSimulator(keyboard_controller=mock_keyboard, throttle_s=0.0)
+
+        sim.enqueue_ghost("hello world", None)
+        assert sim.flush()
+        # This frame's apply erases the live tail -> blocks in backspaces
+        sim.enqueue_ghost("hello world again", None)
+        assert started.wait(timeout=5), "worker never started applying"
+        # A ghost frame is now pending (coalescing slot); the Final
+        # supersedes it
+        sim.enqueue_ghost("hello world once more", None)
+        sim.enqueue_finalize("FINAL", separator=SeparatorPolicy.TRAILING)
+        release.set()
+        assert sim.flush(), "worker did not drain"
+
+        pasted = [c.args[0] for c in mock_pyperclip.copy.call_args_list]
+        assert "hello world" in pasted  # the first applied frame
+        assert "hello world again" in pasted  # was mid-apply when superseded
+        assert "hello world once more" not in pasted  # pending, superseded
+        assert pasted[-1] == "FINAL "  # the Final, with its trailing space
+        assert sim.accumulated_text == ""
+        sim.stop()
+
+    def test_coalescing_keeps_only_the_latest_ghost(self, mock_pyperclip):
+        mock_keyboard, started, release = self._blocking_keyboard()
+        sim = InputSimulator(keyboard_controller=mock_keyboard, throttle_s=0.0)
+
+        sim.enqueue_ghost("hello world", None)
+        assert sim.flush()
+        sim.enqueue_ghost("hello world again", None)
+        assert started.wait(timeout=5)
+        # A burst of ghost frames while the worker is busy: all but the
+        # latest are superseded in the coalescing slot
+        sim.enqueue_ghost("hello world from", None)
+        sim.enqueue_ghost("hello world from the", None)
+        sim.enqueue_ghost("hello world from the worker", None)
+        release.set()
+        assert sim.flush()
+
+        pasted = [c.args[0] for c in mock_pyperclip.copy.call_args_list]
+        assert "hello world" in pasted
+        assert "hello world again" in pasted
+        assert "hello world from" not in pasted
+        assert "hello world from the" not in pasted
+        assert pasted[-1] == "hello world from the worker"
+        assert sim.accumulated_text == "hello world from the worker"
+        sim.stop()
+
+    def test_enqueue_returns_immediately_under_slow_typing(self, mock_pyperclip):
+        """The audio thread's contract: enqueue never blocks on
+        keystrokes, even while the worker is mid-keystroke-burst."""
+        import threading
+        import time as time_module
+
+        mock_keyboard = MagicMock()
+        gate = threading.Event()
+        calls = {"n": 0}
+
+        def slow_press(key):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                assert gate.wait(timeout=5)
+
+        mock_keyboard.press.side_effect = slow_press
+        sim = InputSimulator(keyboard_controller=mock_keyboard, throttle_s=0.0)
+
+        sim.enqueue_ghost("hello world", None)
+        # Wait until the worker is inside the backspace burst
+        deadline = time_module.monotonic() + 5
+        while calls["n"] < 1 and time_module.monotonic() < deadline:
+            time_module.sleep(0.002)
+        t0 = time_module.monotonic()
+        sim.enqueue_ghost("hello world again", None)
+        sim.enqueue_finalize("FINAL")
+        assert time_module.monotonic() - t0 < 0.05, "enqueue blocked on typing"
+        gate.set()
+        assert sim.flush()
+        sim.stop()
+
+    def test_flush_reports_drained_state(self, mock_pyperclip):
+        sim = InputSimulator(keyboard_controller=MagicMock(), throttle_s=0.0)
+        sim.enqueue_ghost("hello", None)
+        assert sim.flush()
+        assert sim.accumulated_text == "hello"
+        sim.enqueue_finalize("FINAL")
+        assert sim.flush()
+        assert sim.accumulated_text == ""
+        sim.stop()
 
 
 class TestInputSimulatorCore:

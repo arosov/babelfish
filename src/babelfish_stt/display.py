@@ -213,6 +213,11 @@ class MultiDisplay:
 class InputDisplay:
     """
     Handles transcription updates by simulating keyboard input.
+
+    Frames are enqueued to the simulator's typing worker and this call
+    returns immediately — the audio thread never blocks on keystrokes
+    (the typing worker applies them paced by the throttle, ghost frames
+    coalescing latest-wins, a Final superseding any pending ghost frame).
     """
 
     def __init__(self, config_manager):
@@ -232,7 +237,7 @@ class InputDisplay:
 
         # We only type ghost text if explicitly enabled
         if ghost:
-            self.simulator.update_ghost(ghost, window=window)
+            self.simulator.enqueue_ghost(ghost, window=window)
 
     def finalize(self, text: str = ""):
         config = self.config_manager.config.system_input
@@ -242,10 +247,10 @@ class InputDisplay:
             # Read the list we erase (ADR 0010): displayed_graphemes is the
             # single source of truth for what is on screen.
             if self.simulator.displayed_graphemes:
-                self.simulator.finalize("")
+                self.simulator.enqueue_finalize("")
             return
 
-        self.simulator.finalize(text, separator=config.separator)
+        self.simulator.enqueue_finalize(text, separator=config.separator)
 
     def reset(self):
         self.simulator.reset()

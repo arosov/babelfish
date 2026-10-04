@@ -308,9 +308,11 @@ class TestFastSpeechRegression(unittest.TestCase):
                 f"line collapsed at {ghost!r}: {composer.line!r}",
             )
 
-    def test_typed_path_backspaces_match_pasted_line(self):
-        """Every backspace burst erases exactly the graphemes currently on
-        screen — what is tracked and what is on screen cannot diverge."""
+    def test_typed_path_appends_diff_not_full_line(self):
+        """Every applied frame erases exactly the live tail it replaces
+        and pastes only the committed delta + live (append-diff): the
+        per-update keystroke cost is bounded by the window, never the
+        line. What is tracked and what is on screen cannot diverge."""
         from pynput.keyboard import Key as PynputKey
 
         from babelfish_stt.input_manager import InputSimulator
@@ -326,13 +328,18 @@ class TestFastSpeechRegression(unittest.TestCase):
         with patch("babelfish_stt.input_strategies.pyperclip"):
             sim = InputSimulator(keyboard_controller=mock_keyboard, throttle_s=0.0)
             for ghost, window in self.FAST_SEQUENCES:
-                graphemes_before = len(sim.displayed_graphemes)
+                live_before = sim.typed_live
                 calls_before = len(mock_keyboard.press.call_args_list)
                 sim.update_ghost(ghost, window=window)
                 bs_count = backspaces(mock_keyboard, calls_before)
-                # Every backspace erases exactly the displayed line; the
-                # tracked accumulated text is exactly the composer's line.
-                self.assertEqual(bs_count, graphemes_before)
+                # The backspace burst erases exactly the live tail it
+                # replaces — never the whole line
+                self.assertEqual(
+                    bs_count,
+                    len(list(grapheme.graphemes(live_before))),
+                )
+                # The tracked accumulated text is exactly the composer's
+                # line, and the mirror matches it grapheme for grapheme.
                 self.assertEqual(sim.accumulated_text, sim.composer.line)
                 self.assertEqual(
                     len(sim.displayed_graphemes),
