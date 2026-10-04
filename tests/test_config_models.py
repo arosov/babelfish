@@ -70,6 +70,18 @@ def test_system_input_config_defaults():
     assert config.separator.value == "trailing"
 
 
+def test_system_input_config_ignores_removed_strategy():
+    """ADR 0009: `strategy` no longer exists; stale configs keep loading.
+
+    Known-or-unknown values are silently ignored by pydantic's default parse —
+    no aliasing that would validate a setting that no longer means anything.
+    """
+    for stale_value in ("direct", "clipboard", "native", "hybrid"):
+        config = SystemInputConfig(strategy=stale_value)
+        assert config.enabled is False
+        assert config.separator.value == "trailing"
+
+
 def test_transcription_window_config_defaults():
     config = TranscriptionWindowConfig()
     assert config.always_on_top is True

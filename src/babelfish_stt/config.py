@@ -21,13 +21,6 @@ def platform_default_device() -> str:
     return "cpu"
 
 
-class InputStrategy(str, Enum):
-    DIRECT = "direct"
-    CLIPBOARD = "clipboard"
-    NATIVE = "native"
-    HYBRID = "hybrid"
-
-
 class SeparatorPolicy(str, Enum):
     TRAILING = "trailing"
     LEADING = "leading"
@@ -86,7 +79,9 @@ class TranscriptionWindowConfig(BaseModel):
 class SystemInputConfig(BaseModel):
     enabled: bool = False
     type_ghost: bool = False
-    strategy: InputStrategy = InputStrategy.CLIPBOARD
+    # Injection is always clipboard paste + pynput backspace (ADR 0009); the
+    # old "strategy" field is gone. Unknown keys from stale configs (e.g.
+    # "strategy": "native") are silently ignored by pydantic's default parse.
     separator: SeparatorPolicy = SeparatorPolicy.TRAILING
 
 

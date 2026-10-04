@@ -31,7 +31,7 @@ def throttled_simulator(mock_keyboard):
 
 @pytest.fixture
 def mock_pyperclip():
-    """Ghosts are injected via the clipboard strategy; keep tests hermetic."""
+    """Ghost and Final text are injected via the clipboard; keep tests hermetic."""
     with patch("babelfish_stt.input_strategies.pyperclip") as m:
         yield m
 
@@ -147,83 +147,89 @@ class TestGhostTextBehavior:
 class TestFinalizeBehavior:
     """Tests for text finalization and injection."""
 
-    def test_finalize_adds_spacing_between_utterances(self, simulator, mock_keyboard):
+    def test_finalize_adds_spacing_between_utterances(
+        self, simulator, mock_keyboard, mock_pyperclip
+    ):
         """Under the default trailing policy, each Final carries its own space."""
         simulator.finalize("hello")
-        mock_keyboard.type.assert_called_with("hello ")
+        mock_pyperclip.copy.assert_called_with("hello ")
 
-        mock_keyboard.reset_mock()
+        mock_pyperclip.reset_mock()
         simulator.finalize("world")
-        mock_keyboard.type.assert_called_with("world ")
+        mock_pyperclip.copy.assert_called_with("world ")
 
-    def test_finalize_policy_matrix(self, simulator, mock_keyboard):
+    def test_finalize_policy_matrix(
+        self, simulator, mock_keyboard, mock_pyperclip
+    ):
         """Pin the spacing behavior of each separator policy."""
         from babelfish_stt.config import SeparatorPolicy
 
         # Default (no kwarg) is trailing.
         simulator.finalize("hello")
-        mock_keyboard.type.assert_called_with("hello ")
-        mock_keyboard.reset_mock()
+        mock_pyperclip.copy.assert_called_with("hello ")
+        mock_pyperclip.reset_mock()
 
         # Trailing: appends unless text ends with whitespace; a second Final
         # never gets a leading space.
         simulator.finalize("world", separator=SeparatorPolicy.TRAILING)
-        mock_keyboard.type.assert_called_with("world ")
-        mock_keyboard.reset_mock()
+        mock_pyperclip.copy.assert_called_with("world ")
+        mock_pyperclip.reset_mock()
         simulator.finalize("test\n", separator=SeparatorPolicy.TRAILING)
-        mock_keyboard.type.assert_called_with("test\n")
-        mock_keyboard.reset_mock()
+        mock_pyperclip.copy.assert_called_with("test\n")
+        mock_pyperclip.reset_mock()
         simulator.finalize("next", separator=SeparatorPolicy.TRAILING)
-        mock_keyboard.type.assert_called_with("next ")
-        mock_keyboard.reset_mock()
+        mock_pyperclip.copy.assert_called_with("next ")
+        mock_pyperclip.reset_mock()
 
         # Leading (legacy): the old rule verbatim. First call no space;
         # second gets a leading space; leading-whitespace text passes through.
         sim2 = InputSimulator(keyboard_controller=mock_keyboard, throttle_s=0.0)
         sim2.finalize("hello", separator=SeparatorPolicy.LEADING)
-        mock_keyboard.type.assert_called_with("hello")
-        mock_keyboard.reset_mock()
+        mock_pyperclip.copy.assert_called_with("hello")
+        mock_pyperclip.reset_mock()
         sim2.finalize("world", separator=SeparatorPolicy.LEADING)
-        mock_keyboard.type.assert_called_with(" world")
-        mock_keyboard.reset_mock()
+        mock_pyperclip.copy.assert_called_with(" world")
+        mock_pyperclip.reset_mock()
         sim2.finalize("\tagain", separator=SeparatorPolicy.LEADING)
-        mock_keyboard.type.assert_called_with("\tagain")
-        mock_keyboard.reset_mock()
+        mock_pyperclip.copy.assert_called_with("\tagain")
+        mock_pyperclip.reset_mock()
         sim2.finalize("test\n", separator=SeparatorPolicy.LEADING)
-        mock_keyboard.reset_mock()
+        mock_pyperclip.reset_mock()
         sim2.finalize("me", separator=SeparatorPolicy.LEADING)
-        mock_keyboard.type.assert_called_with("me")
-        mock_keyboard.reset_mock()
+        mock_pyperclip.copy.assert_called_with("me")
+        mock_pyperclip.reset_mock()
         sim2.finalize(" world", separator=SeparatorPolicy.LEADING)
-        mock_keyboard.type.assert_called_with(" world")
-        mock_keyboard.reset_mock()
+        mock_pyperclip.copy.assert_called_with(" world")
+        mock_pyperclip.reset_mock()
 
         # Never: pure passthrough.
         simulator.finalize("raw", separator=SeparatorPolicy.NEVER)
-        mock_keyboard.type.assert_called_with("raw")
-        mock_keyboard.reset_mock()
+        mock_pyperclip.copy.assert_called_with("raw")
+        mock_pyperclip.reset_mock()
 
         # Mode-switch safety: a trailing Final, then switch to leading —
         # no double space, because last_final_char is " ".
         simulator.finalize("switched", separator=SeparatorPolicy.TRAILING)
-        mock_keyboard.reset_mock()
+        mock_pyperclip.reset_mock()
         simulator.finalize("after", separator=SeparatorPolicy.LEADING)
-        mock_keyboard.type.assert_called_with("after")
-        mock_keyboard.reset_mock()
+        mock_pyperclip.copy.assert_called_with("after")
+        mock_pyperclip.reset_mock()
 
         # Empty text: nothing typed, no separator.
         simulator.finalize("")
-        mock_keyboard.type.assert_not_called()
+        mock_pyperclip.copy.assert_not_called()
 
-    def test_finalize_clears_ghost_before_typing(self, simulator, mock_keyboard):
+    def test_finalize_clears_ghost_before_typing(
+        self, simulator, mock_keyboard, mock_pyperclip
+    ):
         """Should backspace ghost text before typing final."""
         simulator.update_ghost("ghost")
         mock_keyboard.reset_mock()
 
         simulator.finalize("final")
 
-        assert mock_keyboard.press.call_count == 5
-        mock_keyboard.type.assert_called_with("final ")
+        assert len(_backspace_calls(mock_keyboard)) == 5
+        mock_pyperclip.copy.assert_called_with("final ")
 
 
 class TestEdgeCases:
@@ -270,9 +276,9 @@ class TestEdgeCases:
 class TestInputSimulatorCore:
     """Core InputSimulator functionality tests."""
 
-    def test_type_text(self, simulator, mock_keyboard):
+    def test_type_text(self, simulator, mock_keyboard, mock_pyperclip):
         simulator.type_text("hello")
-        mock_keyboard.type.assert_called_once_with("hello")
+        mock_pyperclip.copy.assert_called_once_with("hello")
 
     def test_update_ghost_first_call(self, simulator, mock_keyboard, mock_pyperclip):
         """First ghost call pastes the text via clipboard."""
@@ -290,14 +296,14 @@ class TestInputSimulatorCore:
         mock_pyperclip.copy.assert_called_once_with("testing")
         assert simulator.last_ghost_length == 7
 
-    def test_finalize_basic(self, simulator, mock_keyboard):
-        """Finalize should backspace and type new text."""
+    def test_finalize_basic(self, simulator, mock_keyboard, mock_pyperclip):
+        """Finalize should backspace and paste new text."""
         simulator.update_ghost("ghost")
         mock_keyboard.reset_mock()
 
         simulator.finalize("final")
-        assert mock_keyboard.press.call_count == 5
-        mock_keyboard.type.assert_called_with("final ")
+        assert len(_backspace_calls(mock_keyboard)) == 5
+        mock_pyperclip.copy.assert_called_with("final ")
         assert simulator.last_ghost_length == 0
 
     def test_clear_previous_empty(self, simulator, mock_keyboard):
@@ -305,28 +311,30 @@ class TestInputSimulatorCore:
         simulator._clear_previous()
         mock_keyboard.press.assert_not_called()
 
-    def test_type_text_exception_handling(self, simulator, mock_keyboard):
-        """Should handle keyboard exceptions gracefully."""
-        mock_keyboard.type.side_effect = Exception("Keyboard error")
+    def test_type_text_exception_handling(self, simulator, mock_keyboard, mock_pyperclip):
+        """Should handle clipboard exceptions gracefully."""
+        mock_pyperclip.copy.side_effect = Exception("Clipboard error")
         simulator.type_text("hello")
-        mock_keyboard.type.assert_called_once()
+        mock_pyperclip.copy.assert_called_once()
 
-    def test_finalize_with_whitespace_handling(self, simulator, mock_keyboard):
+    def test_finalize_with_whitespace_handling(
+        self, simulator, mock_keyboard, mock_pyperclip
+    ):
         """Trailing policy: whitespace-ending Final is unchanged; next is verbatim."""
         simulator.finalize("hello")
-        mock_keyboard.type.assert_called_with("hello ")
+        mock_pyperclip.copy.assert_called_with("hello ")
 
-        mock_keyboard.reset_mock()
+        mock_pyperclip.reset_mock()
         simulator.finalize("world")
-        mock_keyboard.type.assert_called_with("world ")
+        mock_pyperclip.copy.assert_called_with("world ")
 
-        mock_keyboard.reset_mock()
+        mock_pyperclip.reset_mock()
         simulator.finalize("test\n")
-        mock_keyboard.type.assert_called_with("test\n")
+        mock_pyperclip.copy.assert_called_with("test\n")
 
-        mock_keyboard.reset_mock()
+        mock_pyperclip.reset_mock()
         simulator.finalize("me")
-        mock_keyboard.type.assert_called_with("me ")
+        mock_pyperclip.copy.assert_called_with("me ")
 
     def test_grapheme_backspacing_emoji(self, simulator, mock_keyboard):
         """Emoji should be handled as single grapheme."""
@@ -345,7 +353,8 @@ class TestInputSimulatorCore:
 
         mock_keyboard.reset_mock()
         simulator.finalize("done")
-        assert mock_keyboard.press.call_count == 1
+        # Should only backspace once for the accented 'e'
+        assert len(_backspace_calls(mock_keyboard)) == 1
 
 
 @pytest.mark.slow
@@ -366,7 +375,6 @@ class TestGhostUpdateKeyboardSequence:
             PipelineConfig,
             PerformanceProfile,
             SystemInputConfig,
-            InputStrategy,
         )
         from babelfish_stt.engine import STTEngine
         from babelfish_stt.pipeline import StandardPipeline
@@ -390,7 +398,6 @@ class TestGhostUpdateKeyboardSequence:
             system_input=SystemInputConfig(
                 enabled=True,
                 type_ghost=True,
-                strategy=InputStrategy.DIRECT,
             ),
         )
         engine = STTEngine(config)
@@ -432,7 +439,6 @@ class TestGhostUpdateKeyboardSequence:
             PipelineConfig,
             PerformanceProfile,
             SystemInputConfig,
-            InputStrategy,
         )
         from babelfish_stt.engine import STTEngine
         from babelfish_stt.pipeline import StandardPipeline
@@ -458,7 +464,6 @@ class TestGhostUpdateKeyboardSequence:
             system_input=SystemInputConfig(
                 enabled=True,
                 type_ghost=True,
-                strategy=InputStrategy.DIRECT,
             ),
         )
         engine = STTEngine(config)

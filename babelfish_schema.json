@@ -110,16 +110,6 @@
       "title": "HardwareStatus",
       "type": "object"
     },
-    "InputStrategy": {
-      "enum": [
-        "direct",
-        "clipboard",
-        "native",
-        "hybrid"
-      ],
-      "title": "InputStrategy",
-      "type": "string"
-    },
     "PerformanceProfile": {
       "properties": {
         "ghost_throttle_ms": {
@@ -219,10 +209,6 @@
           "default": false,
           "title": "Type Ghost",
           "type": "boolean"
-        },
-        "strategy": {
-          "$ref": "#/$defs/InputStrategy",
-          "default": "clipboard"
         },
         "separator": {
           "$ref": "#/$defs/SeparatorPolicy",

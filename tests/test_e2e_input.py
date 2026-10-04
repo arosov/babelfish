@@ -27,7 +27,6 @@ def shared_stt_engine():
         PipelineConfig,
         PerformanceProfile,
         SystemInputConfig,
-        InputStrategy,
     )
     from babelfish_stt.engine import STTEngine
 
@@ -47,7 +46,6 @@ def shared_stt_engine():
         system_input=SystemInputConfig(
             enabled=True,
             type_ghost=True,
-            strategy=InputStrategy.DIRECT,
         ),
     )
     engine = STTEngine(config)

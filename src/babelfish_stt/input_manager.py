@@ -7,14 +7,7 @@ import sys
 import difflib
 from rapidfuzz import fuzz
 from pynput.keyboard import Controller, Key
-from babelfish_stt.input_strategies import (
-    InputStrategy,
-    DirectStrategy,
-    ClipboardStrategy,
-    NativeStrategy,
-    HybridStrategy,
-)
-from babelfish_stt.config import InputStrategy as StrategyEnum
+from babelfish_stt.input_strategies import paste_text, send_backspaces
 from babelfish_stt.config import SeparatorPolicy
 
 logger = logging.getLogger(__name__)
@@ -45,13 +38,6 @@ class InputSimulator:
         self._accumulated_text = ""
         self.pre_finalize_text = ""
 
-        self._strategies = {
-            StrategyEnum.DIRECT: DirectStrategy(),
-            StrategyEnum.CLIPBOARD: ClipboardStrategy(),
-            StrategyEnum.NATIVE: NativeStrategy(),
-            StrategyEnum.HYBRID: HybridStrategy(),
-        }
-        self._direct = DirectStrategy()
         self._last_raw_ghost = ""
         self._clean_regex = re.compile(r"[^a-zA-Z0-9]")
         self._after_finalize = False
@@ -65,24 +51,14 @@ class InputSimulator:
         """Returns the accumulated text from all ghost updates."""
         return self._accumulated_text
 
-    def type_text(self, text: str, strategy: StrategyEnum = StrategyEnum.DIRECT):
-        """Types the given text using the selected strategy."""
+    def type_text(self, text: str):
+        """Injects the given text via the clipboard paste (ADR 0009)."""
         if not text:
             return
         try:
-            impl = self._strategies.get(strategy, self._direct)
-            impl.type(text, self.keyboard)
+            paste_text(text, self.keyboard)
         except Exception as e:
-            logger.error(f"Failed to type text with strategy {strategy}: {e}")
-
-    def type_text_clipboard(self, text: str):
-        """Types text using clipboard strategy (for ghost updates)."""
-        if not text:
-            return
-        try:
-            self._strategies[StrategyEnum.CLIPBOARD].type(text, self.keyboard)
-        except Exception as e:
-            logger.error(f"Failed to type text via clipboard: {e}")
+            logger.error(f"Failed to paste text: {e}")
 
     def update_ghost(self, ghost_text: str):
         """
@@ -132,13 +108,11 @@ class InputSimulator:
         if new_words == self.words and self.graphemes:
             return
 
-        # 5. For ghost updates, use clipboard for reliability
-        # Clear all displayed text and paste the full new ghost
+        # 5. Clear all displayed text and paste the full new ghost
         if self.displayed_graphemes:
             total_to_clear = len(self.displayed_graphemes)
             self._send_backspaces(
                 total_to_clear,
-                strategy=StrategyEnum.DIRECT,
                 update_accumulated=True,
             )
 
@@ -146,7 +120,7 @@ class InputSimulator:
         full_ghost = " ".join(new_words)
         new_graphemes = list(grapheme.graphemes(full_ghost)) if full_ghost else []
         if full_ghost:
-            self.type_text_clipboard(full_ghost)
+            self.type_text(full_ghost)
             self._accumulated_text = full_ghost
 
         # 6. Update State
@@ -236,7 +210,6 @@ class InputSimulator:
     def finalize(
         self,
         text: str,
-        strategy: StrategyEnum = StrategyEnum.DIRECT,
         separator: SeparatorPolicy = SeparatorPolicy.TRAILING,
     ):
         """Finalizes the transcription by clearing any ghost text."""
@@ -261,9 +234,7 @@ class InputSimulator:
                     f"Will type final text without clearing."
                 )
             else:
-                # We use the configured strategy for finalization backspacing
-                # to be consistent with the configured injection method
-                self._send_backspaces(total_to_clear, strategy=strategy)
+                self._send_backspaces(total_to_clear)
 
         self.words = []
         self.graphemes = []
@@ -287,7 +258,7 @@ class InputSimulator:
                 ):
                     text = " " + text
 
-            self.type_text(text, strategy)
+            self.type_text(text)
             self.last_final_char = text[-1]
 
         # Mark that finalize completed - next ghost update should start fresh
@@ -314,15 +285,13 @@ class InputSimulator:
     def _send_backspaces(
         self,
         count: int,
-        strategy: StrategyEnum = StrategyEnum.DIRECT,
         update_accumulated: bool = False,
     ):
-        """Sends N backspaces using the selected strategy."""
+        """Sends N backspaces via the pynput backspace loop."""
         if count <= 0:
             return
         try:
-            impl = self._strategies.get(strategy, self._direct)
-            impl.backspace(count, self.keyboard)
+            send_backspaces(count, self.keyboard)
 
             # Update accumulated text tracking
             if update_accumulated and self._accumulated_text:
@@ -335,4 +304,4 @@ class InputSimulator:
                     else ""
                 )
         except Exception as e:
-            logger.error(f"Failed to send backspaces with strategy {strategy}: {e}")
+            logger.error(f"Failed to send backspaces: {e}")

@@ -1,10 +1,8 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from babelfish_stt.input_strategies import (
-    DirectStrategy,
-    ClipboardStrategy,
-    HybridStrategy,
-)
+from pynput.keyboard import Key
+
+from babelfish_stt.input_strategies import paste_text, send_backspaces
 
 
 @pytest.fixture
@@ -12,33 +10,31 @@ def mock_keyboard():
     return MagicMock()
 
 
-def test_direct_strategy(mock_keyboard):
-    strategy = DirectStrategy()
-    strategy.type("hello", mock_keyboard)
-    mock_keyboard.type.assert_called_once_with("hello")
-
-
 @patch("pyperclip.copy")
-def test_clipboard_strategy(mock_copy, mock_keyboard):
-    strategy = ClipboardStrategy()
-    # Mock platform to non-mac
+def test_paste_text(mock_copy, mock_keyboard):
     with patch("sys.platform", "linux"):
-        strategy.type("hello", mock_keyboard)
+        paste_text("hello", mock_keyboard)
         mock_copy.assert_called_once_with("hello")
-        # Check if Ctrl+V was simulated (simplified check)
-        assert mock_keyboard.pressed.called
-
-
-def test_hybrid_strategy_safe(mock_keyboard):
-    strategy = HybridStrategy()
-    with patch.object(DirectStrategy, "type") as mock_direct:
-        strategy.type("safe text", mock_keyboard)
-        mock_direct.assert_called_once_with("safe text", mock_keyboard)
+        # Simulated Ctrl+V chord
+        mock_keyboard.pressed.assert_called_once_with(Key.ctrl)
+    assert mock_keyboard.press.call_count == 1
+    assert mock_keyboard.release.call_count == 1
 
 
 @patch("pyperclip.copy")
-def test_hybrid_strategy_unsafe(mock_copy, mock_keyboard):
-    strategy = HybridStrategy()
-    # Unsafe text (accents)
-    strategy.type("café", mock_keyboard)
-    mock_copy.assert_called_once_with("café")
+def test_paste_text_empty_noop(mock_copy, mock_keyboard):
+    paste_text("", mock_keyboard)
+    mock_copy.assert_not_called()
+    mock_keyboard.pressed.assert_not_called()
+
+
+def test_send_backspaces(mock_keyboard):
+    send_backspaces(3, mock_keyboard)
+    assert mock_keyboard.press.call_count == 3
+    assert mock_keyboard.release.call_count == 3
+    assert mock_keyboard.press.call_args_list[0].args[0] == Key.backspace
+
+
+def test_send_backspaces_zero_noop(mock_keyboard):
+    send_backspaces(0, mock_keyboard)
+    mock_keyboard.press.assert_not_called()

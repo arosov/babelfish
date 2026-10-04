@@ -31,7 +31,6 @@ from babelfish_stt.config import (
     BabelfishConfig,
     PipelineConfig,
     SystemInputConfig,
-    InputStrategy,
     HardwareConfig,
     PerformanceProfile,
 )
@@ -320,7 +319,6 @@ class AudioPipelineFixture:
             system_input=SystemInputConfig(
                 enabled=True,
                 type_ghost=True,
-                strategy=InputStrategy.DIRECT,
             ),
         )
 

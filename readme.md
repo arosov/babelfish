@@ -38,9 +38,9 @@ Nothing is ever typed into other apps.
 
 ### `--type`
 
-Ghost text is typed live into the focused application (via clipboard/keyboard
-simulation), removed wholesale, and replaced by Final text when the Utterance
-ends — the same behavior VogonPoet drives. Composes with `--server` and
+Ghost text is typed live into the focused application (via clipboard paste),
+removed wholesale, and replaced by Final text when the Utterance ends — the same
+behavior VogonPoet drives. Composes with `--server` and
 wake-words. This is an in-memory override, never written to the config file.
 
 ### `--server`
@@ -78,7 +78,6 @@ settings hot-reload over the WebSocket without a restart.
   "system_input": {
     "enabled": true,
     "type_ghost": true,
-    "strategy": "clipboard",
     "separator": "trailing"
   }
 }
