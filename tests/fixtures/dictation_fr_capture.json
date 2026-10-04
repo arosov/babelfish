@@ -1,9 +1,9 @@
 {
   "header": {
     "fixture": "dictation_fr.wav",
-    "tier": "ultra",
-    "ghost_window_s": 3.0,
-    "ghost_throttle_ms": 100,
+    "tier": "high",
+    "ghost_window_s": 2.5,
+    "ghost_throttle_ms": 150,
     "ghost_padding_s": 1.0,
     "min_padding_s": 2.0,
     "device": "cuda:0"
@@ -11,77 +11,57 @@
   "events": [
     {
       "type": "reset",
-      "ts": 1791118653.0016952
+      "ts": 1791120220.6323931
     },
     {
       "type": "ghost",
-      "ghost": "La mère.",
+      "ghost": "La média.",
       "window": [
         0,
-        7168
+        7680
       ],
-      "ts": 1791118654.2825124,
-      "duration_ms": 28.04820006713271
-    },
-    {
-      "type": "ghost",
-      "ghost": "La médias.",
-      "window": [
-        0,
-        9216
-      ],
-      "ts": 1791118654.4106452,
-      "duration_ms": 27.66770008020103
+      "ts": 1791120221.977173,
+      "duration_ms": 35.65019997768104
     },
     {
       "type": "ghost",
       "ghost": "La médiathèque.",
       "window": [
         0,
-        13312
+        12800
       ],
-      "ts": 1791118654.6664724,
-      "duration_ms": 28.745099902153015
-    },
-    {
-      "type": "ghost",
-      "ghost": "La médiathèque centrale.",
-      "window": [
-        0,
-        17408
-      ],
-      "ts": 1791118655.0187926,
-      "duration_ms": 114.90749986842275
+      "ts": 1791120222.2975135,
+      "duration_ms": 42.34020016156137
     },
     {
       "type": "ghost",
       "ghost": "La médiathèque centre.",
       "window": [
         0,
-        19456
+        17920
       ],
-      "ts": 1791118655.146569,
-      "duration_ms": 117.97130014747381
+      "ts": 1791120222.7133257,
+      "duration_ms": 133.0605000257492
     },
     {
       "type": "ghost",
-      "ghost": "La médiathèque centre ville est une femme.",
+      "ghost": "La médiathèque centre ville.",
       "window": [
         0,
-        21504
+        20480
       ],
-      "ts": 1791118655.274488,
-      "duration_ms": 119.14899991825223
+      "ts": 1791120222.8731334,
+      "duration_ms": 136.11880014650524
     },
     {
       "type": "ghost",
-      "ghost": "La médiathèque centre ville est un peu plus.",
+      "ghost": "La médiathèque centre ville est un peu plus de temps.",
       "window": [
         0,
-        23552
+        23040
       ],
-      "ts": 1791118655.4026954,
-      "duration_ms": 126.3316001277417
+      "ts": 1791120223.0333412,
+      "duration_ms": 151.54050011187792
     },
     {
       "type": "ghost",
@@ -90,917 +70,757 @@
         0,
         25600
       ],
-      "ts": 1791118655.5305045,
-      "duration_ms": 124.90050005726516
+      "ts": 1791120223.1934526,
+      "duration_ms": 148.71899993158877
     },
     {
       "type": "ghost",
-      "ghost": "La médiathèque centre-ville est installée.",
+      "ghost": "La médiathèque centre ville est installée.",
       "window": [
         0,
-        27648
+        28160
       ],
-      "ts": 1791118655.6909666,
-      "duration_ms": 128.89839988201857
+      "ts": 1791120223.3536518,
+      "duration_ms": 155.88170010596514
     },
     {
       "type": "ghost",
-      "ghost": "La médiathèque centre-ville est installée depuis la première.",
+      "ghost": "La médiathèque centre ville est installée depuis.",
       "window": [
         0,
-        30208
+        30720
       ],
-      "ts": 1791118655.8510318,
-      "duration_ms": 133.69500008411705
+      "ts": 1791120223.5452287,
+      "duration_ms": 162.633600179106
     },
     {
       "type": "ghost",
-      "ghost": "La médiathèque Centre-ville est installée depuis 1910.",
+      "ghost": "La médiathèque Centre-ville est installée depuis dix mille.",
       "window": [
         0,
-        32768
+        33792
       ],
-      "ts": 1791118656.011169,
-      "duration_ms": 136.73379993997514
+      "ts": 1791120223.7054498,
+      "duration_ms": 158.06239983066916
     },
     {
       "type": "ghost",
-      "ghost": "La médiathèque centre-ville est installée depuis dix mille",
+      "ghost": "La médiathèque centre-ville est installée depuis dix.",
       "window": [
         0,
-        35328
+        36352
       ],
-      "ts": 1791118656.1704562,
-      "duration_ms": 135.7829999178648
+      "ts": 1791120223.897552,
+      "duration_ms": 166.9805001001805
     },
     {
       "type": "ghost",
-      "ghost": "La médiathèque Centre-ville est installée depuis dix-neuf cents.",
+      "ghost": "La médiathèque Centre-ville est installée depuis mille neuf cents.",
       "window": [
         0,
-        37888
+        39424
       ],
-      "ts": 1791118656.3309116,
-      "duration_ms": 140.8246997743845
+      "ts": 1791120224.0891917,
+      "duration_ms": 172.8191999718547
     },
     {
       "type": "ghost",
-      "ghost": "La médiathèque Centre-ville est installée depuis mille neuf cent vingt.",
+      "ghost": "La médiathèque centre-ville est installée depuis 1925.",
       "window": [
-        0,
-        40448
+        2048,
+        42496
       ],
-      "ts": 1791118656.4910612,
-      "duration_ms": 138.04510002955794
+      "ts": 1791120224.282002,
+      "duration_ms": 163.10660005547106
     },
     {
       "type": "ghost",
-      "ghost": "La médiathèque Centre-ville est installée depuis 1927.",
+      "ghost": "La médiathèque centre-ville est installée depuis 1925.",
       "window": [
-        0,
-        43008
-      ],
-      "ts": 1791118656.650591,
-      "duration_ms": 140.2605001349002
-    },
-    {
-      "type": "ghost",
-      "ghost": "La médiathèque centre-ville est installée depuis mille-neuf cent vingt-cinq.",
-      "window": [
-        0,
+        5120,
         45568
       ],
-      "ts": 1791118656.8109193,
-      "duration_ms": 140.31509985215962
+      "ts": 1791120224.3456202,
+      "duration_ms": 45.64870009198785
     },
     {
       "type": "ghost",
-      "ghost": "La médiathèque Centre-ville est installée depuis mille neuf cent vingt-cinq dans le monde.",
+      "ghost": "Mediathèque Centre-ville est installé depuis 1925 dans le",
       "window": [
-        0,
+        7680,
         48128
       ],
-      "ts": 1791118656.970491,
-      "duration_ms": 148.24530016630888
+      "ts": 1791120224.5052762,
+      "duration_ms": 53.84269985370338
     },
     {
       "type": "ghost",
-      "ghost": "La médiathèque Centre-ville est installée depuis 1925 dans les locaux.",
+      "ghost": "Centre-ville est installée depuis 1925 dans les locaux.",
       "window": [
-        2560,
+        10240,
         50688
       ],
-      "ts": 1791118657.0345156,
-      "duration_ms": 44.01539987884462
+      "ts": 1791120224.6652672,
+      "duration_ms": 54.23160013742745
     },
     {
       "type": "ghost",
-      "ghost": "La médiathèque centre-ville est installée depuis 1925 dans les locaux.",
-      "window": [
-        4608,
-        52736
-      ],
-      "ts": 1791118657.1623511,
-      "duration_ms": 39.99479999765754
-    },
-    {
-      "type": "ghost",
-      "ghost": "Mediathèque Centre-ville est installée depuis 1925 dans les locaux du monde.",
-      "window": [
-        6656,
-        54784
-      ],
-      "ts": 1791118657.2903702,
-      "duration_ms": 44.80120004154742
-    },
-    {
-      "type": "ghost",
-      "ghost": "Diathek Centre-Ville est installée depuis 1925 dans les locaux du Nord-Chill.",
-      "window": [
-        8704,
-        56832
-      ],
-      "ts": 1791118657.4189155,
-      "duration_ms": 48.27839997597039
-    },
-    {
-      "type": "ghost",
-      "ghost": "Centre-ville est installée depuis 1925 dans les locaux d'ancien...",
-      "window": [
-        10752,
-        58880
-      ],
-      "ts": 1791118657.5464609,
-      "duration_ms": 44.69450004398823
-    },
-    {
-      "type": "ghost",
-      "ghost": "Centre-ville est installé depuis 1925 dans les locaux d'une ancienne économique.",
+      "ghost": "Centre-ville est installé depuis 1925 dans les locaux",
       "window": [
         12800,
+        53248
+      ],
+      "ts": 1791120224.8252788,
+      "duration_ms": 48.088799929246306
+    },
+    {
+      "type": "ghost",
+      "ghost": "Centreville est installée depuis 1925 dans les locaux du Nord.",
+      "window": [
+        15360,
+        55808
+      ],
+      "ts": 1791120224.9860077,
+      "duration_ms": 50.705199828371406
+    },
+    {
+      "type": "ghost",
+      "ghost": "Est installée depuis 1925 dans les locaux du ancien.",
+      "window": [
+        17920,
+        58368
+      ],
+      "ts": 1791120225.1455529,
+      "duration_ms": 51.78379989229143
+    },
+    {
+      "type": "ghost",
+      "ghost": "est installée depuis 1925 dans les locaux d'une ancienne économie.",
+      "window": [
+        20480,
         60928
       ],
-      "ts": 1791118657.6744218,
-      "duration_ms": 63.09560011141002
+      "ts": 1791120225.3053434,
+      "duration_ms": 56.99989991262555
     },
     {
       "type": "ghost",
-      "ghost": "est installée depuis 1925 dans les locaux d'une ancienne école.",
-      "window": [
-        14848,
-        62976
-      ],
-      "ts": 1791118657.802395,
-      "duration_ms": 42.4340998288244
-    },
-    {
-      "type": "ghost",
-      "ghost": "Notre ville est installée depuis 1925 dans les locaux d'une ancienne école.",
-      "window": [
-        16896,
-        65024
-      ],
-      "ts": 1791118657.9308767,
-      "duration_ms": 43.16250002011657
-    },
-    {
-      "type": "ghost",
-      "ghost": "est installé depuis 1925 dans les locaux d'une ancienne école de",
-      "window": [
-        18944,
-        67072
-      ],
-      "ts": 1791118658.0585735,
-      "duration_ms": 41.722800116986036
-    },
-    {
-      "type": "ghost",
-      "ghost": "installé depuis 1925 dans les locaux d'une ancienne école de prêt.",
-      "window": [
-        20992,
-        69120
-      ],
-      "ts": 1791118658.18686,
-      "duration_ms": 46.21449997648597
-    },
-    {
-      "type": "ghost",
-      "ghost": "installé depuis 1925 dans les locaux d'une ancienne école de pré-aprés.",
+      "ghost": "installé depuis 1925 dans les locaux d'une ancienne école.",
       "window": [
         23040,
+        63488
+      ],
+      "ts": 1791120225.4657774,
+      "duration_ms": 50.365200033411384
+    },
+    {
+      "type": "ghost",
+      "ghost": "depuis 1925 dans les locaux d'une ancienne école de",
+      "window": [
+        25600,
+        66048
+      ],
+      "ts": 1791120225.6255138,
+      "duration_ms": 56.50980002246797
+    },
+    {
+      "type": "ghost",
+      "ghost": "depuis 1925 dans les locaux d'une ancienne école de Président.",
+      "window": [
+        28160,
+        68608
+      ],
+      "ts": 1791120225.7853477,
+      "duration_ms": 51.09709990210831
+    },
+    {
+      "type": "ghost",
+      "ghost": "1925 dans les locaux d'une ancienne école de pré-aprés.",
+      "window": [
+        30720,
         71168
       ],
-      "ts": 1791118658.3147206,
-      "duration_ms": 44.528599828481674
+      "ts": 1791120225.9452116,
+      "duration_ms": 51.61549989134073
     },
     {
       "type": "ghost",
-      "ghost": "depuis 1925 dans les locaux d'une ancienne école de pré-apprenti",
-      "window": [
-        25088,
-        73216
-      ],
-      "ts": 1791118658.4428692,
-      "duration_ms": 43.330400018021464
-    },
-    {
-      "type": "ghost",
-      "ghost": "depuis 1925 dans les locaux d'une ancienne école de pré-apprentissage.",
-      "window": [
-        27136,
-        75264
-      ],
-      "ts": 1791118658.5724924,
-      "duration_ms": 42.540499940514565
-    },
-    {
-      "type": "ghost",
-      "ghost": "depuis 1925 dans les locaux d'une ancienne école de pré-apprentissage.",
-      "window": [
-        29184,
-        77312
-      ],
-      "ts": 1791118658.6987014,
-      "duration_ms": 42.06139990128577
-    },
-    {
-      "type": "ghost",
-      "ghost": "1925 dans les locaux d'une ancienne école de préapprentissage.",
-      "window": [
-        31232,
-        79360
-      ],
-      "ts": 1791118658.82672,
-      "duration_ms": 40.53759993985295
-    },
-    {
-      "type": "ghost",
-      "ghost": "dans les locaux d'une ancienne école de préapprentissage.",
+      "ghost": "1925 dans les locaux d'une ancienne école de pré-apprendissement.",
       "window": [
         33280,
+        73728
+      ],
+      "ts": 1791120226.105179,
+      "duration_ms": 50.82700005732477
+    },
+    {
+      "type": "ghost",
+      "ghost": "1925 dans les locaux d'une ancienne école de pré-apprentissage.",
+      "window": [
+        35840,
+        76288
+      ],
+      "ts": 1791120226.2661307,
+      "duration_ms": 52.39710002206266
+    },
+    {
+      "type": "ghost",
+      "ghost": "dans les locaux d'une ancienne école de préapprentissage.",
+      "window": [
+        38400,
+        78848
+      ],
+      "ts": 1791120226.425183,
+      "duration_ms": 47.90039989165962
+    },
+    {
+      "type": "ghost",
+      "ghost": "dans les locaux d'une ancienne école de préapprentissage.",
+      "window": [
+        40960,
         81408
       ],
-      "ts": 1791118658.9544766,
-      "duration_ms": 38.8525000307709
-    },
-    {
-      "type": "ghost",
-      "ghost": "dans les locaux d'une ancienne école de préapprentissage.",
-      "window": [
-        35328,
-        83456
-      ],
-      "ts": 1791118659.082736,
-      "duration_ms": 39.642600109800696
-    },
-    {
-      "type": "ghost",
-      "ghost": "125 dans les locaux d'une ancienne école de préapprentissage.",
-      "window": [
-        37376,
-        85504
-      ],
-      "ts": 1791118659.2106342,
-      "duration_ms": 40.238500107079744
-    },
-    {
-      "type": "ghost",
-      "ghost": "dans les locaux d'une ancienne école de préapprentissage.",
-      "window": [
-        39424,
-        87552
-      ],
-      "ts": 1791118659.3385994,
-      "duration_ms": 41.13690019585192
-    },
-    {
-      "type": "ghost",
-      "ghost": "dans les locaux d'une ancienne école de préapprentissage. Celle-ci a",
-      "window": [
-        41472,
-        89600
-      ],
-      "ts": 1791118659.4665189,
-      "duration_ms": 40.380199905484915
+      "ts": 1791120226.5854013,
+      "duration_ms": 48.33360016345978
     },
     {
       "type": "ghost",
       "ghost": "dans les locaux d'une ancienne école de préapprentissage.",
       "window": [
         43520,
-        91648
+        83968
       ],
-      "ts": 1791118659.5947387,
-      "duration_ms": 39.36559986323118
+      "ts": 1791120226.7453947,
+      "duration_ms": 42.89559996686876
     },
     {
       "type": "ghost",
       "ghost": "dans les locaux d'une ancienne école de préapprentissage.",
       "window": [
-        45568,
-        93696
+        46080,
+        86528
       ],
-      "ts": 1791118659.7225223,
-      "duration_ms": 39.59319996647537
+      "ts": 1791120226.905506,
+      "duration_ms": 53.65179991349578
     },
     {
       "type": "ghost",
-      "ghost": "les locaux d'une ancienne école de préapprentissage.",
+      "ghost": "locaux d'une ancienne école de préapprentissage.",
       "window": [
-        47616,
-        95744
+        48640,
+        89088
       ],
-      "ts": 1791118659.8510258,
-      "duration_ms": 39.731299970299006
+      "ts": 1791120227.0654194,
+      "duration_ms": 50.02289987169206
     },
     {
       "type": "ghost",
       "ghost": "d'une ancienne école de préapprentissage.",
       "window": [
-        49664,
-        97792
+        51200,
+        91648
       ],
-      "ts": 1791118659.9784772,
-      "duration_ms": 39.063300006091595
+      "ts": 1791120227.225312,
+      "duration_ms": 49.65109983459115
     },
     {
       "type": "ghost",
-      "ghost": "d'une ancienne école de préapprentissage. Celle-ci avait été construite",
-      "window": [
-        51712,
-        99840
-      ],
-      "ts": 1791118660.1064844,
-      "duration_ms": 42.468799976632
-    },
-    {
-      "type": "ghost",
-      "ghost": "une ancienne école de préapprentissage. Celle-ci avait été construite à la...",
+      "ghost": "d'une ancienne école de préapprentissage.",
       "window": [
         53760,
-        101888
+        94208
       ],
-      "ts": 1791118660.2346196,
-      "duration_ms": 42.5586998462677
+      "ts": 1791120227.38577,
+      "duration_ms": 51.496499916538596
     },
     {
       "type": "ghost",
-      "ghost": "école de pré-apprentissage. Celle-ci avait été construite à la",
+      "ghost": "Celle-ci avait été",
       "window": [
-        55808,
-        103936
+        56320,
+        96768
       ],
-      "ts": 1791118660.3624942,
-      "duration_ms": 42.312399949878454
+      "ts": 1791120227.5453458,
+      "duration_ms": 44.018599903211
     },
     {
       "type": "ghost",
-      "ghost": "école de préapprentissage. Celle-ci avait été construite à la place de",
+      "ghost": "école de préapprentissage celle ci avait été construite",
       "window": [
-        57856,
-        105984
+        58880,
+        99328
       ],
-      "ts": 1791118660.4905226,
-      "duration_ms": 41.784799890592694
-    },
-    {
-      "type": "ghost",
-      "ghost": "école de pré-apprentissage. Celle-ci avait été construite à la place de la",
-      "window": [
-        59904,
-        108032
-      ],
-      "ts": 1791118660.6188176,
-      "duration_ms": 41.22529993765056
+      "ts": 1791120227.7053323,
+      "duration_ms": 46.50799999944866
     },
     {
       "type": "ghost",
       "ghost": "de pré-apprentissage.",
       "window": [
-        61952,
-        110080
+        61440,
+        101888
       ],
-      "ts": 1791118660.7464821,
-      "duration_ms": 33.79809996113181
+      "ts": 1791120227.8653905,
+      "duration_ms": 39.0194000210613
     },
     {
       "type": "ghost",
-      "ghost": "de pré-apprentissage. Celle-ci avait été construite à la place de l'hôtel.",
+      "ghost": "de pré-apprentissage. Celle-ci avait été construite à la plaine.",
       "window": [
         64000,
+        104448
+      ],
+      "ts": 1791120228.025455,
+      "duration_ms": 49.01880002580583
+    },
+    {
+      "type": "ghost",
+      "ghost": "pré-apprentissage. Celle-ci avait été construite à la place de",
+      "window": [
+        66560,
+        107008
+      ],
+      "ts": 1791120228.1853843,
+      "duration_ms": 45.7309999037534
+    },
+    {
+      "type": "ghost",
+      "ghost": "Celle-ci avait été construite à la place de l'automne.",
+      "window": [
+        69120,
+        109568
+      ],
+      "ts": 1791120228.3454876,
+      "duration_ms": 45.64179992303252
+    },
+    {
+      "type": "ghost",
+      "ghost": "Celle-ci avait été construite à la place de l'hôtel.",
+      "window": [
+        71680,
         112128
       ],
-      "ts": 1791118660.8746512,
-      "duration_ms": 41.17530002258718
+      "ts": 1791120228.5054655,
+      "duration_ms": 47.64120001345873
     },
     {
       "type": "ghost",
-      "ghost": "préapprentissage. Celle-ci avait été construite à la place de l'hôtel du",
+      "ghost": "Celle-ci avait été construite à la place de l'hôtel du...",
       "window": [
-        66048,
-        114176
+        74240,
+        114688
       ],
-      "ts": 1791118661.002493,
-      "duration_ms": 41.814700001850724
+      "ts": 1791120228.6653638,
+      "duration_ms": 50.938500091433525
     },
     {
       "type": "ghost",
-      "ghost": "apprentissage. Celle-ci avait été construite à la place de l'hôtel Dieu de...",
+      "ghost": "Celle-ci avait été construite à la place de l'hôtel Dieu de la vie.",
       "window": [
-        68096,
-        116224
+        76800,
+        117248
       ],
-      "ts": 1791118661.130737,
-      "duration_ms": 44.227000093087554
+      "ts": 1791120228.8253472,
+      "duration_ms": 50.44979997910559
     },
     {
       "type": "ghost",
-      "ghost": "Celle-ci avait été construite à la place de l'hôtel Dieu de l'Europe.",
+      "ghost": "Celle-ci avait été construite à la place de l'hôtel Dieu de la vie.",
       "window": [
-        70144,
-        118272
+        79360,
+        119808
       ],
-      "ts": 1791118661.2590795,
-      "duration_ms": 45.5791000276804
+      "ts": 1791120228.9854538,
+      "duration_ms": 54.14810008369386
+    },
+    {
+      "type": "ghost",
+      "ghost": "Celle-ci avait été construite à la place de l'hôtel-dieu de la ville.",
+      "window": [
+        81920,
+        122368
+      ],
+      "ts": 1791120229.1454275,
+      "duration_ms": 46.31850006990135
     },
     {
       "type": "ghost",
       "ghost": "Celle-ci avait été construite à la place de l'hôtel Dieu de la ville.",
       "window": [
-        72192,
-        120320
-      ],
-      "ts": 1791118661.3867936,
-      "duration_ms": 41.014800081029534
-    },
-    {
-      "type": "ghost",
-      "ghost": "Celle-ci avait été construite à la place de l'hôtel-dieu de la ville.",
-      "window": [
-        74240,
-        122368
-      ],
-      "ts": 1791118661.5150309,
-      "duration_ms": 42.827900033444166
-    },
-    {
-      "type": "ghost",
-      "ghost": "Celle-ci avait été construite à la place de l'hôtel-dieu de la ville.",
-      "window": [
-        76288,
-        124416
-      ],
-      "ts": 1791118661.6429029,
-      "duration_ms": 39.597699884325266
-    },
-    {
-      "type": "ghost",
-      "ghost": "Celle-ci avait été construite à la place de l'hôtel-dieu de la ville des",
-      "window": [
-        78336,
-        126464
-      ],
-      "ts": 1791118661.770489,
-      "duration_ms": 42.64869983308017
-    },
-    {
-      "type": "ghost",
-      "ghost": "Celle-ci avait été construite à la place de l'hôtel-dieu de la ville, démolie.",
-      "window": [
-        80384,
-        128512
-      ],
-      "ts": 1791118661.8987734,
-      "duration_ms": 44.3247000221163
-    },
-    {
-      "type": "ghost",
-      "ghost": "Celle-ci avait été construite à la place de l'hôtel-dieu de la ville, démoli en l'université.",
-      "window": [
-        82432,
-        130560
-      ],
-      "ts": 1791118662.0263703,
-      "duration_ms": 48.84330020286143
-    },
-    {
-      "type": "ghost",
-      "ghost": "Celle-ci avait été construite à la place de l'hôtel-Dieu de la ville, démoli en 19.",
-      "window": [
         84480,
+        124928
+      ],
+      "ts": 1791120229.3058274,
+      "duration_ms": 50.45199999585748
+    },
+    {
+      "type": "ghost",
+      "ghost": "avait été construite à la place de l'hôtel dieu de la ville démonstration.",
+      "window": [
+        87040,
+        127488
+      ],
+      "ts": 1791120229.4975371,
+      "duration_ms": 63.79590020515025
+    },
+    {
+      "type": "ghost",
+      "ghost": "avait été construite à la place de l'Hôtel-Dieu de la ville, démoli en",
+      "window": [
+        89600,
+        130048
+      ],
+      "ts": 1791120229.6578596,
+      "duration_ms": 65.07509993389249
+    },
+    {
+      "type": "ghost",
+      "ghost": "a été construite à la place de l'hôtel Dieu de la ville, démoli en",
+      "window": [
+        92160,
         132608
       ],
-      "ts": 1791118662.1548307,
-      "duration_ms": 45.64680019393563
+      "ts": 1791120229.7855291,
+      "duration_ms": 52.93000000528991
     },
     {
       "type": "ghost",
-      "ghost": "avait été construite à la place de l'hôtel Dieu de la ville, démoli en 19...",
-      "window": [
-        86528,
-        134656
-      ],
-      "ts": 1791118662.2825432,
-      "duration_ms": 46.454600058496
-    },
-    {
-      "type": "ghost",
-      "ghost": "avait été construite à la place de l'hôtel-dieu de la ville, démoli en 1930.",
-      "window": [
-        88576,
-        136704
-      ],
-      "ts": 1791118662.4109194,
-      "duration_ms": 47.41789982654154
-    },
-    {
-      "type": "ghost",
-      "ghost": "a été construite à la place de l'hôtel Dieu de la ville, démoli en 1966.",
-      "window": [
-        90624,
-        138752
-      ],
-      "ts": 1791118662.5385761,
-      "duration_ms": 45.26929999701679
-    },
-    {
-      "type": "ghost",
-      "ghost": "construite à la place de l'hôtel-dieu de la ville, démoli en 1905.",
-      "window": [
-        92672,
-        140800
-      ],
-      "ts": 1791118662.666841,
-      "duration_ms": 44.72889984026551
-    },
-    {
-      "type": "ghost",
-      "ghost": "construite à la place de l'Hôtel-Dieu de la ville, démoli en 1905.",
+      "ghost": "Elle est construite à la place de l'Hôtel Dieu de la ville, démoli en",
       "window": [
         94720,
+        135168
+      ],
+      "ts": 1791120229.9455037,
+      "duration_ms": 53.02469991147518
+    },
+    {
+      "type": "ghost",
+      "ghost": "à la place de l'hôtel Dieu de la ville, démoli en 1900.",
+      "window": [
+        97280,
+        137728
+      ],
+      "ts": 1791120230.1053376,
+      "duration_ms": 57.260600151494145
+    },
+    {
+      "type": "ghost",
+      "ghost": "à la place de l'hôtel Dieu de la ville, démoli en 1905.",
+      "window": [
+        99840,
+        140288
+      ],
+      "ts": 1791120230.265678,
+      "duration_ms": 52.176899975165725
+    },
+    {
+      "type": "ghost",
+      "ghost": "place de l'hôtel-Dieu de la ville, démoli en 1905.",
+      "window": [
+        102400,
         142848
       ],
-      "ts": 1791118662.794831,
-      "duration_ms": 44.967500027269125
+      "ts": 1791120230.4253547,
+      "duration_ms": 59.1713001485914
     },
     {
       "type": "ghost",
-      "ghost": "construite à la place de l'hôtel-dieu de la ville, démoli en 1905.",
-      "window": [
-        96768,
-        144896
-      ],
-      "ts": 1791118662.9229684,
-      "duration_ms": 42.40889986976981
-    },
-    {
-      "type": "ghost",
-      "ghost": "à la place de l'hôtel-dieu de la ville, démoli en 1905.",
-      "window": [
-        98816,
-        146944
-      ],
-      "ts": 1791118663.0510843,
-      "duration_ms": 42.4881000071764
-    },
-    {
-      "type": "ghost",
-      "ghost": "la place de l'hôtel-dieu de la ville, démoli en 1905.",
-      "window": [
-        100864,
-        148992
-      ],
-      "ts": 1791118663.178494,
-      "duration_ms": 41.262200102210045
-    },
-    {
-      "type": "ghost",
-      "ghost": "place de l'hôtel Dieu de la ville, démoli en 1905.",
-      "window": [
-        102912,
-        151040
-      ],
-      "ts": 1791118663.3068247,
-      "duration_ms": 40.95900012180209
-    },
-    {
-      "type": "ghost",
-      "ghost": "de l'hôtel-dieu de la ville, démoli en 1905. Aujourd'hui",
+      "ghost": "de l'hôtel-Dieu de la ville, démoli en 1905.",
       "window": [
         104960,
+        145408
+      ],
+      "ts": 1791120230.5866423,
+      "duration_ms": 52.26049991324544
+    },
+    {
+      "type": "ghost",
+      "ghost": "l'hôtel dieu de la ville démoli en 1905.",
+      "window": [
+        107520,
+        147968
+      ],
+      "ts": 1791120230.7452042,
+      "duration_ms": 46.549800084903836
+    },
+    {
+      "type": "ghost",
+      "ghost": "dieu de la ville démoli en 1905.",
+      "window": [
+        110080,
+        150528
+      ],
+      "ts": 1791120230.9053237,
+      "duration_ms": 47.807599883526564
+    },
+    {
+      "type": "ghost",
+      "ghost": "de la ville démoli en 1905.",
+      "window": [
+        112640,
         153088
       ],
-      "ts": 1791118663.4345365,
-      "duration_ms": 43.66440000012517
+      "ts": 1791120231.0653381,
+      "duration_ms": 50.48709991388023
     },
     {
       "type": "ghost",
-      "ghost": "l'hôtel dieu de la ville démoli en 1905. Aujourd'hui,",
-      "window": [
-        107008,
-        155136
-      ],
-      "ts": 1791118663.5624983,
-      "duration_ms": 42.192199965938926
-    },
-    {
-      "type": "ghost",
-      "ghost": "Aujourd'hui dans",
-      "window": [
-        109056,
-        157184
-      ],
-      "ts": 1791118663.690563,
-      "duration_ms": 39.096999913454056
-    },
-    {
-      "type": "ghost",
-      "ghost": "de la ville démoli en 1905. Aujourd'hui, dans l'espace",
-      "window": [
-        113152,
-        161280
-      ],
-      "ts": 1791118663.9465399,
-      "duration_ms": 42.808600002899766
-    },
-    {
-      "type": "ghost",
-      "ghost": "de la ville démolie en 1905. Aujourd'hui, dans l'espace.",
+      "ghost": "de la ville démolie en 1905. Aujourd'hui,",
       "window": [
         115200,
+        155648
+      ],
+      "ts": 1791120231.2256844,
+      "duration_ms": 49.315799959003925
+    },
+    {
+      "type": "ghost",
+      "ghost": "ville démolie en 1905. Aujourd'hui dans les",
+      "window": [
+        117760,
+        158208
+      ],
+      "ts": 1791120231.3858454,
+      "duration_ms": 51.745699951425195
+    },
+    {
+      "type": "ghost",
+      "ghost": "Démoli en 1905. Aujourd'hui dans l'espace",
+      "window": [
+        120320,
+        160768
+      ],
+      "ts": 1791120231.5452366,
+      "duration_ms": 56.82720011100173
+    },
+    {
+      "type": "ghost",
+      "ghost": "démoli en 1905. Aujourd'hui, dans l'espace.",
+      "window": [
+        122880,
         163328
       ],
-      "ts": 1791118664.0744243,
-      "duration_ms": 42.056999867782
+      "ts": 1791120231.7055395,
+      "duration_ms": 49.31179992854595
     },
     {
       "type": "ghost",
-      "ghost": "ville démolie en 1905 aujourd'hui dans l'espace actuel",
-      "window": [
-        117248,
-        165376
-      ],
-      "ts": 1791118664.2026863,
-      "duration_ms": 42.06409980542958
-    },
-    {
-      "type": "ghost",
-      "ghost": "ville démolie en 1905. Aujourd'hui dans l'espace actuel",
-      "window": [
-        119296,
-        167424
-      ],
-      "ts": 1791118664.3307943,
-      "duration_ms": 40.87330005131662
-    },
-    {
-      "type": "ghost",
-      "ghost": "démoli en 1905. Aujourd'hui, dans l'espace actuel,",
-      "window": [
-        121344,
-        169472
-      ],
-      "ts": 1791118664.4585092,
-      "duration_ms": 42.071300093084574
-    },
-    {
-      "type": "ghost",
-      "ghost": "Démoli en 1905. Aujourd'hui, dans l'espace actuel musée.",
-      "window": [
-        123392,
-        171520
-      ],
-      "ts": 1791118664.5864658,
-      "duration_ms": 44.14050001651049
-    },
-    {
-      "type": "ghost",
-      "ghost": "démolé en 1905, aujourd'hui dans l'espace actuel musique.",
+      "ghost": "en 1905. Aujourd'hui, dans l'espace actuel.",
       "window": [
         125440,
+        165888
+      ],
+      "ts": 1791120231.8654177,
+      "duration_ms": 54.32839994318783
+    },
+    {
+      "type": "ghost",
+      "ghost": "en 1905, aujourd'hui dans l'espace actuel.",
+      "window": [
+        128000,
+        168448
+      ],
+      "ts": 1791120232.0252461,
+      "duration_ms": 50.58929999358952
+    },
+    {
+      "type": "ghost",
+      "ghost": "Aujourd'hui dans l'espace actuel",
+      "window": [
+        130560,
+        171008
+      ],
+      "ts": 1791120232.1854048,
+      "duration_ms": 48.26399986632168
+    },
+    {
+      "type": "ghost",
+      "ghost": "1905, aujourd'hui dans l'espace actuel musique.",
+      "window": [
+        133120,
         173568
       ],
-      "ts": 1791118664.7145216,
-      "duration_ms": 41.73980001360178
+      "ts": 1791120232.3456397,
+      "duration_ms": 51.86340003274381
     },
     {
       "type": "ghost",
-      "ghost": "en 1905. Aujourd'hui, dans l'espace actuel, musique ou",
-      "window": [
-        127488,
-        175616
-      ],
-      "ts": 1791118664.8424685,
-      "duration_ms": 43.60960004851222
-    },
-    {
-      "type": "ghost",
-      "ghost": "Aujourd'hui, dans l'espace actuel, musique au soir.",
-      "window": [
-        129536,
-        177664
-      ],
-      "ts": 1791118664.9705255,
-      "duration_ms": 42.16170008294284
-    },
-    {
-      "type": "ghost",
-      "ghost": "Aujourd'hui, dans l'espace actuel, musique au sous-sol.",
-      "window": [
-        131584,
-        179712
-      ],
-      "ts": 1791118665.09893,
-      "duration_ms": 42.24550002254546
-    },
-    {
-      "type": "ghost",
-      "ghost": "Aujourd'hui, dans l'espace actuel, musique au sous-sol.",
-      "window": [
-        133632,
-        181760
-      ],
-      "ts": 1791118665.226721,
-      "duration_ms": 40.722399950027466
-    },
-    {
-      "type": "ghost",
-      "ghost": "Aujourd'hui, dans l'espace actuel musique au sous-sol.",
+      "ghost": "Aujourd'hui, dans l'espace actuel, musique ou...",
       "window": [
         135680,
+        176128
+      ],
+      "ts": 1791120232.5056403,
+      "duration_ms": 52.378199994564056
+    },
+    {
+      "type": "ghost",
+      "ghost": "cinq Aujourd'hui dans l'espace actuel musique au sous-curse.",
+      "window": [
+        138240,
+        178688
+      ],
+      "ts": 1791120232.665401,
+      "duration_ms": 54.448100039735436
+    },
+    {
+      "type": "ghost",
+      "ghost": "Aujourd'hui dans l'espace actuel musique au sous-sol.",
+      "window": [
+        140800,
+        181248
+      ],
+      "ts": 1791120232.8253386,
+      "duration_ms": 55.084999883547425
+    },
+    {
+      "type": "ghost",
+      "ghost": "Aujourd'hui, dans l'espace actuel, musique au sous-sol.",
+      "window": [
+        143360,
         183808
       ],
-      "ts": 1791118665.3546996,
-      "duration_ms": 41.73539998009801
+      "ts": 1791120232.9854436,
+      "duration_ms": 49.36580010689795
     },
     {
       "type": "ghost",
-      "ghost": "Aujourd'hui, dans l'espace actuel musique au sous-sol, on peut faire un peu plus de temps.",
-      "window": [
-        137728,
-        185856
-      ],
-      "ts": 1791118665.4825227,
-      "duration_ms": 46.87650012783706
-    },
-    {
-      "type": "ghost",
-      "ghost": "Aujourd'hui, dans l'espace actuel musique au sous-sol, on peut en",
-      "window": [
-        139776,
-        187904
-      ],
-      "ts": 1791118665.610671,
-      "duration_ms": 41.690200101584196
-    },
-    {
-      "type": "ghost",
-      "ghost": "Donc aujourd'hui, dans l'espace actuel musique au sous-sol, on peut encore...",
-      "window": [
-        141824,
-        189952
-      ],
-      "ts": 1791118665.738662,
-      "duration_ms": 42.31639998033643
-    },
-    {
-      "type": "ghost",
-      "ghost": "Aujourd'hui, dans l'espace actuel musique au sous-sol, on peut encore...",
-      "window": [
-        143872,
-        192000
-      ],
-      "ts": 1791118665.8667083,
-      "duration_ms": 45.59939983300865
-    },
-    {
-      "type": "ghost",
-      "ghost": "Aujourd'hui, dans l'espace actuel musique au sous-sol, on peut encore voir.",
+      "ghost": "Aujourd'hui, dans l'espace actuel musique au sous-sol, on peut...",
       "window": [
         145920,
+        186368
+      ],
+      "ts": 1791120233.145452,
+      "duration_ms": 57.93179990723729
+    },
+    {
+      "type": "ghost",
+      "ghost": "Aujourd'hui, dans l'espace actuel musique au sous-sol, on peut",
+      "window": [
+        148480,
+        188928
+      ],
+      "ts": 1791120233.3055952,
+      "duration_ms": 58.19340003654361
+    },
+    {
+      "type": "ghost",
+      "ghost": "Aujourd'hui, dans l'espace actuel musique au sous-sol, on peut encore",
+      "window": [
+        151040,
+        191488
+      ],
+      "ts": 1791120233.4974205,
+      "duration_ms": 65.12390007264912
+    },
+    {
+      "type": "ghost",
+      "ghost": "dans l'espace actuel musique au sous-sol on peut encore voir",
+      "window": [
+        153600,
         194048
       ],
-      "ts": 1791118665.9945345,
-      "duration_ms": 53.98490000516176
+      "ts": 1791120233.625723,
+      "duration_ms": 57.9411000944674
     },
     {
       "type": "ghost",
-      "ghost": "Aujourd'hui, dans l'espace actuel musique au sous-sol, on peut encore voir les",
-      "window": [
-        147968,
-        196096
-      ],
-      "ts": 1791118666.123098,
-      "duration_ms": 45.08349997922778
-    },
-    {
-      "type": "ghost",
-      "ghost": "Aujourd'hui, dans l'espace actuel musique au sous-sol, on peut encore voir les cas.",
-      "window": [
-        150016,
-        198144
-      ],
-      "ts": 1791118666.250522,
-      "duration_ms": 44.10320008173585
-    },
-    {
-      "type": "ghost",
-      "ghost": "dans l'espace actuel musique au sous-sol on peut encore voir les caveaux",
-      "window": [
-        152064,
-        200192
-      ],
-      "ts": 1791118666.3787858,
-      "duration_ms": 44.89140002988279
-    },
-    {
-      "type": "ghost",
-      "ghost": "dans l'espace actuel musique au sous-sol on peut encore voir les cas vous",
-      "window": [
-        154112,
-        202240
-      ],
-      "ts": 1791118666.5065148,
-      "duration_ms": 41.88740020617843
-    },
-    {
-      "type": "ghost",
-      "ghost": "Dans l'espace actuel musique au sous-sol, on peut encore voir les cavoutes.",
+      "ghost": "Dans l'espace actuel musique au sous-sol, on peut encore voir les",
       "window": [
         156160,
+        196608
+      ],
+      "ts": 1791120233.7856197,
+      "duration_ms": 62.22439999692142
+    },
+    {
+      "type": "ghost",
+      "ghost": "On peut encore voir les cas.",
+      "window": [
+        158720,
+        199168
+      ],
+      "ts": 1791120233.9457326,
+      "duration_ms": 50.27540004812181
+    },
+    {
+      "type": "ghost",
+      "ghost": "actuelle musique au sous-sol on peut encore voir les caveaux",
+      "window": [
+        161280,
+        201728
+      ],
+      "ts": 1791120234.1056066,
+      "duration_ms": 51.66819994337857
+    },
+    {
+      "type": "ghost",
+      "ghost": "Actuelle musique au sous-sol, on peut encore voir les cavoutés.",
+      "window": [
+        163840,
         204288
       ],
-      "ts": 1791118666.6346817,
-      "duration_ms": 42.74249984882772
+      "ts": 1791120234.2656605,
+      "duration_ms": 55.87659985758364
     },
     {
       "type": "ghost",
-      "ghost": "On peut encore voir les caves voûtées",
-      "window": [
-        158208,
-        206336
-      ],
-      "ts": 1791118666.762701,
-      "duration_ms": 36.35359997861087
-    },
-    {
-      "type": "ghost",
-      "ghost": "actuelle musique au sous-sol on peut encore voir les caves voûtés de l'autre",
-      "window": [
-        160256,
-        208384
-      ],
-      "ts": 1791118666.8905346,
-      "duration_ms": 43.95500011742115
-    },
-    {
-      "type": "ghost",
-      "ghost": "actuelle musique au sous-sol on peut encore voir les caves voûtés de l'hôtel",
-      "window": [
-        162304,
-        210432
-      ],
-      "ts": 1791118667.0188074,
-      "duration_ms": 44.674000004306436
-    },
-    {
-      "type": "ghost",
-      "ghost": "musique au sous-sol, on peut encore voir les caves voûtées de l'hôtel.",
-      "window": [
-        164352,
-        212480
-      ],
-      "ts": 1791118667.1467688,
-      "duration_ms": 45.75189994648099
-    },
-    {
-      "type": "ghost",
-      "ghost": "musique au sous-sol on peut encore voir les caves voûtés de l'hôtel du",
+      "ghost": "musique au sous-sol on peut encore voir les caves voûtées de",
       "window": [
         166400,
-        214528
+        206848
       ],
-      "ts": 1791118667.2746215,
-      "duration_ms": 46.06779990717769
+      "ts": 1791120234.4253435,
+      "duration_ms": 57.80999991111457
     },
     {
       "type": "ghost",
-      "ghost": "musique au sous-sol, on peut encore voir les caves voûtés de l'hôtel Dieu.",
+      "ghost": "musique au sous-sol, on peut encore voir les caves voûtés de l'automne.",
       "window": [
-        168448,
-        216576
+        168960,
+        209408
       ],
-      "ts": 1791118667.4029114,
-      "duration_ms": 46.131999930366874
+      "ts": 1791120234.5860715,
+      "duration_ms": 54.47830003686249
+    },
+    {
+      "type": "ghost",
+      "ghost": "au sous-sol on peut encore voir les caves voûtées de l'hôtel",
+      "window": [
+        171520,
+        211968
+      ],
+      "ts": 1791120234.7452905,
+      "duration_ms": 56.857199873775244
+    },
+    {
+      "type": "ghost",
+      "ghost": "Donc au sous-sol, on peut encore voir les caves voûtées de l'hôtel du.",
+      "window": [
+        174080,
+        214528
+      ],
+      "ts": 1791120234.905305,
+      "duration_ms": 58.95590013824403
+    },
+    {
+      "type": "ghost",
+      "ghost": "sous sol on peut encore voir les caves voûtées de l'hôtel dieu.",
+      "window": [
+        176640,
+        217088
+      ],
+      "ts": 1791120235.06561,
+      "duration_ms": 60.60179998166859
     },
     {
       "type": "final",
       "text": "La médiathèque Centre-ville est installée depuis 1925 dans les locaux d'une ancienne école de pré-apprentissage. Celle-ci avait été construite à la place de l'Hôtel-Dieu de la ville, démoli en 1905. Aujourd'hui, dans l'espace actuel musique au sous-sol, on peut encore voir les caves voûtées de l'Hôtel-Dieu.",
-      "ts": 1791118668.0449984
+      "ts": 1791120235.7566836
     },
     {
       "type": "reset",
-      "ts": 1791118668.0449984
+      "ts": 1791120235.7566836
     }
   ]
 }

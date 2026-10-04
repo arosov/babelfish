@@ -247,7 +247,9 @@ class AudioPipelineFixture:
         mock_display.finalize = self._create_finalize_callback(stt_engine)
         mock_display.reset = MagicMock()
 
-        pipeline = StandardPipeline(vad, stt_engine, mock_display)
+        pipeline = StandardPipeline(
+            vad, stt_engine, mock_display, perf=self._default_profile()
+        )
         self._pipeline_ref = pipeline
         pipeline.set_test_mode(False)
         pipeline.reconfigure(config.pipeline)
@@ -304,22 +306,25 @@ class AudioPipelineFixture:
         return {"text": full_text}
 
     def _default_config(self) -> BabelfishConfig:
-        """Create default test configuration matching production GPU (ultra tier)."""
+        """Create default test configuration matching production GPU."""
         return BabelfishConfig(
             hardware=HardwareConfig(device="cpu"),
-            pipeline=PipelineConfig(
-                silence_threshold_ms=400,
-                performance=PerformanceProfile(
-                    ghost_throttle_ms=100,
-                    ghost_window_s=3.0,
-                    min_padding_s=2.0,
-                    tier="ultra",
-                ),
-            ),
+            pipeline=PipelineConfig(silence_threshold_ms=400),
             system_input=SystemInputConfig(
                 enabled=True,
                 type_ghost=True,
             ),
+        )
+
+    def _default_profile(self) -> PerformanceProfile:
+        """The production GPU pacing, passed explicitly to the pipeline:
+        the performance profile is calibration output (in memory only,
+        ADR 0011), never configuration."""
+        return PerformanceProfile(
+            ghost_throttle_ms=100,
+            ghost_window_s=3.0,
+            min_padding_s=2.0,
+            tier="ultra",
         )
 
     def _run_pipeline(
@@ -366,7 +371,9 @@ class AudioPipelineFixture:
         mock_display.finalize = self._create_finalize_callback(mock_engine)
         mock_display.reset = MagicMock()
 
-        pipeline = StandardPipeline(mock_vad, mock_engine, mock_display)
+        pipeline = StandardPipeline(
+            mock_vad, mock_engine, mock_display, perf=self._default_profile()
+        )
         self._pipeline_ref = pipeline
         pipeline.set_test_mode(False)
 
