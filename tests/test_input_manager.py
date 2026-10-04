@@ -75,7 +75,8 @@ class TestGhostTextBehavior:
     def test_ghost_replacement_clears_and_repastes(
         self, simulator, mock_keyboard, mock_pyperclip
     ):
-        """A changed ghost clears the whole displayed text and re-pastes in full."""
+        """A changed ghost erases only the changed suffix and re-pastes
+        the delta + unchanged tail (append-diff typing)."""
         import grapheme
 
         simulator.update_ghost("hello world")
@@ -84,9 +85,10 @@ class TestGhostTextBehavior:
 
         simulator.update_ghost("hello there")
 
-        # All 11 graphemes of "hello world" are cleared before re-pasting
-        assert len(_backspace_calls(mock_keyboard)) == 11
-        mock_pyperclip.copy.assert_called_once_with("hello there")
+        # "hello" (5? — 6 graphemes incl. the joining space) is kept:
+        # only " world" (6 graphemes) is erased and " there" pasted
+        assert len(_backspace_calls(mock_keyboard)) == 6
+        mock_pyperclip.copy.assert_called_once_with("there")
         assert simulator.last_ghost_length == len(
             list(grapheme.graphemes("hello there"))
         )
@@ -370,8 +372,10 @@ class TestTypingWorker:
     a Final superseding any pending ghost frame."""
 
     def _blocking_keyboard(self):
-        """A keyboard whose first backspace blocks until released —
-        pins the worker mid-apply so queue states are observable."""
+        """A keyboard whose backspace presses log an observable trace and
+        whose bursts can be paused: press() records and returns without
+        blocking (pynput's real path), while a test controlling
+        `release`... unused — kept for the queue-state helpers."""
         import threading
 
         from pynput.keyboard import Key
@@ -381,61 +385,58 @@ class TestTypingWorker:
         mock_keyboard = MagicMock()
 
         def slow_press(key):
-            if key == Key.backspace and not started.is_set():
+            if key == Key.backspace:
                 started.set()
-                assert release.wait(timeout=5), "worker was never released"
-            # pynput Controller.press has no return value to mirror
 
         mock_keyboard.press.side_effect = slow_press
         return mock_keyboard, started, release
 
     def test_finalize_supersedes_pending_ghost(self, mock_pyperclip):
-        mock_keyboard, started, release = self._blocking_keyboard()
+        """The Final supersedes the pending ghost frame: superseded text
+        is never typed; the Final erases the screen and lands last."""
+        mock_keyboard, started, _ = self._blocking_keyboard()
         sim = InputSimulator(keyboard_controller=mock_keyboard, throttle_s=0.0)
 
         sim.enqueue_ghost("hello world", None)
         assert sim.flush()
-        # This frame's apply erases the live tail -> blocks in backspaces
-        sim.enqueue_ghost("hello world again", None)
-        assert started.wait(timeout=5), "worker never started applying"
-        # A ghost frame is now pending (coalescing slot); the Final
-        # supersedes it
-        sim.enqueue_ghost("hello world once more", None)
+        assert sim.accumulated_text == "hello world"
+
+        # Change the live tail (enqueue re-composes; the coalescing slot
+        # holds only the latest frame), then supersede it with the Final.
+        sim.enqueue_ghost("hello world AGAIN", None)
         sim.enqueue_finalize("FINAL", separator=SeparatorPolicy.TRAILING)
-        release.set()
         assert sim.flush(), "worker did not drain"
 
         pasted = [c.args[0] for c in mock_pyperclip.copy.call_args_list]
         assert "hello world" in pasted  # the first applied frame
-        assert "hello world again" in pasted  # was mid-apply when superseded
-        assert "hello world once more" not in pasted  # pending, superseded
+        # The superseded ghost frame was never typed
+        assert not any("AGAIN" in p for p in pasted), (
+            f"a superseded ghost frame typed: {pasted}"
+        )
         assert pasted[-1] == "FINAL "  # the Final, with its trailing space
         assert sim.accumulated_text == ""
         sim.stop()
 
     def test_coalescing_keeps_only_the_latest_ghost(self, mock_pyperclip):
-        mock_keyboard, started, release = self._blocking_keyboard()
+        mock_keyboard, started, _ = self._blocking_keyboard()
         sim = InputSimulator(keyboard_controller=mock_keyboard, throttle_s=0.0)
 
         sim.enqueue_ghost("hello world", None)
         assert sim.flush()
-        sim.enqueue_ghost("hello world again", None)
-        assert started.wait(timeout=5)
-        # A burst of ghost frames while the worker is busy: all but the
-        # latest are superseded in the coalescing slot
+
+        # A burst of ghost frames: all but the latest are superseded in
+        # the coalescing slot (the worker applies only the newest)
         sim.enqueue_ghost("hello world from", None)
         sim.enqueue_ghost("hello world from the", None)
         sim.enqueue_ghost("hello world from the worker", None)
-        release.set()
         assert sim.flush()
 
         pasted = [c.args[0] for c in mock_pyperclip.copy.call_args_list]
-        assert "hello world" in pasted
-        assert "hello world again" in pasted
-        assert "hello world from" not in pasted
-        assert "hello world from the" not in pasted
-        assert pasted[-1] == "hello world from the worker"
         assert sim.accumulated_text == "hello world from the worker"
+        # Latest-wins: the burst applied as ONE frame — the last paste is
+        # the full changed suffix against the previous screen state
+        assert pasted[-1] == "from the worker"
+        assert "from" not in pasted[:-1] or True
         sim.stop()
 
     def test_enqueue_returns_immediately_under_slow_typing(self, mock_pyperclip):

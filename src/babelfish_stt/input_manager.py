@@ -356,15 +356,34 @@ class InputSimulator:
             return
 
         if committed_words[: len(typed_c)] == typed_c:
-            # Normal case: the committed prefix only grew. Erase the live
-            # tail, paste the committed delta + live. The per-update cost
-            # is bounded by the window, never the line.
-            bs = self._grapheme_len(self.typed_live)
-            text = " ".join(committed_words[len(typed_c):] + live_words)
+            # Normal case: the committed prefix only grew. Keep the
+            # leading words of the live tail that are character-identical
+            # to what is on screen and rewrite only the changed suffix:
+            # the rewrite is bounded by the words that actually changed,
+            # not the window.
+            live_before = self.typed_live
+            live_words_before = typed_l
+            keep = 0
+            for new_w, old_w in zip(live_words, live_words_before):
+                if new_w == old_w:
+                    keep += 1
+                else:
+                    break
+            # Erase the changed tail (including inter-word spaces); keep
+            # the trailing space after the kept prefix when words remain.
+            erase_words = len(live_words_before) - keep
+            bs = 0
+            if erase_words:
+                suffix = " ".join(live_words[keep:] if keep else live_words_before)
+                bs = self._grapheme_len(
+                    (" " if keep else "") + suffix
+                )
+            text = " ".join(committed_words[len(typed_c):] + live_words[keep:])
+            kept_prefix = " ".join(live_words[:keep])
             logger.info(
                 f"[TYPE] ghost: erase {bs}, paste {len(text)} chars "
-                f"(delta mode; c={len(typed_c)}/{len(committed_words)}, "
-                f"l={len(typed_l)}/{len(live_words)}) {text!r}"
+                f"(delta mode; keep {keep}/{len(live_words_before)} live "
+                f"words; c={len(typed_c)}/{len(committed_words)}) {text!r}"
             )
             self._send_backspaces(bs)
             if text:
