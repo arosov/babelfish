@@ -46,6 +46,19 @@ def _backspace_calls(mock_keyboard):
     ]
 
 
+def test_typing_throttle_default_matches_the_proven_regime():
+    """The worker's apply pacing defaults to the proven-good live regime
+    (~400ms-apart typed updates), not the flood regime: unpaced 50ms
+    applies at the calibrated submit cadence are where editors drop
+    synthesized keystrokes."""
+    from babelfish_stt.input_manager import TYPING_THROTTLE_S
+
+    sim = InputSimulator(keyboard_controller=MagicMock())
+    assert sim.throttle_s == TYPING_THROTTLE_S
+    assert 0.2 <= TYPING_THROTTLE_S <= 0.45
+    sim.stop()
+
+
 class TestGhostTextBehavior:
     """Tests for ghost text update behavior (compose, throttle, re-paste)."""
 

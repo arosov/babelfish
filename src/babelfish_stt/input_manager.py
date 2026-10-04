@@ -21,6 +21,17 @@ _GHOST = "ghost"
 _FINAL = "final"
 _CLEAR = "clear"
 
+# Typed-apply pacing: the minimum interval between applied Ghost frames
+# on the typing worker. The proven-good live regime applied typed
+# updates ~400ms apart (the old ghost-throttle era); unpaced 50ms
+# applies at the calibrated submit cadence (100-150ms) are the flood
+# regime where editors drop synthesized keystrokes — a lost modifier
+# key-up turns every following backspace into word deletion, eating
+# across lines into content before the utterance start. Frames coalesce
+# latest-wins while the worker waits, so calmer pacing costs only
+# latency: every apply is the freshest composed snapshot.
+TYPING_THROTTLE_S = 0.35
+
 
 class InputSimulator:
     """
@@ -30,18 +41,19 @@ class InputSimulator:
     (ADR 0010): the GhostComposer folds each sliding-window transcription
     into one growing line. Typing is append-diff (the rework of ADR 0010):
     the simulator keeps mirrors of what is actually on screen
-    (`typed_committed` / `typed_live`), and each applied frame erases only
-    the live tail and pastes only the committed delta + live — the
-    keystroke cost per update is bounded by the window, never the line.
-    Full erase + repaste happens only when the composer's dedup reached
-    into previously typed committed words (rare, bounded by the audio
-    bound).
+    (`typed_committed` / `typed_live`), and each applied frame erases from
+    the first differing word of the OLD line and pastes the changed
+    suffix — the keystroke cost per update is bounded by what changed,
+    never the line.
 
     The ADR 0009 primitives (clipboard paste + pynput backspaces) are
-    unchanged — only the erase-all pattern is retired.
+    unchanged — only the erase-all pattern is retired. Applied frames are
+    paced at TYPING_THROTTLE_S (the worker's coalescing makes this pure
+    latency, never staleness); a modifier heal after each paste chord
+    clears a stuck Ctrl before it can turn backspaces into word deletes.
     """
 
-    def __init__(self, keyboard_controller=None, throttle_s: float = 0.05):
+    def __init__(self, keyboard_controller=None, throttle_s: float = TYPING_THROTTLE_S):
         # Allow injecting a mock controller for testing
         self.keyboard = keyboard_controller or Controller()
         self.throttle_s = throttle_s
