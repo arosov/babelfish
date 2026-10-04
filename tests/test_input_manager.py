@@ -549,7 +549,7 @@ class TestGhostUpdateKeyboardSequence:
         mock_display = MagicMock(spec=TerminalDisplay)
         ghost_captures = []
 
-        def capture_ghost(text="", refined="", ghost=""):
+        def capture_ghost(text="", refined="", ghost="", **kwargs):
             ghost_captures.append(ghost)
 
         mock_display.update = capture_ghost
@@ -610,7 +610,7 @@ class TestGhostUpdateKeyboardSequence:
 
         ghost_data = []
 
-        def capture_ghost(text="", refined="", ghost=""):
+        def capture_ghost(text="", refined="", ghost="", **kwargs):
             if ghost:
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
                 ghost_data.append({"text": ghost, "timestamp_ms": elapsed_ms})
