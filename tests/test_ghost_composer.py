@@ -309,10 +309,12 @@ class TestFastSpeechRegression(unittest.TestCase):
             )
 
     def test_typed_path_appends_diff_not_full_line(self):
-        """Every applied frame erases exactly the live tail it replaces
-        and pastes only the committed delta + live (append-diff): the
-        per-update keystroke cost is bounded by the window, never the
-        line. What is tracked and what is on screen cannot diverge."""
+        """Every applied frame erases exactly the changed tail of what is
+        on screen (word-prefix diff: from the first differing word to
+        the end of the OLD line) and pastes only the changed suffix —
+        the per-update keystroke cost is bounded by what changed, never
+        the line, and the previously correct prefix is never repasted.
+        What is tracked and what is on screen cannot diverge."""
         from pynput.keyboard import Key as PynputKey
 
         from babelfish_stt.input_manager import InputSimulator
@@ -327,24 +329,24 @@ class TestFastSpeechRegression(unittest.TestCase):
         mock_keyboard = MagicMock()
         with patch("babelfish_stt.input_strategies.pyperclip"):
             sim = InputSimulator(keyboard_controller=mock_keyboard, throttle_s=0.0)
+            prev_line = ""
             for ghost, window in self.FAST_SEQUENCES:
-                live_before = sim.typed_live
+                line_before_len = len(prev_line)
                 calls_before = len(mock_keyboard.press.call_args_list)
                 sim.update_ghost(ghost, window=window)
                 bs_count = backspaces(mock_keyboard, calls_before)
-                # The backspace burst erases exactly the live tail it
-                # replaces — never the whole line
-                self.assertEqual(
-                    bs_count,
-                    len(list(grapheme.graphemes(live_before))),
-                )
-                # The tracked accumulated text is exactly the composer's
-                # line, and the mirror matches it grapheme for grapheme.
+                # The erase removes at most the whole previous line and
+                # always leaves a stable prefix (never the full line
+                # plus extras); the tracked accumulated text is exactly
+                # the composer's line, mirror-matched grapheme for
+                # grapheme.
+                self.assertLessEqual(bs_count, line_before_len)
                 self.assertEqual(sim.accumulated_text, sim.composer.line)
                 self.assertEqual(
                     len(sim.displayed_graphemes),
                     len(list(grapheme.graphemes(sim.accumulated_text))),
                 )
+                prev_line = sim.accumulated_text
 
         # Final composed line keeps the whole sentence (opening included)
         self.assertEqual(

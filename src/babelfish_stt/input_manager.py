@@ -355,81 +355,40 @@ class InputSimulator:
             self._last_applied = key
             return
 
-        if committed_words[: len(typed_c)] == typed_c:
-            # Normal case: the committed prefix only grew. Keep the
-            # leading words of the live tail that are character-identical
-            # to what is on screen and rewrite only the changed suffix:
-            # the rewrite is bounded by the words that actually changed,
-            # not the window. The erase is computed from the OLD screen
-            # words (what is actually there to remove) — computing it
-            # from the new words ate extra characters left of the
-            # utterance start.
-            live_before = self.typed_live
-            live_words_before = typed_l
-            delta_words = committed_words[len(typed_c):]
-            keep = 0
-            if not delta_words:
-                # The keep-optimization only applies when nothing needs
-                # to be inserted before the live tail (a committed delta
-                # would have to land between typed_committed and the
-                # kept words, which are at the end of the line).
-                for new_w, old_w in zip(live_words, live_words_before):
-                    if new_w == old_w:
-                        keep += 1
-                    else:
-                        break
+        # Word-prefix diff: the common word prefix stays on screen (the
+        # committed prefix is trusted by construction, so the match
+        # reaches past it into the unchanged head of the live tail);
+        # everything from the first differing word is erased and
+        # repasted. Backspaces erase from the cursor endward, so the
+        # erase length is computed from the OLD line (what is actually
+        # on screen); computing it from the new words over-erases left
+        # of the utterance start. This one rule covers the committed
+        # delta (insert before the live tail: erase from there),
+        # unchanged-tail appends (erase 0), the keep-optimization
+        # (unchanged live head), and the committed-shrink FULL repaste
+        # (erase only from the first change) — one minimal mechanism,
+        # no per-mode bookkeeping to get wrong.
+        old_words = typed_c + typed_l
+        p = 0
+        while (
+            p < len(old_words)
+            and p < len(target_words)
+            and old_words[p] == target_words[p]
+        ):
+            p += 1
+        prefix_str = " ".join(old_words[:p]) if p else ""
+        old_line = self._mirror_text()
+        bs = self._grapheme_len(old_line) - self._grapheme_len(prefix_str)
+        text = (" " if p else "") + " ".join(target_words[p:])
 
-            if not delta_words and keep == len(live_words_before):
-                # All old live words kept: only new words appended after
-                # them (or nothing). The inter-word separator must be
-                # pasted.
-                bs = 0
-                text = " ".join(live_words[keep:])
-                if text and keep:
-                    text = " " + text
-            elif not delta_words:
-                # Erase exactly the discarded old suffix (with its
-                # leading separator); paste the new changed suffix
-                # without one (the kept prefix re-supplies it).
-                old_suffix = " ".join(live_words_before[keep:])
-                bs = self._grapheme_len(old_suffix)
-                text = " ".join(live_words[keep:]) if keep else " ".join(
-                    live_words
-                )
-                if keep and text:
-                    text = " " + text
-                if not keep:
-                    # keep == 0 erases the whole old live tail; the
-                    # committed/live separator before it stays on screen
-                    # and re-separates the paste.
-                    pass
-            else:
-                # A committed delta must land between typed_committed and
-                # the live tail: erase the whole live tail, paste delta +
-                # live (the old separator space stays on screen).
-                bs = self._grapheme_len(self.typed_live)
-                text = " ".join(delta_words + live_words)
-            kept_note = keep if not delta_words else "n/a"
-            logger.info(
-                f"[TYPE] ghost: erase {bs}, paste {len(text or '')} chars "
-                f"(delta mode; keep {kept_note}/{len(live_words_before)} "
-                f"live words; c={len(typed_c)}/{len(committed_words)}) "
-                f"{(text or '')!r}"
-            )
-            self._send_backspaces(bs)
-            if text:
-                self._paste(text)
-        else:
-            # Rare case: the composer's dedup trim reached into previously
-            # typed committed words — full erase + repaste for this frame
-            # only.
-            bs = self._grapheme_len(self._mirror_text())
-            text = " ".join(target_words)
-            logger.info(
-                f"[TYPE] ghost: erase {bs}, paste {len(text)} chars "
-                f"(FULL repaste; typed_c={typed_c!r}) {text!r}"
-            )
-            self._send_backspaces(bs)
+        logger.info(
+            f"[TYPE] ghost: erase {bs}, paste {len(text)} chars "
+            f"(word-diff; p={p}/{len(old_words)}"
+            f"+{len(target_words)}; c={len(typed_c)}/{len(committed_words)}) "
+            f"{text!r}"
+        )
+        self._send_backspaces(bs)
+        if text.strip():
             self._paste(text)
 
         self._set_mirrors(committed_words, live_words)

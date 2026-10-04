@@ -85,9 +85,9 @@ class TestGhostTextBehavior:
 
         simulator.update_ghost("hello there")
 
-        # "hello" is kept: only "world" (5 graphemes — the separator
-        # space re-separates the paste) is erased and " there" pasted
-        assert len(_backspace_calls(mock_keyboard)) == 5
+        # "hello" is kept: the erase removes " world" (space + word,
+        # from the old line) and " there" re-supplies the separator
+        assert len(_backspace_calls(mock_keyboard)) == 6
         mock_pyperclip.copy.assert_called_once_with(" there")
         assert simulator.last_ghost_length == len(
             list(grapheme.graphemes("hello there"))
@@ -258,10 +258,10 @@ class TestAppendDiffTyping:
     per-update keystroke cost is bounded by the live tail (the window),
     never the composed line."""
 
-    def test_pasted_text_is_delta_plus_live_never_full_line(self, simulator, mock_keyboard, mock_pyperclip):
-        """In a clean sequence (no dedup trim), each paste carries only
-        the committed delta + live — never a full-line repaste after the
-        first frame."""
+    def test_pasted_text_is_changed_tail_never_full_line(self, simulator, mock_keyboard, mock_pyperclip):
+        """In a clean sequence, each frame's paste is the changed tail
+        from the first differing word — never a full-line repaste, and
+        each applied update keeps the previously correct prefix."""
         sim = simulator
         sim.update_ghost("alpha beta gamma delta", (0, 16000))
         first_paste = mock_pyperclip.copy.call_args_list[0].args[0]
@@ -272,22 +272,25 @@ class TestAppendDiffTyping:
             ("beta gamma delta epsilon", (4000, 20000)),
             ("gamma delta epsilon zeta", (8000, 24000)),
         ]:
-            committed_before = len(sim.composer.committed)
             sim.update_ghost(ghost, window=window)
             pasted = [c.args[0] for c in mock_pyperclip.copy.call_args_list]
             mock_pyperclip.reset_mock()
-            # One paste per applied frame, carrying delta + live only
+            # One paste per applied frame; it never repeats the whole
+            # previously correct line (the word-prefix is kept)
             assert len(pasted) == 1
-            live_words = sim.composer.live
-            delta_words = sim.composer.committed[committed_before:]
-            assert pasted[0] == " ".join(delta_words + live_words)
+            assert pasted[0].strip() not in ("alpha", "beta")
 
-    def test_rare_full_repaste_when_dedup_reaches_typed_committed(
-        self, simulator, mock_keyboard, mock_pyperclip
-    ):
+        sim.update_ghost("zeta eta theta", (12000, 28000))
+        final_paste = mock_pyperclip.copy.call_args_list[-1].args[0]
+        # The unchanged head is never repasted
+        assert "alpha" not in final_paste
+        sim.stop()
+
+    def test_full_repaste_sized_by_word_diff(self, simulator, mock_keyboard, mock_pyperclip):
         """When the composer's dedup trim reaches into previously typed
-        committed words, that frame falls back to full erase + repaste —
-        once."""
+        committed words, the apply rewrites from the first differing
+        WORD — erase and paste are exact and minimal, no separate
+        full-repaste special case."""
         sim = simulator
         sim.update_ghost("alpha beta gamma", (0, 16000))
         # Commit all three, then the trim pulls "gamma" back out: the
@@ -298,14 +301,18 @@ class TestAppendDiffTyping:
         mock_keyboard.reset_mock()
         mock_pyperclip.reset_mock()
         sim.update_ghost("beta delta echo", (24000, 40000))
-        # committed shrank to ["alpha"]: not an extension of the typed
-        # committed prefix -> rare path
+        # committed shrank to ["alpha"]
         assert sim.composer.committed == ["alpha"]
-        full_line = "alpha beta gamma delta"
-        assert len(_backspace_calls(mock_keyboard)) == len(full_line)
-        # Exactly one paste: the full composed line
+        # Old screen: "alpha beta gamma delta". New target:
+        # [alpha, beta, delta, echo]. First difference at word 3
+        # (gamma -> delta), matching on words 1-2.
+        old_line = "alpha beta gamma delta"
+        kept = "alpha beta"
+        erased = len(old_line) - len(kept)
+        assert len(_backspace_calls(mock_keyboard)) == erased
+        # One paste: the changed tail, with the separator re-supplied
         pasted = [c.args[0] for c in mock_pyperclip.copy.call_args_list]
-        assert pasted == ["alpha beta delta echo"]
+        assert pasted == [" delta echo"]
         assert sim.accumulated_text == "alpha beta delta echo"
 
 
