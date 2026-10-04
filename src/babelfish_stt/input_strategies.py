@@ -25,20 +25,10 @@ def paste_text(text: str, keyboard: Controller):
         with keyboard.pressed(Key.cmd):
             keyboard.press("v")
             keyboard.release("v")
-        heal_key = Key.cmd
     else:
         with keyboard.pressed(Key.ctrl):
             keyboard.press("v")
             keyboard.release("v")
-        heal_key = Key.ctrl
-
-    # Modifier heal: if the app missed the modifier key-up (a queued
-    # event lost under burst load), every subsequent backspace arrives
-    # as Ctrl+Backspace — Notepad++/Scintilla deletes a whole WORD per
-    # keystroke, eating across lines into content before the utterance
-    # start while the mirror counts characters. A bare modifier tap is
-    # a no-op when the state is clean and clears it when stuck.
-    keyboard.tap(heal_key)
 
 
 def send_backspaces(count: int, keyboard: Controller):

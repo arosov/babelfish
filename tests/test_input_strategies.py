@@ -22,20 +22,10 @@ def test_paste_text(mock_copy, mock_keyboard):
 
 
 @patch("pyperclip.copy")
-def test_paste_heals_a_stuck_modifier(mock_copy, mock_keyboard):
-    """After the chord, a bare modifier tap clears a Ctrl the app may
-    have left logically down (a missed key-up turns every following
-    backspace into Ctrl+Backspace — word deletion)."""
-    paste_text("hello", mock_keyboard)
-    mock_keyboard.tap.assert_called_once_with(Key.ctrl)
-
-
-@patch("pyperclip.copy")
 def test_paste_text_empty_noop(mock_copy, mock_keyboard):
     paste_text("", mock_keyboard)
     mock_copy.assert_not_called()
     mock_keyboard.pressed.assert_not_called()
-    mock_keyboard.tap.assert_not_called()
 
 
 def test_send_backspaces(mock_keyboard):
