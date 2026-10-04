@@ -59,29 +59,18 @@ from babelfish_stt.hotkey_manager import HotkeyManager
 logger = logging.getLogger(__name__)
 
 
-async def calibrate(config_manager, engine, status) -> None:
+async def calibrate(engine, status) -> PerformanceProfile:
     """Startup self-calibration (ADR 0011).
 
-    Runs whenever the configured tier is "auto" — no persisted-tier
-    short-circuit exists to make the first run the last. The computed
-    profile is applied to the shared config in memory only;
-    `ConfigManager.update` (which saves to the file) is never called with
-    it, so a concrete tier in the file is a deliberate manual override
-    that skips calibration, never a record the benchmark wrote.
+    Runs unconditionally on every launch — there is no tier override to
+    skip it and nothing is ever persisted. The computed profile is passed
+    to the pipeline in memory only; pacing is never user-facing
+    configuration.
 
     Survivable failure: on any exception, fall back to the
-    PerformanceProfile() defaults in the loaded config instead of
-    aborting startup — the same fallback posture engine init has for
-    device-load failure.
+    PerformanceProfile() defaults instead of aborting startup — the same
+    fallback posture engine init has for device-load failure.
     """
-    perf = config_manager.config.pipeline.performance
-    if perf.tier != "auto":
-        logger.info(
-            f"⏱️ Tier '{perf.tier}' configured; skipping calibration "
-            f"(manual override)."
-        )
-        return
-
     await status("Calibrating Performance...")
     try:
         perf_data = await asyncio.to_thread(engine.benchmark)
@@ -89,14 +78,11 @@ async def calibrate(config_manager, engine, status) -> None:
         logger.warning(
             f"⚠️ Calibration failed ({e}); keeping default profile."
         )
-        return
+        return PerformanceProfile()
 
-    # In-memory only: mutate the shared config object directly. The pipeline
-    # picks this up when it is registered with the ConfigManager, and the
-    # config file keeps tier="auto" untouched.
     profile = PerformanceProfile(**perf_data)
-    config_manager.config.pipeline.performance = profile
     logger.info(f"✅ Performance calibrated: {profile.tier.upper()}")
+    return profile
 
 
 def run_stt_loop(
@@ -359,9 +345,10 @@ async def run_babelfish(
         await status(f"Loading STT Engine ({device})...")
         engine = await asyncio.to_thread(STTEngine, config=config_manager.config)
 
-        # 5. Hardware Self-Calibration (ADR 0011: always runs in auto tier
-        # mode, applies in memory only)
-        await calibrate(config_manager, engine, status)
+        # 5. Hardware Self-Calibration (ADR 0011: unconditional, in-memory
+        # only) — runs before the pipeline is built so the profile can be
+        # passed in.
+        profile = await calibrate(engine, status)
 
         await status(
             f"Loading WakeWord ({config_manager.config.voice.wakeword or 'None'})..."
@@ -393,16 +380,15 @@ async def run_babelfish(
         if replay_path:
             # The capture display replaces InputDisplay in replay mode:
             # typing into the focused app is forbidden while replaying.
-            perf = config_manager.config.pipeline.performance
             capture = CaptureDisplay(
                 capture_out or str(DEFAULT_CAPTURE_OUT),
                 header={
                     "fixture": Path(replay_path).name,
-                    "tier": perf.tier,
-                    "ghost_window_s": perf.ghost_window_s,
-                    "ghost_throttle_ms": perf.ghost_throttle_ms,
-                    "ghost_padding_s": perf.ghost_padding_s,
-                    "min_padding_s": perf.min_padding_s,
+                    "tier": profile.tier,
+                    "ghost_window_s": profile.ghost_window_s,
+                    "ghost_throttle_ms": profile.ghost_throttle_ms,
+                    "ghost_padding_s": profile.ghost_padding_s,
+                    "min_padding_s": profile.min_padding_s,
                     "device": engine.device_type,
                 },
             )
@@ -410,7 +396,7 @@ async def run_babelfish(
         else:
             displays.append(InputDisplay(config_manager))
         display = MultiDisplay(*displays)
-        pipeline = StandardPipeline(vad, engine, display)
+        pipeline = StandardPipeline(vad, engine, display, perf=profile)
 
         if pipeline.stop_detector:
             config_manager.register(pipeline.stop_detector)

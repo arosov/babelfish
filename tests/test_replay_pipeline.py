@@ -69,9 +69,9 @@ def test_replay_generates_sane_capture(replay_engine, tmp_path):
     engine = replay_engine
 
     # Calibrate exactly like startup does (ADR 0011: unconditional probe,
-    # applied in memory only) so the replay runs at the live tier.
+    # in-memory only) so the replay runs at the live tier, and pass the
+    # profile into the pipeline like main.py does.
     profile = PerformanceProfile(**engine.benchmark())
-    pipeline_config = PipelineConfig(performance=profile)
 
     capture = CaptureDisplay(
         tmp_path / "replay_capture.json",
@@ -87,8 +87,10 @@ def test_replay_generates_sane_capture(replay_engine, tmp_path):
     )
 
     vad = SileroVAD()
-    pipeline = StandardPipeline(vad, engine, MultiDisplay(capture))
-    pipeline.reconfigure(pipeline_config)
+    pipeline = StandardPipeline(
+        vad, engine, MultiDisplay(capture), perf=profile
+    )
+    pipeline.reconfigure(PipelineConfig())
 
     streamer = WavStreamer(FIXTURE_PATH)
     shutdown_event = threading.Event()

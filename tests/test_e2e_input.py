@@ -34,15 +34,7 @@ def shared_stt_engine():
     start_time = time.perf_counter()
     config = BabelfishConfig(
         hardware=HardwareConfig(device="cpu"),
-        pipeline=PipelineConfig(
-            silence_threshold_ms=400,
-            performance=PerformanceProfile(
-                ghost_throttle_ms=100,
-                ghost_window_s=3.0,
-                min_padding_s=2.0,
-                tier="ultra",
-            ),
-        ),
+        pipeline=PipelineConfig(silence_threshold_ms=400),
         system_input=SystemInputConfig(
             enabled=True,
             type_ghost=True,
@@ -58,6 +50,7 @@ def shared_stt_engine():
 def e2e_pipeline(shared_stt_engine):
     """Create a pipeline with real STT engine and mocked display."""
     from unittest.mock import MagicMock
+    from babelfish_stt.config import PerformanceProfile
     from babelfish_stt.display import TerminalDisplay
 
     mock_keyboard = MagicMock()
@@ -69,6 +62,12 @@ def e2e_pipeline(shared_stt_engine):
         vad=SileroVAD(threshold=0.5),
         engine=shared_stt_engine,
         display=mock_display,
+        perf=PerformanceProfile(
+            ghost_throttle_ms=100,
+            ghost_window_s=3.0,
+            min_padding_s=2.0,
+            tier="ultra",
+        ),
     )
 
     pipeline.set_test_mode(False)

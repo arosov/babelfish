@@ -78,15 +78,7 @@ def shared_stt_engine():
     start_time = time.perf_counter()
     config = BabelfishConfig(
         hardware=HardwareConfig(device="cpu"),
-        pipeline=PipelineConfig(
-            silence_threshold_ms=400,
-            performance=PerformanceProfile(
-                ghost_throttle_ms=100,
-                ghost_window_s=3.0,
-                min_padding_s=2.0,
-                tier="ultra",
-            ),
-        ),
+        pipeline=PipelineConfig(silence_threshold_ms=400),
         system_input=SystemInputConfig(
             enabled=True,
             type_ghost=True,

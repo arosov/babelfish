@@ -1,6 +1,7 @@
 import json
 import os
 import pytest
+from unittest.mock import patch
 from babelfish_stt.config import BabelfishConfig, platform_default_device
 from babelfish_stt.config_manager import ConfigManager
 
@@ -65,34 +66,22 @@ def test_config_manager_keeps_concrete_device(tmp_path):
     assert data["hardware"]["device"] == "dml:1"
 
 
-def test_config_manager_migrates_latched_tier_to_auto(tmp_path):
-    """A tier persisted by the old latching benchmark is rewritten to
-    'auto' once (ADR 0011)."""
-    config_file = tmp_path / "config.json"
-    config_file.write_text(
-        json.dumps({"pipeline": {"performance": {"tier": "low_power"}}})
-    )
-
-    manager = ConfigManager(config_path=str(config_file))
-
-    assert manager.config.pipeline.performance.tier == "auto"
-    data = json.loads(config_file.read_text())
-    assert data["pipeline"]["performance"]["tier"] == "auto"
-    assert data["pipeline"]["performance"]["latch_migrated"] is True
-
-
-def test_config_manager_latch_migration_is_one_time(tmp_path):
-    """After the migration, a concrete tier in the file is a deliberate
-    manual override and must not be rewritten again (ADR 0011)."""
+def test_config_manager_strips_stale_performance_keys(tmp_path):
+    """pipeline.performance is no longer configuration (ADR 0011
+    rework): stale pacing/tier keys are stripped from existing files on
+    load and the stripped file is persisted."""
     config_file = tmp_path / "config.json"
     config_file.write_text(
         json.dumps(
             {
                 "pipeline": {
+                    "silence_threshold_ms": 400,
                     "performance": {
+                        "ghost_throttle_ms": 400,
+                        "ghost_window_s": 1.5,
                         "tier": "low_power",
                         "latch_migrated": True,
-                    }
+                    },
                 }
             }
         )
@@ -100,21 +89,32 @@ def test_config_manager_latch_migration_is_one_time(tmp_path):
 
     manager = ConfigManager(config_path=str(config_file))
 
-    assert manager.config.pipeline.performance.tier == "low_power"
+    assert not hasattr(manager.config.pipeline, "performance")
+    assert manager.config.pipeline.silence_threshold_ms == 400
     data = json.loads(config_file.read_text())
-    assert data["pipeline"]["performance"]["tier"] == "low_power"
+    assert "performance" not in data["pipeline"]
 
 
-def test_config_manager_auto_tier_is_untouched(tmp_path):
+def test_config_manager_performance_strip_is_idempotent(tmp_path):
+    """A clean file loads untouched (no spurious saves)."""
     config_file = tmp_path / "config.json"
-    config_file.write_text(
-        json.dumps({"pipeline": {"performance": {"tier": "auto"}}})
-    )
+    config_file.write_text(json.dumps({"pipeline": {"silence_threshold_ms": 500}}))
 
+    with patch(
+        "babelfish_stt.config_manager.ConfigManager.save"
+    ) as mock_save:
+        ConfigManager(config_path=str(config_file))
+        mock_save.assert_not_called()
+
+
+def test_config_manager_save_omits_performance(tmp_path):
+    """The saved config never contains a performance section (the profile
+    is calibration output, in memory only)."""
+    config_file = tmp_path / "config.json"
     manager = ConfigManager(config_path=str(config_file))
-
-    assert manager.config.pipeline.performance.tier == "auto"
-    assert manager.config.pipeline.performance.latch_migrated is False
+    manager.save()
+    data = json.loads(config_file.read_text())
+    assert "performance" not in data.get("pipeline", {})
 
 
 def test_config_manager_save_load(tmp_path):

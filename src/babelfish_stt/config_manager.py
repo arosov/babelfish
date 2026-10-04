@@ -50,7 +50,7 @@ class ConfigManager:
             config_key = getattr(component, "config_key", None)
 
             if config_key:
-                # Handle nested keys like "voice" or "pipeline.performance"
+                # Handle nested keys like "voice" or "pipeline"
                 target_config = self.config
                 for part in config_key.split("."):
                     target_config = getattr(target_config, part)
@@ -105,23 +105,20 @@ class ConfigManager:
             else:
                 migrated = False
 
-            # --- Migration: latched calibration tier -> auto (ADR 0011) ---
-            # The old benchmark persisted its computed tier, so no later
-            # launch could recalibrate. Rewrite it once; afterwards a
-            # concrete tier in the file is a deliberate manual override.
-            performance = data.get("pipeline", {}).get("performance", {})
-            tier = performance.get("tier")
-            if (
-                isinstance(tier, str)
-                and tier != "auto"
-                and not performance.get("latch_migrated", False)
-            ):
+            # --- Migration: pipeline.performance is no longer
+            # configuration (ADR 0011 rework) --- calibration is
+            # unconditional and its profile is in-memory only, so stale
+            # pacing/tier keys (including `latch_migrated`) are stripped
+            # from existing files on load. Idempotent: once the field is
+            # gone from the model there is no latch flag to rewrite.
+            pipeline_data = data.get("pipeline")
+            if isinstance(pipeline_data, dict) and "performance" in pipeline_data:
+                del pipeline_data["performance"]
                 logger.info(
-                    f"Migrating latched tier '{tier}' to 'auto' (ADR 0011)"
+                    "Removed stale pipeline.performance keys "
+                    "(calibration is no longer configuration)"
                 )
-                performance["tier"] = "auto"
-                performance["latch_migrated"] = True
-                data["pipeline"] = {**data.get("pipeline", {}), "performance": performance}
+                data["pipeline"] = pipeline_data
                 migrated = True
 
             config = BabelfishConfig.model_validate(data)

@@ -2,6 +2,69 @@
 
 Status: Accepted
 
+Amended (2026-10-04, the Ghost rework): the shared composer survived its
+first live run, but the run exposed three compounding defects this
+decision's first draft did not anticipate. The amendments are folded into
+the decision below; the superseded reasoning is kept at the bottom.
+
+1. **The span is ground truth, text only refines** (was: text alignment
+   first, proportional fallback). `_commit_count` computed the boundary
+   from the text alignment first and only fell back to audio time — so a
+   coincidental 1–2 word run at the tail/head boundary ("la", "de",
+   "1925") pinned the boundary and mass-committed the whole live tail
+   even though the window had barely moved; the exact-contiguous dupe
+   trim could not clean it up (churned boundaries never match exactly)
+   and the line piled up as ~verbatim duplicates. Now the window span
+   **bounds** every commit: `bound = ceil(plausible_prev × slide /
+   prev_window_dur) + 1` word of boundary-fuzz margin, and the text
+   alignment only chooses a boundary within `[0, bound]`. Solidity
+   scales with the overlap length (`MIN_SOLID_J = 2`, `score ≥
+   ceil(2j/3)`): a single shared function word pins nothing. The trim
+   returned to loose normalized dedup (≥ half of the last-j committed
+   words match the first-j new) — as **dedup within the audio bound**,
+   never fuzzy boundary-guessing: it may not remove more than the bound
+   sanctioned this frame.
+2. **Loop guard.** A Ghost claiming far more words than its window's
+   duration can hold (`MAX_WORDS_PER_SECOND = 8`, fast French) is a
+   degenerate TDT loop (trailing-silence padding on a mature window is
+   the inducer — see ADR 0011's rework and `FIRST_WINDOW_MIN_S`). No
+   text alignment and no dedup derive from it; the audio-truth
+   proportional commit still runs, and its text still displays live. A
+   degenerate previous Ghost's word count is clamped to the window's
+   plausible budget so it cannot inflate the next frame's bound.
+3. **Typed path is append-diff, off the audio thread** (was: erase-all +
+   repaste-full-line, on the audio thread — kept "untouched" in the
+   first draft, and wrong: O(line length) per update floods the target
+   app's message queue once the line actually grows — dropped
+   backspaces, clipboard swaps racing queued pastes, stacked
+   fragments). `InputSimulator` keeps mirrors of what is actually on
+   screen (`typed_committed` / `typed_live`); the normal case erases
+   only the live tail and pastes only the committed delta + live — the
+   per-update keystroke cost is bounded by the window, never the line.
+   The rare case (the dedup reached into previously typed committed
+   words) falls back to full erase + repaste for that frame only. A
+   typing worker owns the mirrors and keystrokes: `InputDisplay.update`
+   / `finalize` enqueue frames and return immediately; ghost frames
+   coalesce latest-wins; a Final supersedes any pending ghost frame;
+   the `(ghost, window)` dedup key applies at apply-time; the throttle
+   is the worker's pacing. Composition stays on the audio thread (the
+   composer advances on every frame, mirroring the terminal display).
+   The ADR 0009 primitives (`paste_text`, `send_backspaces`) are
+   unchanged — only the erase-all pattern is retired.
+
+The regression signal is the replay harness: `--replay` streams a
+committed fixture WAV through the real pipeline in real time and a
+CaptureDisplay freezes every raw Ghost frame (text, window span, wall
+ts, inference duration) plus the performance header to JSON; the fast
+test replays that capture through `GhostComposer` alone and asserts
+composed words ≤ true words × 1.3, no word repeated beyond its true
+count + 1, append-only commits, and a stable line head — it was red on
+the failing state and is green on the fixed one.
+
+---
+
+# Original decision (2026-10-03)
+
 A typed Ghost must append while you speak. Today it sometimes rewrites itself:
 the ghost collapses to the size of the last transcribed window instead of
 growing, and the size gap only becomes visible when the Final replaces it. The
@@ -106,6 +169,11 @@ restarts the dropped-keystroke exposure that ADR 0009 retired Direct to avoid.
 The composite-line erase-all is atomic and its count is provably correct once
 composition is. Keep it as the documented next step if clipboard paste churn
 ever matters.
+
+*(Amendment correction: the rationale above was inverted — it holds only
+while the line stays window-sized. Once the line grows per design, erase-all
+is the O(line) cost and diff-paste is the bounded one. The rework landed
+diff-based typing as the normal case; see the amendment at the top.)*
 
 ## Consequences
 

@@ -1,10 +1,9 @@
 """
-Startup self-calibration tests (ADR 0011): the benchmark always runs in
-auto tier mode, its measurement is median-based with a discarded warm-up,
-the CPU branch runs zero probes, and its result is applied in memory
-only — never persisted. A persisted concrete tier is a manual override
-that skips calibration, and the one-time migration rewrites a latched
-tier to auto.
+Startup self-calibration tests (ADR 0011, reworked): the benchmark runs
+unconditionally on every launch — there is no tier override to skip it —
+its measurement is median-based with a discarded warm-up, the CPU branch
+runs zero probes, and the computed profile is returned in memory only —
+never persisted, never user-facing configuration.
 """
 
 import asyncio
@@ -85,28 +84,22 @@ class TestBenchmarkMeasurement(_EngineMixin):
         self.assertEqual(profile["ghost_padding_s"], 0.0)
 
 
-class TestCalibrateInMemory:
-    """The benchmark result is applied to the shared config in memory
-    only; no calibration path writes pipeline.performance to the file."""
+class TestCalibrateAlwaysRuns:
+    """The benchmark runs unconditionally on every launch; its profile is
+    returned in memory only and no path writes performance to the config
+    file."""
 
     @staticmethod
     async def _async_ok(message: str):
         return None
 
-    def _config_manager(self, tmp_path, performance: dict):
+    def _config_manager(self, tmp_path, pipeline: dict):
         config_file = tmp_path / "config.json"
-        config_file.write_text(
-            json.dumps(
-                {
-                    "hardware": {"device": "cpu"},
-                    "pipeline": {"performance": performance},
-                }
-            )
-        )
+        config_file.write_text(json.dumps({"hardware": {"device": "cpu"}, "pipeline": pipeline}))
         return ConfigManager(config_path=str(config_file))
 
-    def test_auto_tier_calibrates_and_applies_in_memory(self, tmp_path):
-        config_manager = self._config_manager(tmp_path, {"tier": "auto"})
+    def test_calibrate_is_unconditional_and_returns_the_profile(self, tmp_path):
+        config_manager = self._config_manager(tmp_path, {})
         engine = MagicMock()
         engine.benchmark.return_value = {
             "tier": "high",
@@ -119,50 +112,46 @@ class TestCalibrateInMemory:
         with patch.object(ConfigManager, "save") as mock_save:
             from babelfish_stt.main import calibrate
 
-            asyncio.run(
-                calibrate(config_manager, engine, status=self._async_ok)
-            )
+            profile = asyncio.run(calibrate(engine, status=self._async_ok))
 
         engine.benchmark.assert_called_once()
-        applied = config_manager.config.pipeline.performance
-        assert applied.tier == "high"
-        assert applied.ghost_throttle_ms == 150
+        assert profile.tier == "high"
+        assert profile.ghost_throttle_ms == 150
         # The file was never written with calibration output
         mock_save.assert_not_called()
         data = json.loads(config_manager.config_path.read_text())
-        assert data["pipeline"]["performance"]["tier"] == "auto"
+        assert "performance" not in data.get("pipeline", {})
 
-    def test_concrete_persisted_tier_skips_calibration(self, tmp_path):
-        """A concrete tier on a migrated file is a deliberate manual
-        override: calibration is skipped, benchmark never runs."""
+    def test_no_tier_override_skips_calibration(self, tmp_path):
+        """The tier-override concept is gone: whatever a stale file used
+        to carry, calibration always runs."""
         config_manager = self._config_manager(
-            tmp_path, {"tier": "high", "latch_migrated": True}
+            tmp_path, {"performance": {"tier": "high", "latch_migrated": True}}
         )
         engine = MagicMock()
+        engine.benchmark.return_value = {"tier": "ultra"}
 
         from babelfish_stt.main import calibrate
 
-        asyncio.run(calibrate(config_manager, engine, status=self._async_ok))
+        profile = asyncio.run(calibrate(engine, status=self._async_ok))
 
-        engine.benchmark.assert_not_called()
-        assert config_manager.config.pipeline.performance.tier == "high"
+        engine.benchmark.assert_called_once()
+        assert profile.tier == "ultra"
 
     def test_raising_benchmark_falls_back_to_defaults(self, tmp_path):
-        config_manager = self._config_manager(tmp_path, {"tier": "auto"})
+        config_manager = self._config_manager(tmp_path, {})
         engine = MagicMock()
         engine.benchmark.side_effect = RuntimeError("probe exploded")
 
         from babelfish_stt.main import calibrate
 
-        asyncio.run(
-            calibrate(config_manager, engine, status=self._async_ok)
-        )
+        profile = asyncio.run(calibrate(engine, status=self._async_ok))
 
         # Startup proceeds on the default profile rather than aborting
         defaults = PerformanceProfile()
-        applied = config_manager.config.pipeline.performance
-        assert applied.tier == defaults.tier
-        assert applied.ghost_throttle_ms == defaults.ghost_throttle_ms
+        assert profile.ghost_throttle_ms == defaults.ghost_throttle_ms
+        assert profile.ghost_window_s == defaults.ghost_window_s
+        assert profile.tier == defaults.tier
 
 
 if __name__ == "__main__":

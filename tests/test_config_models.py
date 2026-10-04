@@ -50,10 +50,17 @@ def test_hardware_status_validation():
         HardwareStatus(vram_total_gb="not a float")
 
 
-def test_pipeline_config_defaults():
+def test_config_models_defaults():
     config = PipelineConfig()
     assert config.silence_threshold_ms == 400
-    assert config.performance.tier == "auto"
+    assert config.pre_roll_ms == 300
+
+
+def test_pipeline_config_has_no_performance_section():
+    """The performance profile is calibration output (ADR 0011), never
+    configuration: the section is gone from the model."""
+    assert not hasattr(PipelineConfig(), "performance")
+    assert "performance" not in PipelineConfig().model_dump()
 
 
 def test_voice_config_defaults():

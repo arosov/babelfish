@@ -28,9 +28,11 @@ _Avoid_: interim, preview, partial, draft
 The two halves of one composed Ghost line (ADR 0010). Words whose audio has
 slid out of the Ghost window are committed — appended once, never rewritten;
 the live tail is the current window's transcription, replaced by each new
-Ghost, aligned against the previous window by word overlap or, failing that,
-proportional audio-time commits from the pipeline-reported window span. Terms
-for the boundary between them, not for kinds of transcript text.
+Ghost. The window span is ground truth: it bounds how many words may commit
+(one word of boundary-fuzz margin), and the word-overlap alignment only
+refines that boundary within it — the audio-time proportion commits the
+aged-out head when the model re-words the shared region. Terms for the
+boundary between them, not for kinds of transcript text.
 _Avoid_: stitched, merged, fuzzy-matched
 
 **Final**:

@@ -176,11 +176,18 @@ def test_capture_replays_without_duplication():
                 )
             if committed_head is None and committed_head_now is not None:
                 committed_head = committed_head_now
-            if committed_head is not None:
-                assert committed_head_now == committed_head, (
-                    f"committed head {committed_head!r} changed to "
-                    f"{committed_head_now!r} — committed text was rewritten"
-                )
+            elif committed_head is not None:
+                # The trim removes from the committed tail only: the head
+                # may vanish entirely (bounded dedup — the live tail
+                # re-shows the word), but it may never change to a
+                # different word.
+                if committed_head_now is None:
+                    committed_head = None
+                else:
+                    assert committed_head_now == committed_head, (
+                        f"committed head {committed_head!r} changed to "
+                        f"{committed_head_now!r} — committed text was rewritten"
+                    )
 
 
 def test_capture_header_snapshot():

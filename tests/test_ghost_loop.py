@@ -78,19 +78,21 @@ def make_pipeline(
     vad.is_speech = lambda chunk: True
     vad.reset_states = MagicMock()
     display = MagicMock(spec=TerminalDisplay)
-    pipeline = StandardPipeline(vad, engine, display)
+    pipeline = StandardPipeline(
+        vad,
+        engine,
+        display,
+        perf=PerformanceProfile(
+            ghost_throttle_ms=throttle_ms,
+            ghost_window_s=ghost_window_s,
+            ghost_padding_s=ghost_padding_s,
+            min_padding_s=min_padding_s,
+            tier="ultra",
+        ),
+    )
     pipeline.set_test_mode(False)
     pipeline.request_mode(is_idle=False, force=True)  # start listening
-    pipeline.reconfigure(
-        PipelineConfig(
-            performance=PerformanceProfile(
-                ghost_throttle_ms=throttle_ms,
-                ghost_window_s=ghost_window_s,
-                ghost_padding_s=ghost_padding_s,
-                min_padding_s=min_padding_s,
-            )
-        )
-    )
+    pipeline.reconfigure(PipelineConfig())
     return pipeline, engine, display
 
 

@@ -110,40 +110,6 @@
       "title": "HardwareStatus",
       "type": "object"
     },
-    "PerformanceProfile": {
-      "description": "Pacing and window fields for the Ghost pass.\n\n`tier` is \"auto\" (calibrate at startup, ADR 0011) or a concrete tier \u2014\na deliberate manual override that skips calibration, never a record the\nbenchmark wrote: calibration output is applied in memory only.",
-      "properties": {
-        "ghost_throttle_ms": {
-          "default": 50,
-          "title": "Ghost Throttle Ms",
-          "type": "integer"
-        },
-        "ghost_window_s": {
-          "title": "Ghost Window S",
-          "type": "number"
-        },
-        "ghost_padding_s": {
-          "title": "Ghost Padding S",
-          "type": "number"
-        },
-        "min_padding_s": {
-          "title": "Min Padding S",
-          "type": "number"
-        },
-        "tier": {
-          "default": "auto",
-          "title": "Tier",
-          "type": "string"
-        },
-        "latch_migrated": {
-          "default": false,
-          "title": "Latch Migrated",
-          "type": "boolean"
-        }
-      },
-      "title": "PerformanceProfile",
-      "type": "object"
-    },
     "PipelineConfig": {
       "properties": {
         "silence_threshold_ms": {
@@ -155,9 +121,6 @@
           "default": 300,
           "title": "Pre Roll Ms",
           "type": "integer"
-        },
-        "performance": {
-          "$ref": "#/$defs/PerformanceProfile"
         }
       },
       "title": "PipelineConfig",

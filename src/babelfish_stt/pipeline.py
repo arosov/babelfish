@@ -168,11 +168,15 @@ class StandardPipeline(Pipeline):
 
     config_key = "pipeline"
 
-    def __init__(self, vad, engine, display):
+    def __init__(self, vad, engine, display, perf: Optional[PerformanceProfile] = None):
         super().__init__()
         self.vad = vad
         self.engine = engine
         self.display = display
+
+        # Performance profile: the startup calibration's output (ADR 0011),
+        # applied in memory only — never user configuration.
+        self.perf = perf or PerformanceProfile()
 
         self.active_buffer = []
         self._buffer_size = 0
@@ -185,9 +189,6 @@ class StandardPipeline(Pipeline):
         # (spacing considered already elapsed, so the first Ghost can fire on
         # the onset chunk itself).
         self.last_submit_ms: Optional[float] = None
-
-        # Performance Profile (Self-Calibration)
-        self.perf = PerformanceProfile()
 
         # Thread pool for offloading transcription
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -213,7 +214,9 @@ class StandardPipeline(Pipeline):
         if isinstance(config, PipelineConfig):
             self.silence_threshold_ms = config.silence_threshold_ms
             self.pre_roll_ms = config.pre_roll_ms
-            self.perf = config.performance
+            # The performance profile is calibration output (ADR 0011), not
+            # configuration: it is passed at construction and never
+            # hot-reloaded.
 
     def process_chunk(
         self, chunk: np.ndarray, now_ms: float, is_speech: Optional[bool] = None

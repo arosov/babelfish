@@ -2,6 +2,16 @@
 
 Status: Accepted
 
+Amended (2026-10-04, the Ghost rework): the tier-override concept is gone.
+Calibration is unconditional — there is no `tier` in configuration to skip
+it, no latch flag, and no manual override; `pipeline.performance` left the
+config schema entirely and stale keys are stripped from existing files on
+load. `PerformanceProfile` survives as the calibration's in-memory output
+type, passed to the pipeline at construction. The decision below records
+the original reasoning; the override escape hatch it introduced lasted
+exactly one live run — it still let a stale concrete tier silence the
+benchmark, and pacing was never a meaningful user knob.
+
 The startup benchmark (`engine.benchmark()`, `engine.py:259-325`) mis-set this
 machine: a CUDA card measured its way into the `low_power` tier — 400 ms Ghost
 throttle, 1.5 s window — and the result was latched into `babelfish.config.json`
@@ -48,17 +58,13 @@ then persisted via `config_manager.update` (`config_manager.py:220-235`):
 ## Decision
 
 **Every startup calibrates; the file never records calibration output.**
-`heavy_init()` runs the benchmark whenever `tier == "auto"` in the loaded
-config — no persisted-tier short-circuit exists to make the first run the last.
-The computed profile is applied to the engine and pipeline **in memory only**;
-`config_manager.update` is no longer called with it. A concrete tier in the
-file is therefore a deliberate human choice — a manual override that skips
-calibration — not a latch the previous launch left behind.
-
-**One-time migration.** A calibration tier found persisted in
-`babelfish.config.json` is migrated to `"auto"` (logged). Safe because nothing
-but the old buggy latch ever wrote a concrete tier to disk; the knob only
-meaningful as a manual override going forward.
+`heavy_init()` runs the benchmark before the pipeline is built and passes
+the computed profile to `StandardPipeline(..., perf=profile)` — applied
+in memory only; `config_manager.update` is never called with it. There is
+no configured tier to consult: no persisted-tier short-circuit, no manual
+override, no latch flag. *(Amendment: originally a concrete tier in the
+file meant "skip calibration" — that concept is removed; the tier lives
+only as an informational label on the computed profile.)*
 
 **Robust measurement.** One warm-up inference is performed and discarded; the
 tier decision uses the **median** of the five probes, not the mean. The
@@ -77,13 +83,12 @@ engine init already has for device-load failure.
 ## Consequences
 
 **Startup costs ~6 inferences on GPU** (~6 × tens-of-ms on an `ultra`-class
-device) for every launch in `auto` mode. That is the price of never trusting a
-stale profile; CPU launches skip it because their tier is fixed regardless of
+device) for every launch. That is the price of never trusting a stale
+profile; CPU launches skip it because their tier is fixed regardless of
 the measurement.
 
-**The "Calibrating Performance…" status appears every launch.** Users in
-`auto` mode see it each start — it is now the normal startup contract, not a
-one-time event.
+**The "Calibrating Performance…" status appears every launch.** It is the
+normal startup contract, not a one-time event.
 
 **`ghost_throttle_ms` remains what ADR 0004 says it is** — minimum spacing
 between submits, not a display gate — and the exaggeration in AGENTS.md:30 and
@@ -112,6 +117,7 @@ enlarges the shared audio region ADR 0010's composer aligns on.
 **Tests.** Benchmark tests cover: a cold-start-shaped sample list (one large
 first sample) does not demote the tier under median; a spiked series does not
 demote under median; the CPU branch runs zero probes; a raising benchmark
-falls back to `PerformanceProfile()` defaults and startup proceeds; a persisted
-concrete tier skips calibration; the migration rewrites a persisted tier to
-`auto`; no benchmark path writes `pipeline.performance` to the config file.
+falls back to `PerformanceProfile()` defaults and startup proceeds; calibration
+is unconditional (no configuration can skip it); no benchmark path writes
+`pipeline.performance` to the config file; stale `pipeline.performance` keys
+are stripped from existing files on load, idempotently.

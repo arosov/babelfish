@@ -536,15 +536,7 @@ class TestGhostUpdateKeyboardSequence:
         start_time = time.perf_counter()
         config = BabelfishConfig(
             hardware=HardwareConfig(device="cpu"),
-            pipeline=PipelineConfig(
-                silence_threshold_ms=400,
-                performance=PerformanceProfile(
-                    ghost_throttle_ms=0,
-                    ghost_window_s=3.0,
-                    min_padding_s=2.0,
-                    tier="ultra",
-                ),
-            ),
+            pipeline=PipelineConfig(silence_threshold_ms=400),
             system_input=SystemInputConfig(
                 enabled=True,
                 type_ghost=True,
@@ -568,6 +560,12 @@ class TestGhostUpdateKeyboardSequence:
             vad=SileroVAD(threshold=0.5),
             engine=engine,
             display=mock_display,
+            perf=PerformanceProfile(
+                ghost_throttle_ms=0,
+                ghost_window_s=3.0,
+                min_padding_s=2.0,
+                tier="ultra",
+            ),
         )
         pipeline.set_test_mode(False)
         pipeline.reconfigure(engine.config_ref.pipeline)
@@ -602,15 +600,7 @@ class TestGhostUpdateKeyboardSequence:
 
         config = BabelfishConfig(
             hardware=HardwareConfig(device="cpu"),
-            pipeline=PipelineConfig(
-                silence_threshold_ms=400,
-                performance=PerformanceProfile(
-                    ghost_throttle_ms=100,
-                    ghost_window_s=3.0,
-                    min_padding_s=2.0,
-                    tier="ultra",
-                ),
-            ),
+            pipeline=PipelineConfig(silence_threshold_ms=400),
             system_input=SystemInputConfig(
                 enabled=True,
                 type_ghost=True,
@@ -634,6 +624,12 @@ class TestGhostUpdateKeyboardSequence:
             vad=SileroVAD(threshold=0.5),
             engine=engine,
             display=mock_display,
+            perf=PerformanceProfile(
+                ghost_throttle_ms=100,
+                ghost_window_s=3.0,
+                min_padding_s=2.0,
+                tier="ultra",
+            ),
         )
         pipeline.set_test_mode(False)
         pipeline.reconfigure(engine.config_ref.pipeline)
