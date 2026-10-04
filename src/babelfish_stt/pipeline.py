@@ -17,6 +17,13 @@ from babelfish_stt.config import (
 
 logger = logging.getLogger(__name__)
 
+# Ghost-pass trailing-silence padding applies only while the window audio
+# is still shorter than this: the short-onset case the padding was added
+# for (sub-minimum first windows often transcribe to "" unpadded). Mature
+# windows get none — trailing silence is the TDT loop inducer (the
+# decoder repeats on the silence seam: doubled years, repeated phrases).
+FIRST_WINDOW_MIN_S = 2.0
+
 
 class Pipeline(Reconfigurable):
     def __init__(self):
@@ -512,6 +519,15 @@ class StandardPipeline(Pipeline):
         window_audio_s = len(full_audio) / 16000.0
         capture_done = time.perf_counter()
 
+        # Effective Ghost padding: only the short-onset windows are
+        # padded; mature windows transcribe their bare audio (trailing
+        # silence padded onto a full window is the TDT loop inducer).
+        effective_padding = (
+            self.perf.ghost_padding_s
+            if window_audio_s < FIRST_WINDOW_MIN_S
+            else 0.0
+        )
+
         # Audio coverage of this Ghost's window: the window holds the LAST
         # len(full_audio) samples of the buffer.
         window_start = self._buffer_size - len(full_audio)
@@ -521,19 +537,21 @@ class StandardPipeline(Pipeline):
         logger.debug(
             f"[GHOST] Sending {len(full_audio)} samples to STT "
             f"({window_audio_s:.2f}s, window={self.perf.ghost_window_s}s, "
-            f"ghost_padding={self.perf.ghost_padding_s}s)"
+            f"padding={effective_padding}s)"
         )
 
         # Capture current generation to detect stale results
         with self._lock:
             self._future_generation = self._generation
 
-        def _run_transcribe(audio):
+        def _run_transcribe(audio, padding_s):
             t_start = time.perf_counter()
-            res = self.engine.transcribe(audio, padding_s=self.perf.ghost_padding_s)
+            res = self.engine.transcribe(audio, padding_s=padding_s)
             return res, (time.perf_counter() - t_start) * 1000
 
-        self._transcription_future = self.executor.submit(_run_transcribe, full_audio)
+        self._transcription_future = self.executor.submit(
+            _run_transcribe, full_audio, effective_padding
+        )
         with self._lock:
             self.last_submit_ms = now_ms
             self._ghost_window_s = window_audio_s

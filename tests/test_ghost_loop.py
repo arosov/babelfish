@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 from babelfish_stt.config import PipelineConfig, PerformanceProfile
 from babelfish_stt.engine import STTEngine
-from babelfish_stt.pipeline import StandardPipeline
+from babelfish_stt.pipeline import FIRST_WINDOW_MIN_S, StandardPipeline
 from babelfish_stt.vad import SileroVAD
 from babelfish_stt.display import TerminalDisplay
 
@@ -242,6 +242,29 @@ class TestPaddingSplit:
         assert final_calls, "expected a Final transcribe call"
         # Ghost padding was strictly used on ghosts, Final padding on finals
         assert engine.calls[-1][1] == pytest.approx(2.0)
+
+    def test_padding_only_on_short_onset_windows(self):
+        """Trailing-silence padding is the TDT loop inducer on mature
+        windows: it applies only while the window audio is shorter than
+        FIRST_WINDOW_MIN_S; mature windows transcribe bare audio."""
+        pipeline, engine, display = make_pipeline(
+            throttle_ms=0, ghost_window_s=3.0, ghost_padding_s=0.5
+        )
+        now = 0.0
+        for _ in range(100):  # ~3.2s: the buffer grows well past 2s
+            pipeline.process_chunk(speech_chunk(), now, is_speech=True)
+            now += CHUNK_MS
+            wait_for_done(pipeline)
+
+        assert engine.calls, "expected ghost submits"
+        for samples, padding in engine.calls:
+            expected = 0.5 if samples < int(FIRST_WINDOW_MIN_S * 16000) else 0.0
+            assert padding == pytest.approx(expected), (
+                f"{samples} samples of window audio padded with {padding}s"
+            )
+        # Both regimes were exercised
+        assert any(s < int(FIRST_WINDOW_MIN_S * 16000) for s, _ in engine.calls)
+        assert any(s >= int(FIRST_WINDOW_MIN_S * 16000) for s, _ in engine.calls)
 
 
 class TestWindowSpanPassing:
