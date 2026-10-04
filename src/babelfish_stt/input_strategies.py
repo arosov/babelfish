@@ -1,23 +1,9 @@
 import logging
 import sys
-import time
-
 import pyperclip
 from pynput.keyboard import Controller, Key
 
 logger = logging.getLogger(__name__)
-
-# Backspace pacing: pynput press/release pairs fire faster than some
-# editors process synthesized keystrokes; a dropped backspace desyncs the
-# display mirror and every later erase eats content BEFORE the utterance
-# start. The pacing below is what the `graphemes` count assumes actually
-# happened.
-BACKSPACE_INTERVAL_S = 0.004
-
-# Gap between an erase burst and the next paste chord: the paste must be
-# processed strictly after the erase finished, or the paste text gets
-# inserted before some backspaces were applied.
-ERASE_PASTE_GAP_S = 0.01
 
 
 def paste_text(text: str, keyboard: Controller):
@@ -45,23 +31,16 @@ def paste_text(text: str, keyboard: Controller):
 
 
 def send_backspaces(count: int, keyboard: Controller):
-    """Erases `count` graphemes with pynput backspace press/release pairs,
-    paced so editors process every keystroke.
+    """Erases `count` graphemes with pynput backspace press/release pairs.
 
     A paste cannot delete, so this is the one backspace mechanism — the
-    surviving behavior of the retired Direct strategy (ADR 0009). The
-    pacing is load-bearing: a backspace dropped by the editor desyncs the
-    typed-path mirror and the next erase eats real content to the left of
-    the utterance start.
+    surviving behavior of the retired Direct strategy (ADR 0009).
     """
     if count <= 0:
         return
     try:
-        for i in range(count):
-            if i:
-                time.sleep(BACKSPACE_INTERVAL_S)
+        for _ in range(count):
             keyboard.press(Key.backspace)
             keyboard.release(Key.backspace)
-        time.sleep(ERASE_PASTE_GAP_S)
     except Exception as e:
         logger.error(f"Backspace failed: {e}")
