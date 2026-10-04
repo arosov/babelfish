@@ -378,10 +378,31 @@ async def run_babelfish(
         displays: List[Any] = [TerminalDisplay()]
         if server:
             displays.append(ServerDisplay(server))
+        if capture_out:
+            # Capture display: records every raw Ghost frame (text, window
+            # span, wall ts, inference duration) to JSON — the evidence for
+            # diagnosing Ghost behavior. Works alongside typing: with
+            # `--type --capture-out PATH`, a live run records what the
+            # pipeline actually emitted while the user watches the typed
+            # result.
+            fixture_name = Path(replay_path).name if replay_path else "live"
+            capture = CaptureDisplay(
+                capture_out,
+                header={
+                    "fixture": fixture_name,
+                    "tier": profile.tier,
+                    "ghost_window_s": profile.ghost_window_s,
+                    "ghost_throttle_ms": profile.ghost_throttle_ms,
+                    "ghost_padding_s": profile.ghost_padding_s,
+                    "min_padding_s": profile.min_padding_s,
+                    "device": engine.device_type,
+                },
+            )
+            displays.append(capture)
         if replay_path:
             # The capture display replaces InputDisplay in replay mode:
             # typing into the focused app is forbidden while replaying.
-            capture = CaptureDisplay(
+            capture = capture or CaptureDisplay(
                 capture_out or str(DEFAULT_CAPTURE_OUT),
                 header={
                     "fixture": Path(replay_path).name,
@@ -395,6 +416,9 @@ async def run_babelfish(
             )
             displays.append(capture)
         else:
+            # Replaced only in replay mode: the capture display rides
+            # ALONGSIDE typing in live diagnostic runs (see capture_out
+            # above), it never replaces it.
             displays.append(InputDisplay(config_manager))
         display = MultiDisplay(*displays)
         pipeline = StandardPipeline(vad, engine, display, perf=profile)
@@ -522,8 +546,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         metavar="PATH",
-        help=f"Capture JSON path for --replay "
-        f"(default: {DEFAULT_CAPTURE_OUT.as_posix()}).",
+        help="Capture JSON path: record every raw Ghost frame (text, window "
+        "span, wall ts, inference duration) to JSON for diagnosing Ghost "
+        "behavior. With --replay (default: "
+        f"{DEFAULT_CAPTURE_OUT.as_posix()}); without --replay, works "
+        "alongside a live run (e.g. with --type). Typing into applications "
+        "is forbidden only in replay mode.",
     )
 
     parser.add_argument(
@@ -565,9 +593,6 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     if args.replay_path and args.server:
         parser.error("--replay is standalone-only (no --server)")
-
-    if args.capture_out and not args.replay_path:
-        parser.error("--capture-out requires --replay")
 
     return args
 
