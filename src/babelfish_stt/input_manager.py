@@ -21,15 +21,19 @@ _GHOST = "ghost"
 _FINAL = "final"
 _CLEAR = "clear"
 
-# Typed-apply pacing: the minimum interval between applied Ghost frames
-# on the typing worker. The proven-good live regime applied typed
-# updates ~400ms apart (the old ghost-throttle era); unpaced 50ms
-# applies at the calibrated submit cadence (100-150ms) are the flood
-# regime where editors drop synthesized keystrokes — a lost modifier
-# key-up turns every following backspace into word deletion, eating
-# across lines into content before the utterance start. Frames coalesce
-# latest-wins while the worker waits, so calmer pacing costs only
-# latency: every apply is the freshest composed snapshot.
+# Typed-apply pacing: the minimum interval between the keystrokes of any
+# two applies on the typing worker — uniformly, across utterance
+# boundaries: the last Ghost apply → the Final's keystrokes → the next
+# utterance's first Ghost keystrokes are all ≥ this apart (the boundary
+# hole where only the ghost branch enforced the clock is what this
+# constant's uniform enforcement closes). The proven-good live regime
+# applied typed updates ~400ms apart (the old ghost-throttle era);
+# unpaced 50ms applies at the calibrated submit cadence (100-150ms) are
+# the flood regime where editors drop synthesized keystrokes — a lost
+# modifier key-up turns every following backspace into word deletion,
+# eating across lines into content before the utterance start. Frames
+# coalesce latest-wins while the worker waits, so calmer pacing costs
+# only latency: every apply is the freshest composed snapshot.
 TYPING_THROTTLE_S = 0.35
 
 
@@ -47,10 +51,13 @@ class InputSimulator:
     never the line.
 
     The ADR 0009 primitives (clipboard paste + pynput backspaces) are
-    unchanged — only the erase-all pattern is retired. Applied frames are
-    paced at TYPING_THROTTLE_S (the worker's coalescing makes this pure
-    latency, never staleness); a modifier heal after each paste chord
-    clears a stuck Ctrl before it can turn backspaces into word deletes.
+    unchanged — only the erase-all pattern is retired. Every
+    keystroke-emitting apply — Ghost frame, Final, erasing CLEAR —
+    respects and advances one typing clock (TYPING_THROTTLE_S), so the
+    pacing invariant holds across utterance boundaries too: at least
+    throttle_s between the last keystroke of one emitting apply and the
+    first keystroke of the next. The worker's latest-wins coalescing
+    makes this pure latency, never staleness.
     """
 
     def __init__(self, keyboard_controller=None, throttle_s: float = TYPING_THROTTLE_S):
@@ -305,9 +312,16 @@ class InputSimulator:
             self._cond.notify()
 
     def _typing_worker(self):
-        """Applies enqueued frames, paced by the throttle. Ghost frames
-        wait for their spacing (a newer frame may replace the pending one
-        meanwhile); Final/CLEAR apply immediately."""
+        """Applies enqueued frames, paced by the throttle. The pacing
+        invariant is uniform across utterance boundaries: every
+        keystroke-emitting apply (Ghost frame, Final, erasing CLEAR)
+        respects the typing clock before its keystrokes and advances it
+        after — at least throttle_s between the last keystroke of one
+        emitting apply and the first keystroke of the next. A newer
+        frame may replace a pending one while the worker waits
+        (latest-wins coalescing). Non-emitting applies (redundant or
+        mirror-refresh ghosts, a CLEAR with nothing to erase) emit no
+        keystrokes, so they advance nothing."""
         while True:
             with self._cond:
                 while not self._queue and not self._stop:
@@ -318,17 +332,25 @@ class InputSimulator:
                 self._busy = True
             try:
                 if kind == _FINAL:
-                    self._apply_final(payload)
+                    # Boundary pacing (Edge A): the Final's keystrokes
+                    # are paced against the last emitting apply's —
+                    # typically the utterance's last Ghost apply.
+                    self._respect_typing_clock()
+                    emitted = self._apply_final(payload)
                 elif kind == _CLEAR:
-                    self._apply_clear(payload)
+                    # An erasing CLEAR respects the clock inside
+                    # _apply_clear (only it knows whether it will
+                    # emit); the post-Final CLEAR emits nothing and
+                    # applies immediately behind the Final.
+                    emitted = self._apply_clear(payload)
                 else:
-                    # Throttle pacing lives here: ghost keystroke bursts
-                    # are spaced at least throttle_s apart.
-                    delay = self._next_apply_time - time.monotonic()
-                    if delay > 0:
-                        time.sleep(delay)
-                    self._apply_ghost_frame(payload)
-                    self._next_apply_time = time.monotonic() + self.throttle_s
+                    self._respect_typing_clock()
+                    emitted = self._apply_ghost_frame(payload)
+                # Only keystroke-emitting applies advance the clock:
+                # the invariant is keystroke-to-keystroke, and a
+                # non-emitting apply contains no keystrokes to space.
+                if emitted:
+                    self._advance_typing_clock()
             except Exception:
                 logger.exception("Typing worker failed to apply a frame")
                 self._mirror_trusted = False
@@ -336,8 +358,22 @@ class InputSimulator:
                 with self._cond:
                     self._busy = False
 
+    def _respect_typing_clock(self):
+        """Waits out the typing clock (worker thread only): the next
+        emitting apply's keystrokes start at least throttle_s after the
+        previous one's."""
+        delay = self._next_apply_time - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+
+    def _advance_typing_clock(self):
+        """Advances the typing clock after an apply emitted keystrokes."""
+        self._next_apply_time = time.monotonic() + self.throttle_s
+
     def _apply_ghost_frame(self, item):
-        """Applies one composed snapshot to the screen (worker thread)."""
+        """Applies one composed snapshot to the screen (worker thread).
+        Returns whether the apply emitted keystrokes — only emitting
+        applies advance the typing clock."""
         key, (committed_words, live_words) = item
         committed_words = list(committed_words)
         live_words = list(live_words)
@@ -353,7 +389,7 @@ class InputSimulator:
         # identical window is skipped; the key records only after a frame
         # is actually applied (ADR 0010).
         if key == self._last_applied:
-            return
+            return False
 
         typed_c = self.typed_committed.split() if self.typed_committed else []
         typed_l = self.typed_live.split() if self.typed_live else []
@@ -365,7 +401,7 @@ class InputSimulator:
             # keystrokes.
             self._set_mirrors(committed_words, live_words)
             self._last_applied = key
-            return
+            return False
 
         # Word-prefix diff: the common word prefix stays on screen (the
         # committed prefix is trusted by construction, so the match
@@ -406,25 +442,35 @@ class InputSimulator:
         self._set_mirrors(committed_words, live_words)
         self.last_ghost_time = time.time()
         self._last_applied = key
+        return True
 
-    def _apply_final(self, payload):
+    def _apply_final(self, payload) -> bool:
         text, separator = payload
-        self._type_final(text, separator)
+        emitted = self._type_final(text, separator)
         self._after_finalize = True
+        return emitted
 
-    def _apply_clear(self, needs_erase: bool):
+    def _apply_clear(self, needs_erase: bool) -> bool:
         """Utterance-boundary cleanup, ordered behind the Final (audio-
         thread reset_state enqueues it). After a Final the screen is
         already erased: only the mirrors' leftover utterance state is
         dropped (a backspace burst here would eat the Final just typed).
         Without a Final (stop-word lock, empty-ghost), the displayed
-        ghost must be erased here."""
+        ghost must be erased here — an erasing CLEAR is a keystroke-
+        emitting apply, so it respects the typing clock before its
+        burst (the same rule as the Final's keystrokes). Returns
+        whether the apply emitted keystrokes — only emitting applies
+        advance the typing clock."""
+        emitted = False
         if needs_erase and self.displayed_graphemes:
+            self._respect_typing_clock()
             self._send_backspaces(self._grapheme_len(self._mirror_text()))
+            emitted = True
         self._clear_mirrors()
         self._last_applied = None
         self.last_ghost_time = 0.0
         self._after_finalize = True
+        return emitted
 
     # ------------------------------------------------------------------
     # Typing primitives (mirrors + ADR 0009 mechanics)
@@ -439,12 +485,15 @@ class InputSimulator:
             logger.error(f"Failed to paste text: {e}")
             self._mirror_trusted = False
 
-    def _type_final(self, text: str, separator: SeparatorPolicy):
+    def _type_final(self, text: str, separator: SeparatorPolicy) -> bool:
         """Erases the ghost mirrors and types the Final (worker-safe:
-        touches mirrors and keystrokes only)."""
+        touches mirrors and keystrokes only). Returns whether the apply
+        emitted keystrokes — only emitting applies advance the typing
+        clock."""
         # Capture what was on screen before clearing (for verification)
         self.pre_finalize_text = self._mirror_text()
 
+        emitted = False
         total = self._grapheme_len(self._mirror_text())
         if total:
             if not self._mirror_trusted:
@@ -461,6 +510,7 @@ class InputSimulator:
                     f"[TYPE] final: erase {total}, paste {len(text)} chars"
                 )
                 self._send_backspaces(total)
+                emitted = True
 
         self._clear_mirrors()
         self._mirror_trusted = True
@@ -483,6 +533,8 @@ class InputSimulator:
 
             self._paste(text)
             self.last_final_char = text[-1]
+            emitted = True
+        return emitted
 
     def _clear_previous(self):
         """Sends backspaces for the length of the displayed ghost."""

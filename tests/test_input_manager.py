@@ -8,10 +8,12 @@ finalization behavior.
 
 import pytest
 import numpy as np
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from babelfish_stt.input_manager import InputSimulator
+from babelfish_stt.input_manager import InputSimulator, TYPING_THROTTLE_S
 from babelfish_stt.config import SeparatorPolicy
 from pynput.keyboard import Key
 
@@ -498,6 +500,297 @@ class TestTypingWorker:
         assert sim.flush()
         assert sim.accumulated_text == ""
         sim.stop()
+
+
+# ---------------------------------------------------------------------------
+# Boundary pacing: the typing clock is uniform across utterance boundaries.
+# Every keystroke-emitting apply — Ghost frame, Final, erasing CLEAR —
+# respects the clock before its keystrokes and advances it after; the
+# invariant is ≥ TYPING_THROTTLE_S between the last keystroke of one
+# emitting apply and the first keystroke of the next. Non-emitting
+# applies stay outside it. Time is faked at the input_manager module
+# boundary and keystrokes/pastes/sleeps share one ordered event log, so
+# sleep → keystroke ordering is asserted directly.
+
+class _FakeClock:
+    """Deterministic replacement for input_manager's `time`: monotonic()
+    is a controllable clock; sleep() records into the shared event log
+    and advances the clock without real waiting — pacing arithmetic is
+    exact and the tests stay fast."""
+
+    def __init__(self, events, start=1000.0):
+        self.now = start
+        self._events = events
+
+    def monotonic(self):
+        return self.now
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self._events.append(("sleep", seconds))
+        self.now += seconds
+
+
+def _recording_keyboard(events):
+    """A mock keyboard whose presses append to the shared event log."""
+    kb = MagicMock()
+
+    def record_press(key):
+        events.append(("press", key))
+
+    kb.press.side_effect = record_press
+    return kb
+
+
+@contextmanager
+def _paced_worker(events, start=1000.0):
+    """A simulator whose worker runs on the fake clock, with every
+    sleep, keystroke, and paste appended to one ordered event log."""
+    clock = _FakeClock(events, start=start)
+    kb = _recording_keyboard(events)
+    with patch("babelfish_stt.input_manager.time", clock), patch(
+        "babelfish_stt.input_strategies.pyperclip"
+    ) as mock_clip:
+
+        def record_copy(text):
+            events.append(("copy", text))
+
+        mock_clip.copy.side_effect = record_copy
+        sim = InputSimulator(keyboard_controller=kb, throttle_s=TYPING_THROTTLE_S)
+        try:
+            yield sim, kb, clock
+        finally:
+            sim.stop()
+
+
+def _drain_worker(sim, timeout=5.0):
+    """flush() with REAL time — the fake clock must not gate draining,
+    and its 2ms poll sleeps must not pollute the event log."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with sim._cond:
+            if not sim._queue and not sim._busy:
+                return True
+        time.sleep(0.002)
+    return False
+
+
+def _sleeps(events):
+    return [v for k, v in events if k == "sleep"]
+
+
+def _copies(events):
+    return [v for k, v in events if k == "copy"]
+
+
+def _backspaces(events):
+    return [
+        v for k, v in events if k == "press" and v == Key.backspace
+    ]
+
+
+class TestBoundaryPacing:
+    """The pacing invariant is uniform: FINAL and keystroke-emitting
+    CLEAR obey the same two rules the ghost branch already enforced
+    (respect the clock before typing, advance it after), and non-emitting
+    applies (CLEAR with nothing to erase, pure mirror-refresh ghost
+    frames) advance nothing."""
+
+    def test_final_respects_the_clock_edge_a(self):
+        """Edge A: the last Ghost apply → the Final's keystrokes. The
+        Final waits out the remaining throttle window BEFORE its first
+        keystroke (the erase burst, then the paste)."""
+        events = []
+        with _paced_worker(events) as (sim, kb, clock):
+            sim.enqueue_ghost("hello world", None)
+            assert _drain_worker(sim)
+            # The ghost applied with the clock at zero: no wait, and it
+            # advanced the deadline one full window ahead.
+            assert _sleeps(events) == []
+            assert sim._next_apply_time == pytest.approx(
+                1000.0 + TYPING_THROTTLE_S
+            )
+
+            # The Final arrives with no pending ghost, the deadline still
+            # in the future (Edge A).
+            sim.enqueue_finalize("FINAL", separator=SeparatorPolicy.TRAILING)
+            assert _drain_worker(sim)
+
+        # Exactly one wait — the remaining window — and it strictly
+        # precedes every Final keystroke (erase backspaces, paste).
+        assert _sleeps(events) == pytest.approx([TYPING_THROTTLE_S])
+        first_sleep = next(i for i, (k, _) in enumerate(events) if k == "sleep")
+        final_copy = events.index(("copy", "FINAL "))
+        assert all(
+            i > first_sleep
+            for i, (k, v) in enumerate(events)
+            if k == "press" and v == Key.backspace
+        )
+        assert final_copy > first_sleep
+        assert len(_backspaces(events)) == len("hello world")
+        assert _copies(events) == ["hello world", "FINAL "]
+
+    def test_final_advances_the_clock_edge_b(self):
+        """Edge B: the Final's keystrokes → the next utterance's first
+        Ghost keystrokes. A Ghost frame arriving inside the Final's
+        window waits it out; a frame arriving past the deadline applies
+        immediately."""
+        events = []
+        with _paced_worker(events) as (sim, kb, clock):
+            sim.enqueue_ghost("hello world", None)
+            assert _drain_worker(sim)
+            sim.enqueue_finalize("FINAL", separator=SeparatorPolicy.TRAILING)
+            assert _drain_worker(sim)
+            # The Final's wait advanced the fake clock by one window; its
+            # keystrokes pushed the deadline one more ahead.
+            assert clock.now == pytest.approx(1000.0 + TYPING_THROTTLE_S)
+
+            # Next utterance, first frame — inside the Final's window.
+            sim.enqueue_ghost("hello again", None)
+            assert _drain_worker(sim)
+            assert _sleeps(events) == pytest.approx(
+                [TYPING_THROTTLE_S, TYPING_THROTTLE_S]
+            )
+
+            # A later frame, past the deadline: applies immediately.
+            clock.now = 2000.0
+            sim.enqueue_ghost("hello again world", None)
+            assert _drain_worker(sim)
+
+        assert _sleeps(events) == pytest.approx(
+            [TYPING_THROTTLE_S, TYPING_THROTTLE_S]
+        )
+        # The last frame is an append-diff against "hello again": it
+        # keeps the word prefix and pastes only the changed suffix,
+        # with no wait past the deadline.
+        assert _copies(events) == [
+            "hello world",
+            "FINAL ",
+            "hello again",
+            " world",
+        ]
+
+    def test_stopword_clear_respects_and_advances_the_clock(self):
+        """The stop-word CLEAR (reset with no Final behind it) is a
+        keystroke-emitting apply at an utterance boundary: it waits out
+        the ghost's remaining window before its erase burst, and its
+        erase advances the clock for whatever comes next."""
+        events = []
+        with _paced_worker(events) as (sim, kb, clock):
+            sim.enqueue_ghost("hello", None)
+            assert _drain_worker(sim)
+
+            # Stop-word path: reset() with no Final pending.
+            sim.reset()
+            assert _drain_worker(sim)
+
+            # The next utterance's first frame is paced by the CLEAR's
+            # erase, not by the ghost it erased.
+            sim.enqueue_ghost("after the clear", None)
+            assert _drain_worker(sim)
+
+        assert _sleeps(events) == pytest.approx(
+            [TYPING_THROTTLE_S, TYPING_THROTTLE_S]
+        )
+        first_sleep = next(i for i, (k, _) in enumerate(events) if k == "sleep")
+        assert all(i > first_sleep for i, (k, v) in enumerate(events)
+                   if k == "press" and v == Key.backspace)
+        assert len(_backspaces(events)) == len("hello")
+        assert _copies(events) == ["hello", "after the clear"]
+
+    def test_post_final_clear_neither_waits_nor_advances(self):
+        """The CLEAR ordered behind a pending Final (the ordinary
+        boundary cleanup) emits nothing: it applies immediately behind
+        the Final — the Final's Edge-A wait must not delay it — and it
+        advances nothing: the next frame's wait is owed to the Final
+        alone."""
+        events = []
+        with _paced_worker(events) as (sim, kb, clock):
+            sim.enqueue_ghost("hello world", None)
+            assert _drain_worker(sim)
+            # The audio thread's real ordering: the Final is enqueued,
+            # then reset() queues the CLEAR behind it, before the worker
+            # runs either.
+            sim.enqueue_finalize("FINAL", separator=SeparatorPolicy.TRAILING)
+            sim.reset()
+            assert _drain_worker(sim)
+
+            # Next utterance's first frame.
+            sim.enqueue_ghost("next utterance", None)
+            assert _drain_worker(sim)
+
+        # Two waits only: the ghost's zero, the Final's Edge-A wait, and
+        # the next frame's Edge-B wait — the CLEAR added none of its own
+        # (a wrongly-respecting CLEAR would make it three).
+        assert _sleeps(events) == pytest.approx(
+            [TYPING_THROTTLE_S, TYPING_THROTTLE_S]
+        )
+        # The CLEAR contributed no keystrokes: the only backspaces are
+        # the Final's erase of the ghost.
+        assert len(_backspaces(events)) == len("hello world")
+        assert _copies(events) == ["hello world", "FINAL ", "next utterance"]
+
+    def test_idle_clear_advances_nothing(self):
+        """A CLEAR with nothing on screen (a long gap after the Final,
+        or a stop-word lock over an empty ghost) emits no keystrokes and
+        must not push the clock: the next frame's pacing is still owed
+        to the last EMITTING apply, not to this no-op."""
+        events = []
+        with _paced_worker(events) as (sim, kb, clock):
+            sim.enqueue_ghost("hello", None)
+            assert _drain_worker(sim)
+            sim.enqueue_finalize("FINAL", separator=SeparatorPolicy.TRAILING)
+            assert _drain_worker(sim)
+            final_clock = sim._next_apply_time
+
+            # Long silent gap: the deadline passes entirely, and nothing
+            # is left on screen for a CLEAR to erase.
+            clock.now = 5000.0
+            sim.reset()
+            assert _drain_worker(sim)
+
+            # The CLEAR neither waited...
+            assert _sleeps(events) == pytest.approx([TYPING_THROTTLE_S])
+            # ...nor advanced: the clock still holds the Final's value,
+            # and a fresh frame applies with no wait at all (a wrongly-
+            # advancing CLEAR would have pushed the deadline to 5000+T
+            # and forced a wait here).
+            assert sim._next_apply_time == final_clock
+            sim.enqueue_ghost("fresh start", None)
+            assert _drain_worker(sim)
+            assert _sleeps(events) == pytest.approx([TYPING_THROTTLE_S])
+
+        assert _copies(events) == ["hello", "FINAL ", "fresh start"]
+
+    def test_mirror_refresh_ghost_frame_does_not_advance(self):
+        """A pure mirror-refresh ghost frame (the word sequence already
+        on screen; only the committed/live split moved) emits no
+        keystrokes, so it may not push the clock either: the next
+        emitting frame's wait is owed to the last emitting apply."""
+        events = []
+        with _paced_worker(events) as (sim, kb, clock):
+            # Frame 1: full line to screen (emits, advances).
+            sim.enqueue_ghost("alpha beta gamma", (0, 16000))
+            assert _drain_worker(sim)
+            # Frame 2: same word sequence, the split moves ("alpha"
+            # commits) — a mirror refresh: no keystrokes.
+            sim.enqueue_ghost("beta gamma", (8000, 24000))
+            assert _drain_worker(sim)
+            assert sim.typed_committed == "alpha"  # the split did move
+            # Frame 3: an emitting frame right at the refresh's clock —
+            # the refresh must not have pushed the deadline (a wrongly-
+            # advancing refresh would force a second wait here).
+            sim.enqueue_ghost("beta gamma delta", (16000, 32000))
+            assert _drain_worker(sim)
+
+        # Exactly one wait total: the refresh respected the clock (ghost
+        # branch behavior, unchanged) but did not advance it; frame 3
+        # then applied with nothing left to wait.
+        assert _sleeps(events) == pytest.approx([TYPING_THROTTLE_S])
+        assert _copies(events) == ["alpha beta gamma", " delta"]
+        assert not _backspaces(events)
 
 
 class TestInputSimulatorCore:
