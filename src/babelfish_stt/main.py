@@ -338,6 +338,7 @@ async def run_babelfish(
 
     async def heavy_init():
         device = config_manager.config.hardware.device
+        capture = None  # the replay capture display; non-replay launches have none
 
         await status("Loading Silero VAD...")
         vad = await asyncio.to_thread(SileroVAD)
