@@ -46,6 +46,13 @@ class HardwareStatus(BaseModel):
 
 
 class PerformanceProfile(BaseModel):
+    """Pacing and window fields for the Ghost pass.
+
+    `tier` is "auto" (calibrate at startup, ADR 0011) or a concrete tier —
+    a deliberate manual override that skips calibration, never a record the
+    benchmark wrote: calibration output is applied in memory only.
+    """
+
     ghost_throttle_ms: int = 50
     ghost_window_s: float = 2.5
     # Padding for Ghost submits only. 1.0 keeps the first, short windows
@@ -54,6 +61,11 @@ class PerformanceProfile(BaseModel):
     ghost_padding_s: float = 1.0
     min_padding_s: float = 2.0
     tier: str = "auto"
+    # ADR 0011: set once when a pre-ADR-0011 config (whose tier was written
+    # and latched by the persisting benchmark) is migrated to "auto". After
+    # the migration no code ever writes a tier to disk, so a concrete tier
+    # found in the file must not be rewritten again.
+    latch_migrated: bool = False
 
 
 class PipelineConfig(BaseModel):

@@ -111,6 +111,7 @@
       "type": "object"
     },
     "PerformanceProfile": {
+      "description": "Pacing and window fields for the Ghost pass.\n\n`tier` is \"auto\" (calibrate at startup, ADR 0011) or a concrete tier \u2014\na deliberate manual override that skips calibration, never a record the\nbenchmark wrote: calibration output is applied in memory only.",
       "properties": {
         "ghost_throttle_ms": {
           "default": 50,
@@ -133,6 +134,11 @@
           "default": "auto",
           "title": "Tier",
           "type": "string"
+        },
+        "latch_migrated": {
+          "default": false,
+          "title": "Latch Migrated",
+          "type": "boolean"
         }
       },
       "title": "PerformanceProfile",

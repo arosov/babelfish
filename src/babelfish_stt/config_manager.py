@@ -105,6 +105,25 @@ class ConfigManager:
             else:
                 migrated = False
 
+            # --- Migration: latched calibration tier -> auto (ADR 0011) ---
+            # The old benchmark persisted its computed tier, so no later
+            # launch could recalibrate. Rewrite it once; afterwards a
+            # concrete tier in the file is a deliberate manual override.
+            performance = data.get("pipeline", {}).get("performance", {})
+            tier = performance.get("tier")
+            if (
+                isinstance(tier, str)
+                and tier != "auto"
+                and not performance.get("latch_migrated", False)
+            ):
+                logger.info(
+                    f"Migrating latched tier '{tier}' to 'auto' (ADR 0011)"
+                )
+                performance["tier"] = "auto"
+                performance["latch_migrated"] = True
+                data["pipeline"] = {**data.get("pipeline", {}), "performance": performance}
+                migrated = True
+
             config = BabelfishConfig.model_validate(data)
 
             if migrated:

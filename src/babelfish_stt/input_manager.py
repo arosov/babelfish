@@ -1,12 +1,12 @@
 import logging
 import unicodedata
-import grapheme
 import time
-import re
-import sys
-import difflib
-from rapidfuzz import fuzz
-from pynput.keyboard import Controller, Key
+from typing import Optional
+
+import grapheme
+from pynput.keyboard import Controller
+
+from babelfish_stt.ghost_composer import GhostComposer
 from babelfish_stt.input_strategies import paste_text, send_backspaces
 from babelfish_stt.config import SeparatorPolicy
 
@@ -15,9 +15,15 @@ logger = logging.getLogger(__name__)
 
 class InputSimulator:
     """
-    Simulates keyboard input for system-wide transcription injection.
-    Tracks ghost text state as a list of words and graphemes to achieve O(1)
-    performance regardless of conversation length.
+    Types Ghost and Final text into the focused application.
+
+    Ghost composition is span-based and shared with the terminal display
+    (ADR 0010): the GhostComposer folds each sliding-window transcription
+    into one growing line, and every applied update erases the displayed
+    line and re-pastes the full composed line — the typing mechanics from
+    ADR 0009 are untouched. The backspace count is derived from exactly the
+    line the composer produced, so what is tracked and what is on screen
+    can no longer diverge.
     """
 
     def __init__(self, keyboard_controller=None, throttle_s: float = 0.05):
@@ -27,28 +33,26 @@ class InputSimulator:
         self.last_ghost_time = 0.0
         self.last_final_char = ""
 
-        # Internal state as lists for performance
-        self.words = []  # List of strings (ghost state for stitching)
-        self.graphemes = []  # List of individual graphemes (ghost state)
+        # The one ghost-composition state: span-based, shared with the
+        # terminal display (ADR 0010).
+        self.composer = GhostComposer()
 
-        # Track what's actually displayed on screen
-        self.displayed_graphemes = []  # List of individual graphemes
-
-        # Track accumulated text continuously (for testing/verification)
+        # What is actually displayed on screen — the single backspace-counting
+        # source of truth. What is tracked (the composed line) and what is
+        # pasted always coincide: both derive from the composer's line.
+        self.displayed_graphemes = []  # list of individual graphemes
         self._accumulated_text = ""
-        self.pre_finalize_text = ""
 
-        self._last_raw_ghost = ""
-        self._clean_regex = re.compile(r"[^a-zA-Z0-9]")
+        self._last_applied = None
         self._after_finalize = False
 
     @property
     def last_ghost_length(self) -> int:
-        return len(self.graphemes)
+        return len(self.displayed_graphemes)
 
     @property
     def accumulated_text(self) -> str:
-        """Returns the accumulated text from all ghost updates."""
+        """Returns the text from all ghost updates applied to the screen."""
         return self._accumulated_text
 
     def type_text(self, text: str):
@@ -60,9 +64,14 @@ class InputSimulator:
         except Exception as e:
             logger.error(f"Failed to paste text: {e}")
 
-    def update_ghost(self, ghost_text: str):
+    def update_ghost(self, ghost_text: Optional[str], window=None):
         """
-        Updates the ghost text incrementally with O(1) complexity.
+        Composes the new Ghost through the shared span-based composer and
+        then performs erase-all + paste-the-full-line typing.
+
+        `window` is the Ghost's audio coverage as
+        (window_start_sample, buffer_end_sample), provided by the pipeline
+        through InputDisplay.
         """
         # If we're starting fresh after finalize, silently clear any stale state
         # without sending backspaces. The user may have edited/moved the cursor
@@ -70,142 +79,57 @@ class InputSimulator:
         if self._after_finalize and self.displayed_graphemes:
             self.displayed_graphemes = []
             self._accumulated_text = ""
-            self.words = []
-            self.graphemes = []
+            self.composer.reset()
             self._after_finalize = False
+
         if not ghost_text:
             self._clear_previous()
-            self.words = []
-            self.graphemes = []
-            self._last_raw_ghost = ""
+            self.composer.reset()
+            self._last_applied = None
             self.last_ghost_time = 0.0
             return
 
-        # 1. Early exit: redundant websocket frame
-        if ghost_text == self._last_raw_ghost:
+        # 1. Early exit: redundant frame. The key is (text, window) so an
+        # identical re-transcription over a slid window still composes; and
+        # the key is recorded only after a frame is actually applied, so a
+        # throttle-dropped frame can never poison it (ADR 0010).
+        if (ghost_text, window) == self._last_applied:
             return
-        self._last_raw_ghost = ghost_text
+
+        # 2. Compose BEFORE the throttle gate: the composer state must
+        # advance on every frame (mirroring the terminal display), and any
+        # throttle-skipped frame's typing is superseded by the next applied
+        # one's full-line paste.
+        composed = self.composer.update(ghost_text, window)
+        if not composed:
+            return
 
         now = time.time()
 
-        # 2. Stitching (Word-level)
-        # We only pass the tail of words to the stitcher
-        ext_words = ghost_text.split()
-        if not ext_words:
+        # 3. Throttling: only gate the keystrokes, never the composition.
+        if self.displayed_graphemes and now - self.last_ghost_time < self.throttle_s:
             return
 
-        new_words = self._stitch_words(self.words, ext_words)
-
-        # 3. Throttling
-        # We only check timing for actual keystrokes
-        if self.graphemes:
-            if now - self.last_ghost_time < self.throttle_s:
-                # Don't update self.words here - only update when actually typing
-                # to keep displayed_graphemes in sync with words
-                return
-
-        # 4. Content check
-        if new_words == self.words and self.graphemes:
+        # 4. Content check: the composed line already matches what is on
+        # screen — nothing to type; the dedup key records this frame.
+        if composed == self._accumulated_text and self.displayed_graphemes:
+            self._last_applied = (ghost_text, window)
             return
 
-        # 5. Clear all displayed text and paste the full new ghost
+        # 5. Clear all displayed text and paste the full composed ghost.
+        # The count derives from exactly the line we last pasted, so the
+        # tracked and displayed states cannot drift apart.
         if self.displayed_graphemes:
-            total_to_clear = len(self.displayed_graphemes)
-            self._send_backspaces(
-                total_to_clear,
-                update_accumulated=True,
-            )
+            self._send_backspaces(len(self.displayed_graphemes))
 
-        # Type full ghost text using clipboard
-        full_ghost = " ".join(new_words)
-        new_graphemes = list(grapheme.graphemes(full_ghost)) if full_ghost else []
-        if full_ghost:
-            self.type_text(full_ghost)
-            self._accumulated_text = full_ghost
+        composed_graphemes = list(grapheme.graphemes(composed)) if composed else []
+        if composed:
+            self.type_text(composed)
+            self._accumulated_text = composed
 
-        # 6. Update State
-        self.words = new_words
-        self.graphemes = new_graphemes
-        self.displayed_graphemes = new_graphemes
+        self.displayed_graphemes = composed_graphemes
         self.last_ghost_time = now
-
-    def _stitch_words(self, base_words: list[str], ext_words: list[str]) -> list[str]:
-        """
-        Uses fuzzy matching on the tail of the word list to find overlaps.
-        Handles both overlapping (STT returning similar segments) and
-        non-overlapping (sliding window) cases.
-        """
-        if not base_words:
-            return ext_words
-
-        # Pre-process ext_words to collapse consecutive duplicate words
-        # This prevents STT repetitions from causing stitching issues
-        ext_words_deduped = []
-        prev_word = None
-        for w in ext_words:
-            clean_w = self._clean_regex.sub("", w).lower()
-            prev_clean = (
-                self._clean_regex.sub("", prev_word).lower() if prev_word else None
-            )
-            if clean_w and clean_w == prev_clean:
-                continue
-            ext_words_deduped.append(w)
-            prev_word = w
-
-        ext_words = ext_words_deduped
-        if not ext_words:
-            return base_words
-
-        tail_size = 30
-        base_tail = base_words[-tail_size:]
-
-        def clean(w):
-            return self._clean_regex.sub("", w).lower()
-
-        base_clean = [clean(w) for w in base_tail]
-        ext_clean = [clean(w) for w in ext_words]
-
-        # Try exact match first (fast path)
-        matcher = difflib.SequenceMatcher(None, base_clean, ext_clean, autojunk=False)
-        match = matcher.find_longest_match(0, len(base_clean), 0, len(ext_clean))
-
-        if match.size > 3:  # Require at least 3 word overlap for exact match
-            join_idx = (len(base_words) - len(base_tail)) + match.a
-            return base_words[:join_idx] + ext_words[match.b :]
-
-        # Try fuzzy matching with rapidfuzz
-        # Compare suffix of base with prefix of ext to find fuzzy overlap
-        best_score = 0
-        best_k = 0  # Number of words to overlap
-
-        # Check overlaps of different lengths
-        for k in range(min(len(base_clean), len(ext_clean)), 0, -1):
-            base_suffix = "".join(base_clean[-k:])
-            ext_prefix = "".join(ext_clean[:k])
-
-            if len(base_suffix) < 3:
-                continue
-
-            # Use partial_ratio for substring matching
-            score = fuzz.partial_ratio(base_suffix, ext_prefix)
-
-            if score > best_score:
-                best_score = score
-                best_k = k
-
-        # If fuzzy match is good enough (>70%), use it
-        if best_score > 70 and best_k > 0:
-            join_idx = len(base_words) - best_k
-            return base_words[:join_idx] + ext_words
-
-        # No overlap found - check if it's a new segment vs replacement
-        if len(base_words) < 10 or (
-            len(ext_words) >= 5 and not any(w in base_clean for w in ext_clean[:5])
-        ):
-            return ext_words
-
-        # Fallback: return base_words (keep existing state)
-        return base_words
+        self._last_applied = (ghost_text, window)
 
     def finalize(
         self,
@@ -236,10 +160,9 @@ class InputSimulator:
             else:
                 self._send_backspaces(total_to_clear)
 
-        self.words = []
-        self.graphemes = []
         self.displayed_graphemes = []
-        self._last_raw_ghost = ""
+        self.composer.reset()
+        self._last_applied = None
         self._accumulated_text = ""
 
         if text:
@@ -267,41 +190,25 @@ class InputSimulator:
 
     def reset(self):
         """Resets the state without backspacing."""
-        self.words = []
-        self.graphemes = []
         self.displayed_graphemes = []
-        self._last_raw_ghost = ""
+        self.composer.reset()
+        self._last_applied = None
         self._accumulated_text = ""
         self.pre_finalize_text = ""
         self._after_finalize = False
 
     def _clear_previous(self):
-        """Sends backspaces for the length of the last typed ghost."""
+        """Sends backspaces for the length of the displayed ghost."""
         if self.displayed_graphemes:
             self._send_backspaces(len(self.displayed_graphemes))
-            self.graphemes = []
             self.displayed_graphemes = []
+            self._accumulated_text = ""
 
-    def _send_backspaces(
-        self,
-        count: int,
-        update_accumulated: bool = False,
-    ):
+    def _send_backspaces(self, count: int):
         """Sends N backspaces via the pynput backspace loop."""
         if count <= 0:
             return
         try:
             send_backspaces(count, self.keyboard)
-
-            # Update accumulated text tracking
-            if update_accumulated and self._accumulated_text:
-                # We remove the last 'count' graphemes
-                # Note: this is a simple approximation as graphemes might be multiple chars
-                # but in most cases backspace removes one 'visual' character.
-                self._accumulated_text = (
-                    self._accumulated_text[:-count]
-                    if len(self._accumulated_text) >= count
-                    else ""
-                )
         except Exception as e:
             logger.error(f"Failed to send backspaces: {e}")

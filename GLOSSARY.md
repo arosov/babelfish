@@ -17,11 +17,21 @@ _Avoid_: session, segment, phrase
 
 **Ghost**:
 Provisional transcript text shown while you are still speaking. It is iterated
-in place as you dictate — in the terminal display, window updates append
-incrementally and the accumulated Ghost line stays visible after the utterance
-ends — and then the Final succeeds it. It is never committed anywhere; nothing
-is typed or stored from it.
+in place as you dictate — in every display, window updates append incrementally
+through one shared span-based composer (ADR 0010: the terminal line and the
+typed line are composed identically) and the accumulated Ghost line stays
+visible after the utterance ends — and then the Final succeeds it. It is never
+committed anywhere; nothing is typed or stored from it.
 _Avoid_: interim, preview, partial, draft
+
+**Committed / Live**:
+The two halves of one composed Ghost line (ADR 0010). Words whose audio has
+slid out of the Ghost window are committed — appended once, never rewritten;
+the live tail is the current window's transcription, replaced by each new
+Ghost, aligned against the previous window by word overlap or, failing that,
+proportional audio-time commits from the pipeline-reported window span. Terms
+for the boundary between them, not for kinds of transcript text.
+_Avoid_: stitched, merged, fuzzy-matched
 
 **Final**:
 The committed transcript for one utterance. Produced once, after speech ends, from the

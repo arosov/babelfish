@@ -41,6 +41,7 @@ from babelfish_stt.display import (
     InputDisplay,
 )
 from babelfish_stt.vad import SileroVAD
+from babelfish_stt.config import PerformanceProfile
 from babelfish_stt.config_manager import ConfigManager
 from babelfish_stt.server import BabelfishServer
 from babelfish_stt.notifier import DesktopNotifier
@@ -49,6 +50,46 @@ from babelfish_stt.pipeline import StandardPipeline, StopWordDetector
 from babelfish_stt.hotkey_manager import HotkeyManager
 
 logger = logging.getLogger(__name__)
+
+
+async def calibrate(config_manager, engine, status) -> None:
+    """Startup self-calibration (ADR 0011).
+
+    Runs whenever the configured tier is "auto" — no persisted-tier
+    short-circuit exists to make the first run the last. The computed
+    profile is applied to the shared config in memory only;
+    `ConfigManager.update` (which saves to the file) is never called with
+    it, so a concrete tier in the file is a deliberate manual override
+    that skips calibration, never a record the benchmark wrote.
+
+    Survivable failure: on any exception, fall back to the
+    PerformanceProfile() defaults in the loaded config instead of
+    aborting startup — the same fallback posture engine init has for
+    device-load failure.
+    """
+    perf = config_manager.config.pipeline.performance
+    if perf.tier != "auto":
+        logger.info(
+            f"⏱️ Tier '{perf.tier}' configured; skipping calibration "
+            f"(manual override)."
+        )
+        return
+
+    await status("Calibrating Performance...")
+    try:
+        perf_data = await asyncio.to_thread(engine.benchmark)
+    except Exception as e:
+        logger.warning(
+            f"⚠️ Calibration failed ({e}); keeping default profile."
+        )
+        return
+
+    # In-memory only: mutate the shared config object directly. The pipeline
+    # picks this up when it is registered with the ConfigManager, and the
+    # config file keeps tier="auto" untouched.
+    profile = PerformanceProfile(**perf_data)
+    config_manager.config.pipeline.performance = profile
+    logger.info(f"✅ Performance calibrated: {profile.tier.upper()}")
 
 
 def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
@@ -282,12 +323,9 @@ async def run_babelfish(
         await status(f"Loading STT Engine ({device})...")
         engine = await asyncio.to_thread(STTEngine, config=config_manager.config)
 
-        # 5. Hardware Self-Calibration
-        if config_manager.config.pipeline.performance.tier == "auto":
-            await status("Calibrating Performance...")
-            perf_data = await asyncio.to_thread(engine.benchmark)
-            config_manager.update({"pipeline": {"performance": perf_data}})
-            logger.info(f"✅ Performance calibrated: {perf_data['tier'].upper()}")
+        # 5. Hardware Self-Calibration (ADR 0011: always runs in auto tier
+        # mode, applies in memory only)
+        await calibrate(config_manager, engine, status)
 
         await status(
             f"Loading WakeWord ({config_manager.config.voice.wakeword or 'None'})..."

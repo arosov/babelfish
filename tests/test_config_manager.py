@@ -65,6 +65,58 @@ def test_config_manager_keeps_concrete_device(tmp_path):
     assert data["hardware"]["device"] == "dml:1"
 
 
+def test_config_manager_migrates_latched_tier_to_auto(tmp_path):
+    """A tier persisted by the old latching benchmark is rewritten to
+    'auto' once (ADR 0011)."""
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"pipeline": {"performance": {"tier": "low_power"}}})
+    )
+
+    manager = ConfigManager(config_path=str(config_file))
+
+    assert manager.config.pipeline.performance.tier == "auto"
+    data = json.loads(config_file.read_text())
+    assert data["pipeline"]["performance"]["tier"] == "auto"
+    assert data["pipeline"]["performance"]["latch_migrated"] is True
+
+
+def test_config_manager_latch_migration_is_one_time(tmp_path):
+    """After the migration, a concrete tier in the file is a deliberate
+    manual override and must not be rewritten again (ADR 0011)."""
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                "pipeline": {
+                    "performance": {
+                        "tier": "low_power",
+                        "latch_migrated": True,
+                    }
+                }
+            }
+        )
+    )
+
+    manager = ConfigManager(config_path=str(config_file))
+
+    assert manager.config.pipeline.performance.tier == "low_power"
+    data = json.loads(config_file.read_text())
+    assert data["pipeline"]["performance"]["tier"] == "low_power"
+
+
+def test_config_manager_auto_tier_is_untouched(tmp_path):
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        json.dumps({"pipeline": {"performance": {"tier": "auto"}}})
+    )
+
+    manager = ConfigManager(config_path=str(config_file))
+
+    assert manager.config.pipeline.performance.tier == "auto"
+    assert manager.config.pipeline.performance.latch_migrated is False
+
+
 def test_config_manager_save_load(tmp_path):
     config_file = tmp_path / "config.json"
     manager = ConfigManager(config_path=str(config_file))

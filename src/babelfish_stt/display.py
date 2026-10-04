@@ -3,8 +3,8 @@ import asyncio
 import json
 import logging
 import time
-from typing import Optional
 from babelfish_stt.input_manager import InputSimulator
+from babelfish_stt.ghost_composer import GhostComposer
 
 logger = logging.getLogger(__name__)
 
@@ -13,13 +13,11 @@ class TerminalDisplay:
     """
     Handles real-time terminal-based streaming updates for transcription.
 
-    Ghost text is composed incrementally. Each Ghost update re-transcribes a
-    sliding window of the utterance audio, so consecutive updates overlap
-    heavily and may revise words inside that window. The displayed Ghost line
-    therefore accumulates: words whose audio has slid out of the Ghost window
-    are committed (never rewritten), while the live window tail is replaced by
-    each new Ghost, keeping the matched overlap aligned so text appends
-    instead of overwriting.
+    Ghost text is composed incrementally by the shared span-based
+    GhostComposer (ADR 0010): each Ghost update folds into the accumulated
+    line — words whose audio has left the window are committed (never
+    rewritten), the live window tail is replaced by each new Ghost — so
+    text appends instead of overwriting.
 
     When the Final arrives, the accumulated Ghost line stays visible and the
     Final transcript is written on the next line (bold).
@@ -30,19 +28,12 @@ class TerminalDisplay:
     # updates; suppressed text is kept so the next redraw shows the latest.
     REDRAW_MIN_INTERVAL_S = 0.1
 
-    # Characters stripped when comparing words across Ghost updates
-    _WORD_STRIP = ".,!?;:\"'`—–-…()[]"
-
     def __init__(self):
         self.last_text = ""
         self.max_line_length = 0
         self._last_write_time = 0.0
         self._pending_update = None  # (text, refined, ghost) held while rate-limited
-        # Ghost composition state (reset per utterance)
-        self._ghost_committed = []  # words whose audio has left the Ghost window
-        self._ghost_live = []  # words of the latest Ghost (current window)
-        self._ghost_line = ""  # composed Ghost line currently displayed
-        self._ghost_window = (0, 0)  # (start, end) samples of the latest Ghost's window
+        self._composer = GhostComposer()
         self._line_len = 0  # visible chars on the current terminal line
         self._line_open = False  # current line has content
 
@@ -57,7 +48,7 @@ class TerminalDisplay:
         # Compose BEFORE the rate-limit check: the accumulation state must
         # advance even when the redraw itself is deferred.
         if ghost:
-            ghost = self._compose_ghost(ghost, window)
+            ghost = self._composer.update(ghost, window)
 
         now = time.monotonic()
         if now - self._last_write_time < self.REDRAW_MIN_INTERVAL_S:
@@ -67,85 +58,6 @@ class TerminalDisplay:
             return
         self._last_write_time = now
         self._write(text, refined, ghost)
-
-    def _compose_ghost(self, ghost: str, window=None) -> str:
-        """
-        Fold a new Ghost (one window transcription) into the accumulated
-        Ghost line: commit words whose audio left the window, keep the rest
-        revisable by later updates.
-        """
-        ghost = ghost.strip()
-        if not ghost:
-            return self._ghost_line
-
-        new_words = ghost.split()
-        if self._ghost_live:
-            commit = self._commit_count(self._ghost_live, new_words, window)
-            self._ghost_committed.extend(self._ghost_live[:commit])
-            # If the new Ghost re-covers committed tail words (boundary
-            # errors from rough proportional commits), drop the duplicates:
-            # the live tail shows them, so nothing is lost.
-            dupe = self._text_overlap_words(self._ghost_committed, new_words)
-            if dupe:
-                del self._ghost_committed[-dupe:]
-        if window is not None:
-            self._ghost_window = window
-        self._ghost_live = new_words
-        self._ghost_line = " ".join(self._ghost_committed + new_words)
-        return self._ghost_line
-
-    def _commit_count(self, prev_words, new_words, window) -> int:
-        """
-        How many head words of the previous Ghost have aged out of the
-        Ghost window and should be committed.
-
-        - A solid text alignment between the previous Ghost's tail and the
-          new Ghost's head pins the boundary precisely.
-        - Otherwise fall back to audio time: the pipeline-reported window
-          coverage says how much audio left the window, so head words are
-          committed even when the model re-worded them — losing the
-          utterance opening is worse than a rough guess.
-        - Without window info and without a text alignment, commit nothing
-          (the new Ghost replaces the live tail).
-        """
-        j = self._text_overlap_words(prev_words, new_words)
-        if j is not None and j > 0:
-            return len(prev_words) - j
-
-        if window is not None:
-            start, end = self._ghost_window
-            window_dur = end - start
-            new_start = window[0]
-            if window_dur > 0 and new_start > start:
-                count = round(len(prev_words) * (new_start - start) / window_dur)
-                return max(0, min(count, len(prev_words)))
-        return 0
-
-    @classmethod
-    def _text_overlap_words(cls, prev_words, new_words) -> Optional[int]:
-        """
-        Largest j where the last j words of the previous Ghost match the
-        first j words of the new Ghost (case/punctuation-insensitive), or
-        None when no solid alignment exists (the model re-worded the shared
-        region). Solid means at least half the aligned words match.
-        """
-        a = [cls._norm_word(w) for w in prev_words]
-        b = [cls._norm_word(w) for w in new_words]
-        max_j = min(len(a), len(b))
-        best_j, best_score = 0, -1
-        for j in range(max_j + 1):
-            score = sum(1 for i in range(j) if a[len(a) - j + i] == b[i])
-            # Prefer more matches; on ties prefer the larger overlap (commit
-            # less, leaving text revisable by later updates).
-            if score > best_score or (score == best_score and j > best_j):
-                best_j, best_score = j, score
-        if best_score <= 0 or best_score * 2 < best_j:
-            return None  # ambiguous: the model re-worded the shared region
-        return best_j
-
-    @classmethod
-    def _norm_word(cls, word: str) -> str:
-        return word.lower().strip(cls._WORD_STRIP)
 
     def _write(self, text: str = "", refined: str = "", ghost: str = ""):
         if refined or ghost:
@@ -208,10 +120,7 @@ class TerminalDisplay:
         self.last_text = ""
         self.max_line_length = 0
         self._pending_update = None
-        self._ghost_committed = []
-        self._ghost_live = []
-        self._ghost_line = ""
-        self._ghost_window = (0, 0)
+        self._composer.reset()
         self._line_len = 0
         self._line_open = False
 
@@ -301,9 +210,10 @@ class InputDisplay:
         self.config_manager = config_manager
         self.simulator = InputSimulator()
 
-    def update(self, text: str = "", refined: str = "", ghost: str = "", **kwargs):
-        # Extra pipeline metadata (e.g. the Ghost window span) is ignored:
-        # typed ghosts keep replacing the last typed window text.
+    def update(self, text: str = "", refined: str = "", ghost: str = "", window=None, **kwargs):
+        # The Ghost window span rides along (ADR 0010): the typed Ghost is
+        # composed by the same span-based composer the terminal display
+        # uses, and its audio-time commits need the pipeline's window.
         config = self.config_manager.config.system_input
         if not config.enabled or not config.type_ghost:
             # If ghost typing is disabled, we still need to make sure we don't
@@ -313,14 +223,16 @@ class InputDisplay:
 
         # We only type ghost text if explicitly enabled
         if ghost:
-            self.simulator.update_ghost(ghost)
+            self.simulator.update_ghost(ghost, window=window)
 
     def finalize(self, text: str = ""):
         config = self.config_manager.config.system_input
         if not config.enabled:
             # Even if disabled now, if it was enabled during ghost pass,
             # we MUST clear the ghost text from the screen.
-            if self.simulator.graphemes:
+            # Read the list we erase (ADR 0010): displayed_graphemes is the
+            # single source of truth for what is on screen.
+            if self.simulator.displayed_graphemes:
                 self.simulator.finalize("")
             return
 

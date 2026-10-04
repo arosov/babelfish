@@ -256,43 +256,80 @@ class STTEngine(Reconfigurable):
 
         return result.strip() if result else ""
 
+    def _measure_latency_ms(self, test_audio: np.ndarray) -> float:
+        """One calibration probe: Ghost-shaped inference latency in ms."""
+        import time
+
+        start = time.perf_counter()
+        self.transcribe(test_audio, padding_s=2.0)
+        return (time.perf_counter() - start) * 1000
+
     def benchmark(self) -> dict:
         """
-        Runs dummy inferences to measure hardware performance and determine optimal tiers.
-        Returns a PerformanceProfile dictionary.
+        Runs dummy inferences to measure hardware performance and determine
+        optimal tiers.
+
+        The result is applied in memory only and never persisted (ADR 0011).
         """
         logger.info("⏱️ Starting hardware self-calibration...")
 
-        import time
+        import statistics
+
+        # The CPU tier is fixed regardless of any measurement: probes would
+        # only be measured and then overwritten with the hardcoded values,
+        # so none run (ADR 0011).
+        if self.device_type == "cpu":
+            return {
+                "tier": "cpu",
+                "ghost_throttle_ms": 300,
+                "ghost_window_s": 1.0,  # Sliding window: bounded Ghost inference on CPU too
+                "ghost_padding_s": 0.0,  # 1s window already bounds CPU Ghost audio
+                "min_padding_s": 0,
+            }
 
         # Test 1: Ghost pass (2.5s window)
         test_audio = np.zeros(int(16000 * 2.5), dtype=np.float32)
-        measurements = []
-        for _ in range(5):
-            start = time.perf_counter()
-            self.transcribe(test_audio, padding_s=2.0)
-            measurements.append((time.perf_counter() - start) * 1000)
 
-        avg_latency = sum(measurements) / len(measurements)
-        logger.info(f"⏱️ Calibration: Avg Ghost Latency = {avg_latency:.2f}ms")
+        # One warm-up inference is performed and discarded: the first
+        # recognize() pays session and kernel init, and a mean that includes
+        # it demoted fast hardware (four ~40ms warm samples plus one ~600ms
+        # cold sample average ~150ms -> two tiers down; the tier boundaries
+        # sit exactly where a single warmup sample throws the vote).
+        self._measure_latency_ms(test_audio)
 
-        # Tier logic
+        measurements = [self._measure_latency_ms(test_audio) for _ in range(5)]
+        median_latency = statistics.median(measurements)
+        logger.info(f"⏱️ Calibration: Median Ghost Latency = {median_latency:.2f}ms")
+        logger.debug(
+            f"⏱️ Calibration probes (ms): "
+            f"{[round(m, 1) for m in measurements]}"
+        )
+
+        # NOTE (ADR 0011): TDT emits no tokens on digital silence, so this
+        # probe measures a cheaper workload than real speech — an unreliable
+        # underestimate in both directions across backends. The skew is
+        # accepted: it biases against fast tiers, which errs toward a
+        # conservative tier; synthesizing speech-like audio for no
+        # demonstrated need is not worth the mechanism.
+
+        # Tier logic, decided on the median (not the mean) so no single
+        # cold or tail sample can demote the tier.
         # Spacing values are the minimum spacing between Ghost submits.
         # min_padding_s feeds the Final pass only; the Ghost pass uses
         # ghost_padding_s (1.0 — bumped from 0.0 after live testing showed
         # the first unpadded windows transcribe to "", delaying the first
         # visible Ghost by ~400ms).
-        if avg_latency < 40:
+        if median_latency < 40:
             tier = "ultra"
             throttle = 100
             window = 3.0
             padding = 2.0
-        elif avg_latency < 80:
+        elif median_latency < 80:
             tier = "high"
             throttle = 150
             window = 2.5
             padding = 2.0
-        elif avg_latency < 150:
+        elif median_latency < 150:
             tier = "medium"
             throttle = 250
             window = 2.0
@@ -303,14 +340,6 @@ class STTEngine(Reconfigurable):
             window = 1.5
             padding = 1.0
 
-        ghost_padding = 1.0  # keeps the first, short windows text-capable
-        if self.device_type == "cpu":
-            tier = "cpu"
-            throttle = 300
-            window = 1.0  # Sliding window: bounded Ghost inference on CPU too
-            padding = 0
-            ghost_padding = 0.0  # 1s window already bounds CPU Ghost audio
-
         logger.info(
             f"⏱️ Calibration complete: Tier={tier.upper()}, Spacing={throttle}ms, "
             f"Window={window}s"
@@ -320,6 +349,6 @@ class STTEngine(Reconfigurable):
             "tier": tier,
             "ghost_throttle_ms": throttle,
             "ghost_window_s": window,
-            "ghost_padding_s": ghost_padding,
+            "ghost_padding_s": 1.0,  # keeps the first, short windows text-capable
             "min_padding_s": padding,
         }

@@ -1,8 +1,9 @@
 """
 InputManager and InputSimulator unit tests.
 
-These tests verify the InputSimulator's ghost text handling,
-backspacing, word stitching, and finalization behavior.
+These tests verify the InputSimulator's ghost text handling (span-based
+composition via the shared GhostComposer, ADR 0010), backspacing, and
+finalization behavior.
 """
 
 import pytest
@@ -45,7 +46,7 @@ def _backspace_calls(mock_keyboard):
 
 
 class TestGhostTextBehavior:
-    """Tests for ghost text update behavior (stitch, throttle, re-paste)."""
+    """Tests for ghost text update behavior (compose, throttle, re-paste)."""
 
     def test_ghost_timing_respects_throttle(
         self, throttled_simulator, mock_keyboard, mock_pyperclip
@@ -89,33 +90,9 @@ class TestGhostTextBehavior:
             list(grapheme.graphemes("hello there"))
         )
 
-    def test_word_stitching_extends_prefix(self, simulator):
-        """An extended ASR frame keeps the previous words."""
-        assert simulator._stitch_words(["the"], "the quick".split()) == [
-            "the",
-            "quick",
-        ]
-
-    def test_word_stitching_joins_overlapping_windows(self, simulator):
-        """ASR windows that repeat already-typed words are stitched, not duplicated."""
-        assert simulator._stitch_words(["the", "quick"], "quick brown".split()) == [
-            "the",
-            "quick",
-            "brown",
-        ]
-
-    def test_word_stitching_collapses_repeated_words(self, simulator):
-        """STT repetitions of the same word are collapsed."""
-        assert simulator._stitch_words(["the"], ["the", "the", "quick"]) == [
-            "the",
-            "quick",
-        ]
-
-    def test_word_stitching_replaces_on_no_overlap(self, simulator):
-        """Unrelated text replaces the previous ghost wholesale."""
-        assert simulator._stitch_words(
-            ["the", "quick", "brown", "fox"], "completely different".split()
-        ) == ["completely", "different"]
+    # The fuzzy word-stitching tests were deleted with the heuristic path
+    # (ADR 0010); composition behaviour now lives in the shared
+    # GhostComposer — see test_ghost_composer.py.
 
     def test_ghost_handles_unicode_graphemes(self, simulator, mock_keyboard):
         """Unicode characters should be handled as single graphemes."""

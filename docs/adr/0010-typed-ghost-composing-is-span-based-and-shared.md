@@ -1,5 +1,7 @@
 # Typed Ghost composing is span-based, shared with the terminal display
 
+Status: Accepted
+
 A typed Ghost must append while you speak. Today it sometimes rewrites itself:
 the ghost collapses to the size of the last transcribed window instead of
 growing, and the size gap only becomes visible when the Final replaces it. The

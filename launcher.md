@@ -133,7 +133,7 @@ Wipes the `uv` cache if dependencies get corrupted.
 - **Models:** Resolved from the shared cache (`VOGON_APP_CACHE_DIR` /
   `cache.cache_dir`), then repo-local `models/`, otherwise the onnx-asr HF
   cache (auto-download). The primary model is `nemo-parakeet-tdt-0.6b-v3`.
-- **Startup Calibration:** The server benchmarks the model on startup to set the Ghost pass cadence (`ghost_throttle_ms`, `ghost_window_s`).
+- **Startup Calibration:** The server benchmarks the model on every `auto`-tier startup (ADR 0011: no latch; the result is applied in memory only) to set the pacing and window fields (`ghost_throttle_ms`, `ghost_window_s`). The Ghost *display* cadence is owned by inference completion, not the throttle.
 - **Hotkeys:** 
   - `Ctrl+Space` (default): Toggle Mode (Listen/Idle).
   - `Left Shift` (default): Push-To-Talk (PTT).

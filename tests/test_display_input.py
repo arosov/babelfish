@@ -17,7 +17,19 @@ def test_input_display_update_enabled(mock_config_manager):
         mock_sim = MockSim.return_value
 
         display.update(ghost="hello")
-        mock_sim.update_ghost.assert_called_once_with("hello")
+        mock_sim.update_ghost.assert_called_once_with("hello", window=None)
+
+
+def test_input_display_forwards_window_span(mock_config_manager):
+    """The Ghost window span rides through to the simulator (ADR 0010)."""
+    with patch("babelfish_stt.display.InputSimulator") as MockSim:
+        display = InputDisplay(mock_config_manager)
+        mock_sim = MockSim.return_value
+
+        display.update(ghost="hello", window=(5120, 21120))
+        mock_sim.update_ghost.assert_called_once_with(
+            "hello", window=(5120, 21120)
+        )
 
 
 def test_input_display_update_disabled(mock_config_manager):
