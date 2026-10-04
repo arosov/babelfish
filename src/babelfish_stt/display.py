@@ -37,13 +37,22 @@ class TerminalDisplay:
         self._line_len = 0  # visible chars on the current terminal line
         self._line_open = False  # current line has content
 
-    def update(self, text: str = "", refined: str = "", ghost: str = "", window=None):
+    def update(
+        self,
+        text: str = "",
+        refined: str = "",
+        ghost: str = "",
+        window=None,
+        **kwargs,
+    ):
         """
         Updates the current line with streaming text.
         Supports ANSI styles: Refined is Bold, Ghost is Dimmed.
 
         `window` is the Ghost's audio coverage as
         (window_start_sample, buffer_end_sample), provided by the pipeline.
+        Extra pipeline telemetry kwargs (e.g. duration_ms) are intentionally
+        not consumed here.
         """
         # Compose BEFORE the rate-limit check: the accumulation state must
         # advance even when the redraw itself is deferred.

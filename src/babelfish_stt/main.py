@@ -27,13 +27,20 @@ import logging
 import numpy as np
 import time
 import argparse
+import functools
 import threading
 import asyncio
 import openwakeword
+from pathlib import Path
 from typing import Optional, List, Any
 from babelfish_stt.hardware import HardwareManager
 from babelfish_stt.engine import STTEngine
 from babelfish_stt.audio import AudioStreamer
+from babelfish_stt.replay import (
+    WavStreamer,
+    CaptureDisplay,
+    DEFAULT_CAPTURE_OUT,
+)
 from babelfish_stt.display import (
     TerminalDisplay,
     ServerDisplay,
@@ -92,25 +99,37 @@ async def calibrate(config_manager, engine, status) -> None:
     logger.info(f"✅ Performance calibrated: {profile.tier.upper()}")
 
 
-def run_stt_loop(streamer, pipeline, ww_engine, shutdown_event, server=None):
-    """Main blocking loop for audio capture and processing."""
+def run_stt_loop(
+    streamer, pipeline, ww_engine, shutdown_event, server=None, listen_immediately=False
+):
+    """Main blocking loop for audio capture and processing.
+
+    `listen_immediately` (replay harness): skip idle/wake-word gating and
+    treat the whole stream as one forced-listen session — the fixture is
+    one utterance sequence from the first sample, with no hotkey to
+    unlock it.
+    """
     try:
         logger.info("🎤 STT Loop Started")
         logger.info("-" * 50)
 
-        # Start in idle state (waiting for trigger)
-        pipeline.request_mode(is_idle=True, force=True)
-
-        if pipeline.is_idle:
-            if ww_engine and ww_engine.active_start_word:
-                logger.info(
-                    f"💤 IDLE: Waiting for wake-word '{ww_engine.active_start_word}'..."
-                )
-            else:
-                logger.info("💤 IDLE: Waiting for trigger (Hotkey/PTT)...")
+        if listen_immediately:
+            pipeline.request_mode(is_idle=False, force=True)
+            logger.info("🎤 REPLAY: listening from the first sample (Ctrl+C to stop)")
         else:
-            # This branch shouldn't be hit on startup now, but kept for logic consistency
-            logger.info("🎤 Listening... (Press Ctrl+C to stop)")
+            # Start in idle state (waiting for trigger)
+            pipeline.request_mode(is_idle=True, force=True)
+
+            if pipeline.is_idle:
+                if ww_engine and ww_engine.active_start_word:
+                    logger.info(
+                        f"💤 IDLE: Waiting for wake-word '{ww_engine.active_start_word}'..."
+                    )
+                else:
+                    logger.info("💤 IDLE: Waiting for trigger (Hotkey/PTT)...")
+            else:
+                # This branch shouldn't be hit on startup now, but kept for logic consistency
+                logger.info("🎤 Listening... (Press Ctrl+C to stop)")
 
         cooldown_until = 0
         stop_cooldown_until = 0
@@ -239,6 +258,8 @@ async def run_babelfish(
     port: Optional[int] = None,
     serve: bool = False,
     type_into_apps: bool = False,
+    replay_path: Optional[str] = None,
+    capture_out: Optional[str] = None,
 ):
     logger.info("=" * 50)
     logger.info("🚀 BABELFISH STT INITIALIZING")
@@ -265,6 +286,21 @@ async def run_babelfish(
         config_manager.config.system_input.enabled = True
         config_manager.config.system_input.type_ghost = True
         logger.info("   MODE: Typing Ghost/Final text into the focused app (CLI Override)")
+
+    # Replay harness: the pipeline replays a fixture WAV instead of the
+    # microphone, and every Ghost frame is captured to JSON. System-input
+    # typing is FORBIDDEN in replay mode — the harness must never type
+    # into whatever application happens to have focus.
+    capture = None
+    if replay_path:
+        if config_manager.config.system_input.enabled:
+            raise RuntimeError(
+                "Replay mode forbids system-input typing "
+                "(system_input.enabled is true; remove it or the --type flag)"
+            )
+        logger.info(f"   REPLAY: {replay_path}")
+        if capture_out:
+            logger.info(f"   CAPTURE: {capture_out}")
 
     if port is not None:
         config_manager.config.server.port = port
@@ -341,25 +377,48 @@ async def run_babelfish(
         )
 
         await status("Initializing Audio Stream...")
-        streamer = await asyncio.to_thread(
-            AudioStreamer,
-            microphone_name=config_manager.config.hardware.microphone_name,
-        )
+        if replay_path:
+            # Replay harness: the fixture replaces the microphone, paced
+            # in real time (see babelfish_stt.replay).
+            streamer = await asyncio.to_thread(WavStreamer, replay_path)
+        else:
+            streamer = await asyncio.to_thread(
+                AudioStreamer,
+                microphone_name=config_manager.config.hardware.microphone_name,
+            )
 
         displays: List[Any] = [TerminalDisplay()]
         if server:
             displays.append(ServerDisplay(server))
-        displays.append(InputDisplay(config_manager))
+        if replay_path:
+            # The capture display replaces InputDisplay in replay mode:
+            # typing into the focused app is forbidden while replaying.
+            perf = config_manager.config.pipeline.performance
+            capture = CaptureDisplay(
+                capture_out or str(DEFAULT_CAPTURE_OUT),
+                header={
+                    "fixture": Path(replay_path).name,
+                    "tier": perf.tier,
+                    "ghost_window_s": perf.ghost_window_s,
+                    "ghost_throttle_ms": perf.ghost_throttle_ms,
+                    "ghost_padding_s": perf.ghost_padding_s,
+                    "min_padding_s": perf.min_padding_s,
+                    "device": engine.device_type,
+                },
+            )
+            displays.append(capture)
+        else:
+            displays.append(InputDisplay(config_manager))
         display = MultiDisplay(*displays)
         pipeline = StandardPipeline(vad, engine, display)
 
         if pipeline.stop_detector:
             config_manager.register(pipeline.stop_detector)
 
-        return vad, engine, ww_engine, streamer, display, pipeline
+        return vad, engine, ww_engine, streamer, display, pipeline, capture
 
     logger.info("⏳ Loading engines and models (this may take a few seconds)...")
-    vad, engine, ww_engine, streamer, display, pipeline = await heavy_init()
+    vad, engine, ww_engine, streamer, display, pipeline, capture = await heavy_init()
 
     # Initialize the notifier (both modes get wake/stop-word desktop toasts)
     notifier = DesktopNotifier()
@@ -400,16 +459,25 @@ async def run_babelfish(
 
     stt_task = loop.run_in_executor(
         None,
-        run_stt_loop,
-        streamer,
-        pipeline,
-        ww_engine,
-        shutdown_event,
-        server,
+        functools.partial(
+            run_stt_loop,
+            streamer,
+            pipeline,
+            ww_engine,
+            shutdown_event,
+            server,
+            listen_immediately=bool(replay_path),
+        ),
     )
 
     try:
-        await asyncio.Future()
+        if replay_path:
+            # A replay is finite: run to the end of the fixture and exit
+            # cleanly (the WavStreamer ends after its trailing silence,
+            # by which point the Final pass has fired).
+            await stt_task
+        else:
+            await asyncio.Future()
     except (asyncio.CancelledError, KeyboardInterrupt):
         logger.info("🛑 Stopping Babelfish...")
     finally:
@@ -417,6 +485,8 @@ async def run_babelfish(
         streamer.stop()
         hotkey_manager.stop()
         await stt_task
+        if capture is not None:
+            capture.write()
         logger.info("✅ Shutdown complete.")
 
 
@@ -446,6 +516,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Type transcripts into the focused application (Ghost live, "
         "replaced by Final when the turn ends). In-memory override, not saved.",
+    )
+
+    parser.add_argument(
+        "--replay",
+        dest="replay_path",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Replay harness: stream a fixture WAV through the real pipeline "
+        "instead of the microphone (real-time paced) and capture every Ghost "
+        "frame to JSON. Typing into applications is forbidden in this mode.",
+    )
+
+    parser.add_argument(
+        "--capture-out",
+        dest="capture_out",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=f"Capture JSON path for --replay "
+        f"(default: {DEFAULT_CAPTURE_OUT.as_posix()}).",
     )
 
     parser.add_argument(
@@ -479,6 +570,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     if args.port is not None and not args.server:
         parser.error("--port requires --server")
 
+    if args.replay_path and args.type_into_apps:
+        parser.error(
+            "--replay forbids --type: the replay harness must never type "
+            "into the focused application"
+        )
+
+    if args.replay_path and args.server:
+        parser.error("--replay is standalone-only (no --server)")
+
+    if args.capture_out and not args.replay_path:
+        parser.error("--capture-out requires --replay")
+
     return args
 
 
@@ -508,6 +611,8 @@ def main():
             port=args.port,
             serve=args.server,
             type_into_apps=args.type_into_apps,
+            replay_path=args.replay_path,
+            capture_out=args.capture_out,
         )
     )
 

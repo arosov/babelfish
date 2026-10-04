@@ -421,10 +421,11 @@ class StandardPipeline(Pipeline):
         staleness_ms = now_wall_ms - submit_wall_ms
         self._last_ghost_staleness_ms = staleness_ms
 
+        span = self._ghost_window_span
         logger.debug(
             f"[GHOST] Displayed {text!r}: capture={capture_ms:.1f}ms, "
             f"inference={duration_ms:.1f}ms, staleness={staleness_ms:.1f}ms "
-            f"(window={window_s:.2f}s)"
+            f"(window={window_s:.2f}s, span=({span[0]}, {span[1]}))"
         )
 
         if not self._first_ghost_shown:
@@ -435,7 +436,11 @@ class StandardPipeline(Pipeline):
                 f"staleness {staleness_ms:.0f}ms)"
             )
 
-        self.display.update(ghost=text, window=self._ghost_window_span)
+        # duration_ms rides along as pipeline telemetry (the replay capture
+        # display records it; displays that don't care ignore it).
+        self.display.update(
+            ghost=text, window=self._ghost_window_span, duration_ms=duration_ms
+        )
         if self.stop_detector and self.stop_detector.detect(text):
             self._handle_stop()
             return True
