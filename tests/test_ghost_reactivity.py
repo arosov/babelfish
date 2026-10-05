@@ -54,6 +54,10 @@ class TestCpuSlidingWindow(unittest.TestCase):
 
 
 class TestBenchmarkSplitProfile(unittest.TestCase):
+    """The probe matrix (ADR 0013): fixture-shaped probe series, the
+    operating point (window from the curve, tier/throttle at that
+    window), and the constant paddings."""
+
     @patch("onnx_asr.load_model")
     @patch("babelfish_stt.engine.get_memory_usage")
     def _engine(self, device: str, mock_mem, mock_load) -> STTEngine:
@@ -61,20 +65,70 @@ class TestBenchmarkSplitProfile(unittest.TestCase):
         config = BabelfishConfig(hardware=HardwareConfig(device=device))
         return STTEngine(config=config)
 
+    def _benchmark(self, engine, cost_for_duration):
+        from babelfish_stt.calibration import SAMPLE_RATE
+
+        def measure(audio, padding_s=0.0):
+            return float(cost_for_duration(len(audio) / SAMPLE_RATE))
+
+        with patch.object(engine, "_measure_latency_ms", measure), patch.object(
+            engine, "transcribe", return_value=""
+        ):
+            return engine.benchmark()
+
     def test_profile_includes_ghost_padding(self):
         engine = self._engine("cpu")
-        profile = engine.benchmark()
-        self.assertEqual(profile["ghost_padding_s"], 0.0)  # CPU: window bounds it
-        self.assertIn("min_padding_s", profile)
-        self.assertIn("ghost_throttle_ms", profile)
-        self.assertIn("ghost_window_s", profile)
+        profile = self._benchmark(engine, lambda d: 100.0)
+        self.assertEqual(profile["min_padding_s"], 2.0)
+        self.assertEqual(profile["ghost_throttle_ms"], 250)
+        self.assertEqual(profile["ghost_window_s"], 3.0)
+        self.assertEqual(profile["ghost_padding_s"], 1.0)
 
     def test_cpu_tier_gets_bounded_window(self):
+        """CPU now calibrates like every other device (ADR 0011,
+        amended): a flat ~160ms curve keeps the max window and lands
+        `medium` at the operating point."""
         engine = self._engine("cpu")
-        profile = engine.benchmark()
-        self.assertEqual(profile["tier"], "cpu")
-        self.assertEqual(profile["ghost_window_s"], 1.0)
-        self.assertEqual(profile["ghost_padding_s"], 0.0)
+        profile = self._benchmark(engine, lambda d: 160.0)
+        self.assertEqual(profile["tier"], "medium")
+        self.assertEqual(profile["ghost_window_s"], 3.0)
+        # min_padding is constant 2.0 — the tier-table mapping that
+        # demoted it to 1.5 is gone (ADR 0011-flagged bug, fixed in the
+        # ADR 0013 rework)
+        self.assertEqual(profile["min_padding_s"], 2.0)
+
+    def test_cliff_curve_operating_point_below_the_cliff(self):
+        """DML-shaped cliff: the window comes from the measured curve
+        (2.0 s, below the cliff), NOT from a tier lookup (2.5 s, exactly
+        in the slow regime)."""
+        engine = self._engine("cpu")
+        profile = self._benchmark(engine, lambda d: 57.0 if d <= 2.0 else 260.0)
+        self.assertEqual(profile["ghost_window_s"], 2.0)
+        self.assertEqual(profile["tier"], "high")
+        self.assertEqual(profile["ghost_throttle_ms"], 150)
+
+    def test_probe_series_is_fixture_shaped_not_silence(self):
+        """The probe series is onset-aligned real-speech fixture slices,
+        never digital silence (the old probe was; TDT emits no tokens on
+        zeros, so it measured a cheaper workload than real speech)."""
+        import numpy as np
+        from babelfish_stt.calibration import ONSET_THRESHOLD
+
+        engine = self._engine("cpu")
+        probed = []
+
+        def spy_measure(audio, padding_s=0.0):
+            probed.append(audio)
+            return 35.0
+
+        with patch.object(engine, "_measure_latency_ms", spy_measure), patch.object(
+            engine, "transcribe", return_value=""
+        ):
+            engine.benchmark()
+
+        self.assertTrue(probed)
+        for audio in probed:
+            self.assertGreater(float(np.abs(audio).max()), ONSET_THRESHOLD)
 
     @patch("onnx_asr.load_model")
     @patch("babelfish_stt.engine.get_memory_usage")
@@ -84,8 +138,11 @@ class TestBenchmarkSplitProfile(unittest.TestCase):
         engine = STTEngine(config=config)
         with patch.object(engine, "transcribe", return_value=""):
             profile = engine.benchmark()
+        # The mocked model "recognizes" instantly: every cell measures
+        # ~0ms -> the flat-fast curve shape -> ultra at the max window.
         self.assertEqual(profile["ghost_throttle_ms"], 100)
         self.assertEqual(profile["tier"], "ultra")
+        self.assertEqual(profile["ghost_window_s"], 3.0)
         # min_padding_s is Final-only but still calibrated
         self.assertEqual(profile["min_padding_s"], 2.0)
         # Ghost padding keeps the first windows text-capable

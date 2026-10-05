@@ -87,6 +87,11 @@ babelfish = "babelfish_stt.main:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Bundled real-speech calibration fixtures (ADR 0013): the probe matrix
+# runs offline-safe at startup, so the WAVs ship as package data (~1.4 MB).
+[tool.setuptools.package-data]
+babelfish_stt = ["calibration_assets/*.wav"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",

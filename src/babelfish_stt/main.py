@@ -48,7 +48,17 @@ from babelfish_stt.display import (
     InputDisplay,
 )
 from babelfish_stt.vad import SileroVAD
-from babelfish_stt.config import PerformanceProfile
+from babelfish_stt.config import (
+    CalibrationProfileEntry,
+    PerformanceProfile,
+)
+from babelfish_stt.calibration import (
+    CALIBRATION_SCHEMA_VERSION,
+    CANARY_TOLERANCE,
+    canary_reference,
+    canary_within_tolerance,
+    utc_now_iso,
+)
 from babelfish_stt.config_manager import ConfigManager
 from babelfish_stt.server import BabelfishServer
 from babelfish_stt.notifier import DesktopNotifier
@@ -59,30 +69,81 @@ from babelfish_stt.hotkey_manager import HotkeyManager
 logger = logging.getLogger(__name__)
 
 
-async def calibrate(engine, status) -> PerformanceProfile:
-    """Startup self-calibration (ADR 0011).
+async def calibrate(engine, config_manager, status) -> PerformanceProfile:
+    """Startup self-calibration (ADR 0013): bench once per acceleration
+    backend, canary-checked every launch.
 
-    Runs unconditionally on every launch — there is no tier override to
-    skip it and nothing is ever persisted. The computed profile is passed
-    to the pipeline in memory only; pacing is never user-facing
-    configuration.
+    The full probe matrix runs only when the config file's `calibration`
+    store has no entry for this machine's fingerprint (resolved backend
+    + device + quantization + model + versions), or when the canary —
+    one inference at the stored operating point — deviates beyond
+    tolerance. The canary is what catches everything a fingerprint
+    cannot see (DML's session-level cost bimodality, driver updates,
+    thermal drift) for the price of one warm-up + one inference. A
+    cache hit returns the stored profile with zero matrix cost.
+
+    A re-bench applies tier hysteresis against the previous entry's
+    label (a boundary-straddling backend keeps its label) while the
+    fields take the new measured values. The result is persisted under
+    `calibration` in the config file — never under `pipeline.performance`
+    (that key keeps its strip-migration semantics) — and applied to the
+    pipeline in memory only; pacing is never user-facing configuration.
 
     Survivable failure: on any exception, fall back to the
-    PerformanceProfile() defaults instead of aborting startup — the same
-    fallback posture engine init has for device-load failure.
+    PerformanceProfile() defaults instead of aborting startup — the
+    same fallback posture engine init has for device-load failure — and
+    persist nothing.
     """
     await status("Calibrating Performance...")
     try:
-        perf_data = await asyncio.to_thread(engine.benchmark)
+        fingerprint = engine.calibration_fingerprint()
+        store = config_manager.config.calibration
+        if store.schema_version != CALIBRATION_SCHEMA_VERSION:
+            logger.info(
+                "⏱️ Calibration store schema is stale "
+                f"({store.schema_version} != {CALIBRATION_SCHEMA_VERSION}); "
+                "ignoring stored entries and re-benching."
+            )
+            entry = None
+        else:
+            entry = store.profiles.get(fingerprint)
+        previous_tier = entry.tier if entry is not None else None
+
+        if entry is not None:
+            canary_ms = await asyncio.to_thread(
+                engine.canary_probe, entry.ghost_window_s
+            )
+            reference_ms = canary_reference(entry)
+            if canary_within_tolerance(canary_ms, reference_ms):
+                logger.info(
+                    f"⏱️ Calibration cache hit ({fingerprint}): canary "
+                    f"{canary_ms:.1f}ms within tolerance of stored "
+                    f"{reference_ms:.1f}ms — keeping stored profile "
+                    f"(Window={entry.ghost_window_s}s, "
+                    f"Tier={entry.tier.upper()}, "
+                    f"Throttle={entry.ghost_throttle_ms}ms)"
+                )
+                return entry.to_profile()
+            logger.info(
+                f"⏱️ Calibration canary deviated ({canary_ms:.1f}ms vs "
+                f"stored {reference_ms:.1f}ms, beyond "
+                f"{CANARY_TOLERANCE:.0%}) — re-benching this launch"
+            )
+
+        payload = await asyncio.to_thread(
+            engine.benchmark, previous_tier=previous_tier
+        )
+        entry = CalibrationProfileEntry(
+            **payload, benched_at=utc_now_iso()
+        )
+        config_manager.record_calibration(fingerprint, entry)
+        logger.info(f"✅ Performance calibrated: {entry.tier.upper()}")
+        return entry.to_profile()
     except Exception as e:
         logger.warning(
             f"⚠️ Calibration failed ({e}); keeping default profile."
         )
         return PerformanceProfile()
-
-    profile = PerformanceProfile(**perf_data)
-    logger.info(f"✅ Performance calibrated: {profile.tier.upper()}")
-    return profile
 
 
 def run_stt_loop(
@@ -346,10 +407,11 @@ async def run_babelfish(
         await status(f"Loading STT Engine ({device})...")
         engine = await asyncio.to_thread(STTEngine, config=config_manager.config)
 
-        # 5. Hardware Self-Calibration (ADR 0011: unconditional, in-memory
-        # only) — runs before the pipeline is built so the profile can be
-        # passed in.
-        profile = await calibrate(engine, status)
+        # 5. Hardware Self-Calibration (ADR 0013: bench once per
+        # acceleration backend, canary-checked every launch, cached in the
+        # config's `calibration` section) — runs before the pipeline is
+        # built so the profile can be passed in.
+        profile = await calibrate(engine, config_manager, status)
 
         await status(
             f"Loading WakeWord ({config_manager.config.voice.wakeword or 'None'})..."

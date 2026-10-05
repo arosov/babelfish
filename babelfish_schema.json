@@ -34,6 +34,81 @@
       "title": "CacheConfig",
       "type": "object"
     },
+    "CalibrationConfig": {
+      "description": "The persisted calibration cache (ADR 0013): bench once per\nacceleration backend, keyed by fingerprint, canary-checked every\nlaunch.\n\nDeliberately NOT `pipeline.performance` \u2014 that key keeps its\nlive strip-migration semantics from the ADR 0011 rework; calibration\noutput lives in its own top-level section so stale pacing keys are\nstill wiped while benched entries survive.",
+      "properties": {
+        "schema_version": {
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "profiles": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CalibrationProfileEntry"
+          },
+          "title": "Profiles",
+          "type": "object"
+        }
+      },
+      "title": "CalibrationConfig",
+      "type": "object"
+    },
+    "CalibrationProfileEntry": {
+      "description": "One benched calibration profile, persisted under its fingerprint in\nthe `calibration` section (ADR 0013).\n\nThe profile fields are the operating point (window, throttle, padding,\ntier label); `operating_cost_ms` is the Ghost cohort cost measured at\nthat window; `cells` is the full measured Ghost probe matrix (fixture \u2192\nwindow \u2192 median ms) \u2014 kept for the canary's reference and for\nsupport/diagnostic value; `final_rtfx` is informational.",
+      "properties": {
+        "ghost_throttle_ms": {
+          "title": "Ghost Throttle Ms",
+          "type": "integer"
+        },
+        "ghost_window_s": {
+          "title": "Ghost Window S",
+          "type": "number"
+        },
+        "ghost_padding_s": {
+          "title": "Ghost Padding S",
+          "type": "number"
+        },
+        "min_padding_s": {
+          "title": "Min Padding S",
+          "type": "number"
+        },
+        "tier": {
+          "title": "Tier",
+          "type": "string"
+        },
+        "operating_cost_ms": {
+          "title": "Operating Cost Ms",
+          "type": "number"
+        },
+        "final_rtfx": {
+          "title": "Final Rtfx",
+          "type": "number"
+        },
+        "cells": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object"
+          },
+          "title": "Cells",
+          "type": "object"
+        },
+        "benched_at": {
+          "default": "",
+          "title": "Benched At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ghost_throttle_ms",
+        "ghost_window_s",
+        "tier",
+        "operating_cost_ms"
+      ],
+      "title": "CalibrationProfileEntry",
+      "type": "object"
+    },
     "HardwareConfig": {
       "properties": {
         "device": {
@@ -157,11 +232,6 @@
           "default": "Ctrl+Space",
           "title": "Toggle Listening",
           "type": "string"
-        },
-        "force_listen": {
-          "default": "Left Shift",
-          "title": "Force Listen",
-          "type": "string"
         }
       },
       "title": "ShortcutsConfig",
@@ -178,6 +248,11 @@
           "default": false,
           "title": "Type Ghost",
           "type": "boolean"
+        },
+        "typing_throttle_ms": {
+          "default": 350,
+          "title": "Typing Throttle Ms",
+          "type": "integer"
         },
         "separator": {
           "$ref": "#/$defs/SeparatorPolicy",
@@ -273,6 +348,9 @@
     },
     "pipeline": {
       "$ref": "#/$defs/PipelineConfig"
+    },
+    "calibration": {
+      "$ref": "#/$defs/CalibrationConfig"
     },
     "system_input": {
       "$ref": "#/$defs/SystemInputConfig"

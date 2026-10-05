@@ -2,6 +2,16 @@
 
 Status: Accepted
 
+Superseded in part (2026-10-05, the calibration rework): the *"the benchmark
+runs on every startup"* and *"applied in memory only — never persisted"*
+clauses are replaced by bench-once-per-acceleration-backend, cached in the
+config file's `calibration` section and canary-checked every launch — see
+[ADR 0013](0013-calibration-is-cached-per-backend.md). The silence probe, the
+hand-picked tier table, and the one-scalar→bundle mapping it describes were
+also removed there (real-speech probe matrix, window-from-curve, tier at the
+operating point). The survivable-failure posture, the median measurement
+robustness, and the no-override/no-manual-knob posture below carry forward.
+
 Amended (2026-10-04, the Ghost rework): the tier-override concept is gone.
 Calibration is unconditional — there is no `tier` in configuration to skip
 it, no latch flag, and no manual override; `pipeline.performance` left the
@@ -67,13 +77,25 @@ file meant "skip calibration" — that concept is removed; the tier lives
 only as an informational label on the computed profile.)*
 
 **Robust measurement.** One warm-up inference is performed and discarded; the
-tier decision uses the **median** of the five probes, not the mean. The
-probes are skipped entirely when `device_type == "cpu"` — the hardcoded CPU
-tier is applied directly instead of measuring and overwriting. The
-silence-workload skew is documented in a comment and accepted: it biases
-against fast tiers (measured latency under-reads speech latency), which errs
-toward a conservative tier, and fixing it would mean synthesising speech-like
-audio for no demonstrated need.
+tier decision uses the **median** of the five probes, not the mean.
+*(Amendment 2026-10-05, CPU calibration enabled: all devices probe — the
+"probes are skipped entirely when `device_type == "cpu"`" clause is removed
+and the CPU tier is no longer fixed. CPU latency spans a wide range in the
+wild (RTFx ~1–36, from Cortex A53 to 9800X3D-class), so a single hardcoded
+CPU tier cannot serve that spread, and on this machine CPU latency is
+per-call-overhead-bound rather than audio-length-bound — measured flat
+~190–220 ms from 1.0 s to 3.0 s windows, landing `low_power`. The measurement
+picked the `low_power` values over the old hardcoded ones
+(throttle 300 / window 1.0 / ghost_padding 0.0), whose
+`ghost_padding_s=0.0` is exactly the combination `PerformanceProfile`'s
+docstring warns produces empty `""` first windows. Probes cost ~6 ×
+~200 ms ≈ 1.2 s of startup on CPU, accepted against the ~4 s model load.
+On probe failure, CPU falls back to the same generic
+`PerformanceProfile()` defaults as every other device — one posture for
+all backends.)* The silence-workload skew is documented in a comment and
+accepted: it biases against fast tiers (measured latency under-reads
+speech latency), which errs toward a conservative tier, and fixing it
+would mean synthesising speech-like audio for no demonstrated need.
 
 **Survivable failure.** Calibration is wrapped in try/except: on any exception,
 log a warning and fall back to `PerformanceProfile()` defaults
@@ -82,10 +104,10 @@ engine init already has for device-load failure.
 
 ## Consequences
 
-**Startup costs ~6 inferences on GPU** (~6 × tens-of-ms on an `ultra`-class
-device) for every launch. That is the price of never trusting a stale
-profile; CPU launches skip it because their tier is fixed regardless of
-the measurement.
+**Startup costs ~6 inferences** (~6 × tens-of-ms on an `ultra`-class GPU,
+~6 × ~200 ms ≈ 1.2 s on CPU — under the 2026-10-05 amendment, CPU no longer
+skips them) for every launch. That is the price of never trusting a stale
+profile.
 
 **The "Calibrating Performance…" status appears every launch.** It is the
 normal startup contract, not a one-time event.
@@ -116,7 +138,8 @@ enlarges the shared audio region ADR 0010's composer aligns on.
 
 **Tests.** Benchmark tests cover: a cold-start-shaped sample list (one large
 first sample) does not demote the tier under median; a spiked series does not
-demote under median; the CPU branch runs zero probes; a raising benchmark
+demote under median; the CPU branch runs probes and measures a tier from the
+table (the fixed CPU tier is gone — amended 2026-10-05); a raising benchmark
 falls back to `PerformanceProfile()` defaults and startup proceeds; calibration
 is unconditional (no configuration can skip it); no benchmark path writes
 `pipeline.performance` to the config file; stale `pipeline.performance` keys

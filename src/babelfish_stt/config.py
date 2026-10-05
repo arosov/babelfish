@@ -1,6 +1,6 @@
 import os
 import sys
-from typing import List, Optional
+from typing import Dict, List, Optional
 from enum import Enum
 from pydantic import BaseModel, Field, model_validator
 
@@ -47,12 +47,14 @@ class HardwareStatus(BaseModel):
 
 class PerformanceProfile(BaseModel):
     """Pacing and window fields for the Ghost pass — the calibration
-    output type (ADR 0011).
+    output type (ADR 0011, reworked by ADR 0013).
 
     Never user-facing configuration: the startup benchmark computes a
-    profile on every launch and it is applied to the pipeline in memory
-    only. `tier` is the measured tier label (informational — logs and
-    the replay capture header); it is not an input.
+    profile, cached per acceleration backend in the config file's
+    `calibration` section and canary-checked every launch, and it is
+    applied to the pipeline in memory only. `tier` is the measured tier
+    label (informational — logs and the replay capture header); it is
+    not an input.
     """
 
     ghost_throttle_ms: int = 50
@@ -67,6 +69,60 @@ class PerformanceProfile(BaseModel):
     tier: str = "uncalibrated"
 
 
+# Version of the persisted calibration record format (ADR 0013). Bump on
+# any change to what a stored entry means (probe protocol, cell-table
+# shape, boundary table): the store is ignored when stale and re-benched,
+# and the version rides in the fingerprint so a bump rotates cache keys.
+CALIBRATION_SCHEMA_VERSION = 1
+
+
+class CalibrationProfileEntry(BaseModel):
+    """One benched calibration profile, persisted under its fingerprint in
+    the `calibration` section (ADR 0013).
+
+    The profile fields are the operating point (window, throttle, padding,
+    tier label); `operating_cost_ms` is the Ghost cohort cost measured at
+    that window; `cells` is the full measured Ghost probe matrix (fixture →
+    window → median ms) — kept for the canary's reference and for
+    support/diagnostic value; `final_rtfx` is informational.
+    """
+
+    ghost_throttle_ms: int
+    ghost_window_s: float
+    ghost_padding_s: float = 1.0
+    min_padding_s: float = 2.0
+    tier: str
+    operating_cost_ms: float
+    final_rtfx: float = 0.0
+    cells: Dict[str, Dict[str, float]] = Field(default_factory=dict)
+    benched_at: str = ""
+
+    def to_profile(self) -> PerformanceProfile:
+        """The in-memory profile this entry hands to the pipeline."""
+        return PerformanceProfile(
+            ghost_throttle_ms=self.ghost_throttle_ms,
+            ghost_window_s=self.ghost_window_s,
+            ghost_padding_s=self.ghost_padding_s,
+            min_padding_s=self.min_padding_s,
+            tier=self.tier,
+        )
+
+
+class CalibrationConfig(BaseModel):
+    """The persisted calibration cache (ADR 0013): bench once per
+    acceleration backend, keyed by fingerprint, canary-checked every
+    launch.
+
+    Deliberately NOT `pipeline.performance` — that key keeps its
+    live strip-migration semantics from the ADR 0011 rework; calibration
+    output lives in its own top-level section so stale pacing keys are
+    still wiped while benched entries survive.
+    """
+
+    schema_version: int = CALIBRATION_SCHEMA_VERSION
+    profiles: Dict[str, CalibrationProfileEntry] = Field(default_factory=dict)
+
+
 class PipelineConfig(BaseModel):
     silence_threshold_ms: int = 400
     pre_roll_ms: int = 300
@@ -74,7 +130,6 @@ class PipelineConfig(BaseModel):
 
 class ShortcutsConfig(BaseModel):
     toggle_listening: str = Field(default="Ctrl+Space", title="Toggle Listening")
-    force_listen: str = Field(default="Left Shift", title="Force Listen")
 
 
 class ActivationDetectionConfig(BaseModel):
@@ -89,9 +144,15 @@ class TranscriptionWindowConfig(BaseModel):
 class SystemInputConfig(BaseModel):
     enabled: bool = False
     type_ghost: bool = False
+    # Minimum spacing between typed keystrokes into the focused application
+    # (milliseconds). 0 is deliberately not offered: unpaced ~50ms applies
+    # flood editors and a lost modifier key-up turns backspaces into word
+    # deletion (see input_manager.py). Hot-reloaded from the config file.
+    typing_throttle_ms: int = 350
     # Injection is always clipboard paste + pynput backspace (ADR 0009); the
     # old "strategy" field is gone. Unknown keys from stale configs (e.g.
-    # "strategy": "native") are silently ignored by pydantic's default parse.
+    # "strategy": "native", or the removed "force_listen" shortcut) are
+    # silently ignored by pydantic's default parse.
     separator: SeparatorPolicy = SeparatorPolicy.TRAILING
 
 
@@ -134,6 +195,9 @@ class BabelfishConfig(BaseModel):
     hardware: HardwareConfig = Field(default_factory=HardwareConfig)
     status: HardwareStatus = Field(default_factory=HardwareStatus)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    # Persisted calibration cache (ADR 0013) — bench output keyed by
+    # fingerprint, never a user input.
+    calibration: CalibrationConfig = Field(default_factory=CalibrationConfig)
     system_input: SystemInputConfig = Field(default_factory=SystemInputConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     ui: UIConfig = Field(default_factory=UIConfig)

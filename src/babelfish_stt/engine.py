@@ -9,7 +9,32 @@ import time
 from pathlib import Path
 from typing import Any, Optional, List, Dict
 from babelfish_stt.reconfigurable import Reconfigurable
-from babelfish_stt.config import PipelineConfig, BabelfishConfig
+from babelfish_stt.calibration import (
+    CANDIDATE_WINDOWS_S,
+    CANARY_FIXTURE,
+    FINAL_FIXTURE_MIN_S,
+    MIN_PADDING_S,
+    PROBES_PER_CELL,
+    SAMPLE_RATE,
+    column_cohort,
+    entry_payload,
+    final_rtfx as final_rtfx_of,
+    fingerprint,
+    load_calibration_fixtures,
+    load_fixture_audio,
+    onnx_asr_version,
+    ort_version,
+    select_window,
+    slice_window,
+    table_tier_for_cost,
+    tier_for_cost,
+    throttle_for_cost,
+)
+from babelfish_stt.config import (
+    CALIBRATION_SCHEMA_VERSION,
+    PipelineConfig,
+    BabelfishConfig,
+)
 from babelfish_stt.hardware import get_memory_usage, get_device_name
 from babelfish_stt.placement import onnx_providers, resolve_device
 from pydantic import BaseModel
@@ -136,6 +161,9 @@ class STTEngine(Reconfigurable):
         else:
             quantization = config.hardware.quantization
             logger.info(f"🐌 CPU mode: Using quantization={quantization}")
+        # Recorded for the calibration fingerprint (ADR 0013): the bench
+        # is keyed by what actually ran, not what was requested.
+        self.quantization = quantization
 
         # Map Babelfish device to ONNX Runtime providers
         providers = self._get_providers(self.device_type)
@@ -173,6 +201,7 @@ class STTEngine(Reconfigurable):
                     logger.warning(f"⚠️ {fallback_fix}")
                 logger.warning("Retrying with CPU provider...")
                 self.device_type = "cpu"  # Update device type to cpu
+                self.quantization = None  # the fallback forces full precision
                 self.model = self._load_model_bounded(
                     self.MODEL_NAME,
                     path=str(model_path) if model_path else None,
@@ -339,99 +368,175 @@ class STTEngine(Reconfigurable):
 
         return result.strip() if result else ""
 
-    def _measure_latency_ms(self, test_audio: np.ndarray) -> float:
-        """One calibration probe: Ghost-shaped inference latency in ms."""
+    def _measure_latency_ms(
+        self, test_audio: np.ndarray, padding_s: float = 0.0
+    ) -> float:
+        """One calibration probe: inference latency in ms for the given
+        audio at the given padding protocol."""
         import time
 
         start = time.perf_counter()
-        self.transcribe(test_audio, padding_s=2.0)
+        self.transcribe(test_audio, padding_s=padding_s)
         return (time.perf_counter() - start) * 1000
 
-    def benchmark(self) -> dict:
-        """
-        Runs dummy inferences to measure hardware performance and determine
-        optimal tiers.
+    def calibration_fingerprint(self) -> str:
+        """Cache key for a benched profile (ADR 0013): resolved backend +
+        device name + quantization + model + bench schema + onnxruntime
+        and onnx-asr versions.
 
-        The result is applied in memory only and never persisted (ADR 0011).
+        Uses the RESOLVED device (self.device_type, reassigned in place
+        by the GPU->CPU fallbacks above) so a driver-broken launch
+        can't poison a GPU-keyed entry with CPU measurements.
         """
-        logger.info("⏱️ Starting hardware self-calibration...")
+        return fingerprint(
+            backend=self.device_type,
+            device_name=get_device_name(self.device_type),
+            quantization=self.quantization,
+            model_name=self.MODEL_NAME,
+            schema_version=CALIBRATION_SCHEMA_VERSION,
+            ort_version=ort_version(),
+            onnx_asr_version=onnx_asr_version(),
+        )
+
+    def canary_probe(self, window_s: float) -> float:
+        """One canary inference at the stored operating point (ADR 0013).
+
+        Replays the canary fixture's cell at the stored window. The
+        warm-up is discarded because on a cache hit this is the
+        session's FIRST inference — its cold session/kernel init would
+        otherwise read as deviation and defeat the cache.
+        """
+        audio = load_fixture_audio(CANARY_FIXTURE)
+        probe_audio = slice_window(audio, window_s)
+        self.transcribe(probe_audio, padding_s=0.0)  # discarded warm-up
+        canary_ms = self._measure_latency_ms(probe_audio, padding_s=0.0)
+        logger.debug(
+            f"⏱️ Calibration canary: {canary_ms:.1f}ms at window "
+            f"{window_s:.1f}s ({CANARY_FIXTURE}, onset-aligned)"
+        )
+        return canary_ms
+
+    def benchmark(self, previous_tier: Optional[str] = None) -> dict:
+        """Runs the real-speech probe matrix (ADR 0013) and returns the
+        benched entry payload: profile fields (tier/throttle/window/
+        paddings) plus the persistence extras (operating_cost_ms,
+        final_rtfx, and the measured cell table).
+
+        The single-scalar silence probe is gone (superseded): silence is
+        not a Ghost-shaped probe and one scalar cannot serve both
+        passes — the Ghost/Final rank order flips across backends.
+        Instead:
+
+        - Ghost cells: 5 bundled fixtures x candidate windows, sliced
+          onset-aligned so every cell contains speech, each probed with
+          1 discarded warm-up + 3 timed inferences, per-cell median.
+        - Cohorts: per-window-column median of the 5 fixture cells; any
+          cell median >2x its column's cohort is dropped and logged.
+        - ghost_window_s comes from the measured curve (the largest
+          candidate window whose cohort stays within budget/headroom),
+          NOT from a tier lookup — DML's cliff (2.0->2.3 s in its
+          morning regime; 1.0->1.5 s later) would put a tier-lookup
+          window of 2.5 s exactly in the slow regime.
+        - Tier + throttle come from the cost AT that window (the
+          operating point). `previous_tier` enables the hysteresis that
+          keeps a boundary-straddling backend's label stable.
+        - min_padding_s is constant 2.0 (quality-driven, un-bundled from
+          the tier); ghost_padding_s stays 1.0.
+        - Final cells: per long fixture, one discarded warm-up + one
+          full-length pass -> informational Final RTFx (each full length
+          is a new input shape; cold-shape cost must not pollute it).
+        """
+        logger.info(
+            "⏱️ Starting hardware self-calibration "
+            f"(real-speech probe matrix, {self.device_type})..."
+        )
 
         import statistics
 
-        # The CPU tier is fixed regardless of any measurement: probes would
-        # only be measured and then overwritten with the hardcoded values,
-        # so none run (ADR 0011).
-        if self.device_type == "cpu":
-            return {
-                "tier": "cpu",
-                "ghost_throttle_ms": 300,
-                "ghost_window_s": 1.0,  # Sliding window: bounded Ghost inference on CPU too
-                "ghost_padding_s": 0.0,  # 1s window already bounds CPU Ghost audio
-                "min_padding_s": 0,
-            }
+        fixtures = load_calibration_fixtures()
+        cells: Dict[str, Dict[str, float]] = {}
+        cohorts: Dict[float, float] = {}
 
-        # Test 1: Ghost pass (2.5s window)
-        test_audio = np.zeros(int(16000 * 2.5), dtype=np.float32)
+        for window in CANDIDATE_WINDOWS_S:
+            column: Dict[str, float] = {}
+            for name, audio in fixtures.items():
+                probe_audio = slice_window(audio, window)
+                # Per-cell warm-up, discarded: the first recognize() on
+                # a new input length pays session/kernel init (ADR 0011's
+                # cold-start finding, applied to every cell).
+                self.transcribe(probe_audio, padding_s=0.0)
+                probes = [
+                    self._measure_latency_ms(probe_audio, padding_s=0.0)
+                    for _ in range(PROBES_PER_CELL)
+                ]
+                column[name] = float(statistics.median(probes))
+                cells.setdefault(name, {})[window] = column[name]
 
-        # One warm-up inference is performed and discarded: the first
-        # recognize() pays session and kernel init, and a mean that includes
-        # it demoted fast hardware (four ~40ms warm samples plus one ~600ms
-        # cold sample average ~150ms -> two tiers down; the tier boundaries
-        # sit exactly where a single warmup sample throws the vote).
-        self._measure_latency_ms(test_audio)
+            cohort, dropped = column_cohort(column)
+            for name in dropped:
+                logger.warning(
+                    f"⏱️ Calibration outlier dropped: {name} @ {window:.1f}s "
+                    f"({column[name]:.1f}ms; column cohort {cohort:.1f}ms "
+                    "after the >2x drop)"
+                )
+            cohorts[window] = cohort
+            cell_summary = ", ".join(
+                f"{name}={column[name]:.1f}" for name in fixtures
+            )
+            logger.info(
+                f"⏱️ Calibration: window {window:.1f}s cohort "
+                f"{cohort:.1f}ms ({cell_summary})"
+            )
 
-        measurements = [self._measure_latency_ms(test_audio) for _ in range(5)]
-        median_latency = statistics.median(measurements)
-        logger.info(f"⏱️ Calibration: Median Ghost Latency = {median_latency:.2f}ms")
-        logger.debug(
-            f"⏱️ Calibration probes (ms): "
-            f"{[round(m, 1) for m in measurements]}"
+        window = select_window(cohorts)
+        operating_cost = cohorts[window]
+        tier = tier_for_cost(operating_cost, previous_tier)
+        throttle = throttle_for_cost(operating_cost)
+        if tier != table_tier_for_cost(operating_cost):
+            logger.info(
+                f"⏱️ Calibration: tier label kept as {tier} by hysteresis "
+                f"(measured {operating_cost:.1f}ms, table says "
+                f"{table_tier_for_cost(operating_cost)})"
+            )
+
+        # Final cells: one full-length pass per long fixture ->
+        # informational Final RTFx (the whole utterance, like the Final
+        # pass transcribes it). Each full-length audio is a NEW input
+        # shape the matrix never saw (slices cap at the largest
+        # candidate window), and the first inference at a new shape pays
+        # a large one-time cost (measured: 157 ms vs ~37 ms warmed) —
+        # so each Final cell gets the same discarded warm-up the Ghost
+        # cells do, or the RTFx under-reports steady state by 2-4x.
+        rtfx_values = []
+        for name, audio in fixtures.items():
+            if len(audio) / SAMPLE_RATE <= FINAL_FIXTURE_MIN_S:
+                continue
+            self.transcribe(audio, padding_s=MIN_PADDING_S)  # discarded warm-up
+            cost_ms = self._measure_latency_ms(
+                audio, padding_s=MIN_PADDING_S
+            )
+            rtfx_values.append(final_rtfx_of(len(audio) / SAMPLE_RATE, cost_ms))
+            logger.info(
+                f"⏱️ Calibration Final pass: {name} "
+                f"{len(audio) / SAMPLE_RATE:.1f}s in {cost_ms:.1f}ms "
+                f"(RTFx {rtfx_values[-1]:.0f}x)"
+            )
+        final_rtfx = (
+            float(statistics.median(rtfx_values)) if rtfx_values else 0.0
         )
-
-        # NOTE (ADR 0011): TDT emits no tokens on digital silence, so this
-        # probe measures a cheaper workload than real speech — an unreliable
-        # underestimate in both directions across backends. The skew is
-        # accepted: it biases against fast tiers, which errs toward a
-        # conservative tier; synthesizing speech-like audio for no
-        # demonstrated need is not worth the mechanism.
-
-        # Tier logic, decided on the median (not the mean) so no single
-        # cold or tail sample can demote the tier.
-        # Spacing values are the minimum spacing between Ghost submits.
-        # min_padding_s feeds the Final pass only; the Ghost pass uses
-        # ghost_padding_s (1.0 — bumped from 0.0 after live testing showed
-        # the first unpadded windows transcribe to "", delaying the first
-        # visible Ghost by ~400ms).
-        if median_latency < 40:
-            tier = "ultra"
-            throttle = 100
-            window = 3.0
-            padding = 2.0
-        elif median_latency < 80:
-            tier = "high"
-            throttle = 150
-            window = 2.5
-            padding = 2.0
-        elif median_latency < 150:
-            tier = "medium"
-            throttle = 250
-            window = 2.0
-            padding = 1.5
-        else:
-            tier = "low_power"
-            throttle = 400
-            window = 1.5
-            padding = 1.0
 
         logger.info(
-            f"⏱️ Calibration complete: Tier={tier.upper()}, Spacing={throttle}ms, "
-            f"Window={window}s"
+            f"⏱️ Calibration complete: Window={window}s, "
+            f"Tier={tier.upper()}, Throttle={throttle}ms, "
+            f"OperatingCost={operating_cost:.1f}ms, "
+            f"FinalRTFx={final_rtfx:.0f}x"
         )
 
-        return {
-            "tier": tier,
-            "ghost_throttle_ms": throttle,
-            "ghost_window_s": window,
-            "ghost_padding_s": 1.0,  # keeps the first, short windows text-capable
-            "min_padding_s": padding,
-        }
+        return entry_payload(
+            tier=tier,
+            ghost_throttle_ms=throttle,
+            ghost_window_s=window,
+            operating_cost_ms=operating_cost,
+            cells=cells,
+            final_rtfx=final_rtfx,
+        )

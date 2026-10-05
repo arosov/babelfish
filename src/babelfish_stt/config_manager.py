@@ -4,8 +4,11 @@ import logging
 import tempfile
 from pathlib import Path
 from typing import List, Dict, Any, TYPE_CHECKING, Optional
+from babelfish_stt.calibration import CALIBRATION_PROFILES_CAP
 from babelfish_stt.config import (
     BabelfishConfig,
+    CalibrationProfileEntry,
+    CALIBRATION_SCHEMA_VERSION,
     HardwareConfig,
     PipelineConfig,
     VoiceConfig,
@@ -204,6 +207,44 @@ class ConfigManager:
         )
         self.save()
         logger.info(f"Optimal defaults saved to {self.config_path}.")
+
+    def record_calibration(
+        self, fingerprint: str, entry: CalibrationProfileEntry
+    ) -> None:
+        """Persists a benched calibration entry under its fingerprint
+        (ADR 0013): bench once per acceleration backend, cached in the
+        top-level `calibration` section (never `pipeline.performance` —
+        that key keeps its strip-migration semantics).
+
+        The store is capped at CALIBRATION_PROFILES_CAP entries (one per
+        acceleration backend), pruned oldest-first by `benched_at`. No
+        propagation: no component consumes calibration as configuration —
+        it is bench output, applied to the pipeline in memory only.
+        """
+        calibration = self.config.calibration
+        calibration.schema_version = CALIBRATION_SCHEMA_VERSION
+        calibration.profiles[fingerprint] = entry
+
+        pruned = []
+        while len(calibration.profiles) > CALIBRATION_PROFILES_CAP:
+            oldest = min(
+                calibration.profiles,
+                key=lambda key: calibration.profiles[key].benched_at,
+            )
+            pruned.append(oldest)
+            del calibration.profiles[oldest]
+        if pruned:
+            logger.info(
+                "⏱️ Calibration store pruned (cap "
+                f"{CALIBRATION_PROFILES_CAP}): dropped {', '.join(pruned)}"
+            )
+
+        self.save()
+        logger.info(
+            f"⏱️ Calibration persisted under fingerprint {fingerprint} "
+            f"({entry.tier}, window {entry.ghost_window_s}s, "
+            f"throttle {entry.ghost_throttle_ms}ms)"
+        )
 
     def save(self):
         """

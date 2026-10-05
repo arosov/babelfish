@@ -163,6 +163,11 @@ the `cpu` extra is expected to work, but it is currently untested.
   on CUDA, OpenVINO, and DirectML.
 - **Two-Pass Pipeline:** Ghost pass for real-time feedback, Final pass for
   maximum accuracy.
+- **Self-Calibrating, Bench-Once-Per-Backend:** a real-speech probe matrix
+  benches the model once per acceleration backend and caches the result in
+  the config's `calibration` section ([ADR 0013](docs/adr/0013-calibration-is-cached-per-backend.md));
+  every launch canary-checks it with a single inference (±25%) and re-benches
+  only on regime change.
 - **Local Wake-word / Stop-word:** integrated `openwakeword` support.
 - **Global Hotkeys:** PTT and Toggle via `pynput`.
 - **Desktop Notifications:** wake/stop-word toasts in both modes.
