@@ -174,8 +174,9 @@ class StandardPipeline(Pipeline):
         self.engine = engine
         self.display = display
 
-        # Performance profile: the startup calibration's output (ADR 0011),
-        # applied in memory only — never user configuration.
+        # Performance profile: the startup calibration's output (ADR 0011,
+        # cached per backend in the config's `calibration` section per
+        # ADR 0013) — applied in memory only, never user configuration.
         self.perf = perf or PerformanceProfile()
 
         self.active_buffer = []
@@ -214,9 +215,9 @@ class StandardPipeline(Pipeline):
         if isinstance(config, PipelineConfig):
             self.silence_threshold_ms = config.silence_threshold_ms
             self.pre_roll_ms = config.pre_roll_ms
-            # The performance profile is calibration output (ADR 0011), not
-            # configuration: it is passed at construction and never
-            # hot-reloaded.
+            # The performance profile is calibration output (ADR 0011,
+            # cached per backend per ADR 0013), not configuration: it is
+            # passed at construction and never hot-reloaded.
 
     def process_chunk(
         self, chunk: np.ndarray, now_ms: float, is_speech: Optional[bool] = None
@@ -318,11 +319,13 @@ class StandardPipeline(Pipeline):
                     # Manual Finalization
                     full_audio = np.concatenate(self.active_buffer)
                     # Run transcribe in main thread (blocking but safe here for safety)
+                    t_start = time.perf_counter()
                     text = self.engine.transcribe(
                         full_audio, padding_s=self.perf.min_padding_s
                     )
+                    final_pass_ms = (time.perf_counter() - t_start) * 1000
                     if text:
-                        self.display.finalize(text)
+                        self.display.finalize(text, final_pass_ms=final_pass_ms)
                     self.reset_state()
                     # Continue listening with empty buffer
                     return False
@@ -373,11 +376,13 @@ class StandardPipeline(Pipeline):
 
                 # Final pass: blocking for consistency
                 # Since STTEngine now has a lock, it won't run concurrently with ghost pass
+                t_start = time.perf_counter()
                 text = self.engine.transcribe(
                     full_audio, padding_s=self.perf.min_padding_s
                 )
+                final_pass_ms = (time.perf_counter() - t_start) * 1000
                 if text:
-                    self.display.finalize(text)
+                    self.display.finalize(text, final_pass_ms=final_pass_ms)
                     if self.stop_detector and self.stop_detector.detect(text):
                         self._handle_stop()
                         return True
@@ -438,18 +443,24 @@ class StandardPipeline(Pipeline):
             f"(window={window_s:.2f}s, span=({span[0]}, {span[1]}))"
         )
 
+        onset_ms: Optional[float] = None
         if not self._first_ghost_shown:
             self._first_ghost_shown = True
+            onset_ms = now_ms - self._utterance_start_ms
             logger.info(
-                f"⚡ First Ghost: {now_ms - self._utterance_start_ms:.0f}ms after "
+                f"⚡ First Ghost: {onset_ms:.0f}ms after "
                 f"speech onset (inference {duration_ms:.0f}ms, "
                 f"staleness {staleness_ms:.0f}ms)"
             )
 
-        # duration_ms rides along as pipeline telemetry (the replay capture
-        # display records it; displays that don't care ignore it).
+        # duration_ms and onset_ms ride along as pipeline telemetry (the
+        # replay capture display records them; displays that don't care
+        # ignore them). onset_ms is only present on the first Ghost.
         self.display.update(
-            ghost=text, window=self._ghost_window_span, duration_ms=duration_ms
+            ghost=text,
+            window=self._ghost_window_span,
+            duration_ms=duration_ms,
+            onset_ms=onset_ms,
         )
         if self.stop_detector and self.stop_detector.detect(text):
             self._handle_stop()

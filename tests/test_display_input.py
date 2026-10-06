@@ -8,7 +8,34 @@ def mock_config_manager():
     manager = MagicMock()
     manager.config.system_input.enabled = True
     manager.config.system_input.type_ghost = True
+    manager.config.system_input.typing_throttle_ms = 350
     return manager
+
+
+def test_input_display_sets_typing_throttle_from_config(mock_config_manager):
+    """The typing throttle rides the config: ms converted to seconds before
+    each frame is enqueued (hot-reloadable, no restart)."""
+    mock_config_manager.config.system_input.typing_throttle_ms = 250
+    with patch("babelfish_stt.display.InputSimulator") as MockSim:
+        display = InputDisplay(mock_config_manager)
+        mock_sim = MockSim.return_value
+
+        display.update(ghost="hello")
+        assert mock_sim.throttle_s == pytest.approx(0.25)
+
+
+def test_input_display_typing_throttle_hot_reload(mock_config_manager):
+    """A config change between frames takes effect on the next frame."""
+    with patch("babelfish_stt.display.InputSimulator") as MockSim:
+        display = InputDisplay(mock_config_manager)
+        mock_sim = MockSim.return_value
+
+        display.update(ghost="first")
+        assert mock_sim.throttle_s == pytest.approx(0.35)
+
+        mock_config_manager.config.system_input.typing_throttle_ms = 600
+        display.update(ghost="second")
+        assert mock_sim.throttle_s == pytest.approx(0.6)
 
 
 def test_input_display_update_enabled(mock_config_manager):

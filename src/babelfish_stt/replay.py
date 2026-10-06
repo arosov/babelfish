@@ -167,7 +167,7 @@ class CaptureDisplay:
             }
         )
 
-    def finalize(self, text: str = ""):
+    def finalize(self, text: str = "", **kwargs):
         self.events.append({"type": "final", "text": text, "ts": time.time()})
 
     def reset(self):
