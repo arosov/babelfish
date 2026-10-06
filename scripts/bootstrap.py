@@ -809,6 +809,11 @@ class HardwareLaunchPlan:
 
     def build(self, hw_mode: str, extra_args: Optional[List[str]] = None):
         env = self.env_manager.get_env_with_dll_injection(hw_mode)
+        # UTF-8 stdio for the child regardless of pipe or console codepage:
+        # locale codecs (cp1252 'charmap') crash on any non-cp1252 character
+        # a transcript contains. main.py reconfigures its streams too; this
+        # pins the mode for paths that print before that reconfigure runs.
+        env["PYTHONUTF8"] = "1"
         args = [UV_CMD, "run", "--no-sync", "babelfish"]
         if DRIVEN:
             args += ["--server", "--port", str(PORT)]

@@ -36,6 +36,31 @@ class TerminalDisplay:
         self._composer = GhostComposer()
         self._line_len = 0  # visible chars on the current terminal line
         self._line_open = False  # current line has content
+        self._degrade_warned = False  # first degraded draw already reported?
+
+    def _safe_write(self, text: str) -> None:
+        """Unicode-safe console write that can never raise.
+
+        The stream encoding is forced to UTF-8 at startup (main.py) and
+        PYTHONUTF8=1 is pinned by the bootstrap, so this normally just
+        delegates. Last-resort net: if the stream still rejects a character
+        (legacy console before reconfigure, exotic redirect), the draw is
+        degraded with replacement characters for the offending span instead
+        of raising UnicodeEncodeError into the STT loop and killing it.
+        The underlying transcript text is never mutated — only this draw.
+        """
+        try:
+            sys.stdout.write(text)
+        except UnicodeEncodeError:
+            if not self._degrade_warned:
+                self._degrade_warned = True
+                logger.warning(
+                    f"Terminal stream rejected non-representable characters "
+                    f"({text[:40]!r} ...); degrading console-only draws with "
+                    f"replacement characters"
+                )
+            enc = getattr(sys.stdout, "encoding", None) or "ascii"
+            sys.stdout.write(text.encode(enc, "replace").decode(enc))
 
     def update(
         self,
@@ -93,7 +118,7 @@ class TerminalDisplay:
 
         # Clear previous line if new text is shorter
         padding = " " * max(0, self._line_len - len(plain_text))
-        sys.stdout.write(f"\r{display_text}{padding}")
+        self._safe_write(f"\r{display_text}{padding}")
         sys.stdout.flush()
 
         self._line_len = len(plain_text)
@@ -101,10 +126,14 @@ class TerminalDisplay:
         self.last_text = plain_text
         self.max_line_length = max(self.max_line_length, len(plain_text))
 
-    def finalize(self, text: str = ""):
+    def finalize(self, text: str = "", **kwargs):
         """
         Keeps the accumulated Ghost line visible and writes the Final on the
         next line (bold).
+
+        Extra telemetry kwargs (e.g. final_pass_ms) are intentionally not
+        consumed here — MultiDisplay forwards them to every display, so
+        each finalize must accept and ignore what it does not use.
         """
         # Flush any rate-limited Ghost update so the line shows the latest
         # composition before the Final lands.
@@ -115,11 +144,12 @@ class TerminalDisplay:
 
         # Terminate the Ghost accumulation line so it stays visible
         if self._line_open:
-            sys.stdout.write("\n")
+            self._safe_write("\n")
+            sys.stdout.flush()
 
         # ANSI escape codes: 1=Bold, 0=Reset
         if text:
-            sys.stdout.write(f"\033[1m{text}\033[0m\n")
+            self._safe_write(f"\033[1m{text}\033[0m\n")
         sys.stdout.flush()
 
         self.reset()
@@ -137,16 +167,38 @@ class TerminalDisplay:
 class ServerDisplay:
     """
     Sends transcription updates to all connected WebSocket clients.
+
+    Ghost text is composed by the shared span-based GhostComposer
+    (ADR 0010) — the third consumer of the algorithm, alongside
+    TerminalDisplay and InputSimulator. The broadcast carries both the
+    raw Ghost and the composed split (committed / live words) so
+    WebSocket clients can render the revisable frontier, plus the
+    pipeline telemetry a transcript panel needs: the Ghost's audio
+    window span, the ghost-pass inference time, the speech-onset →
+    first-Ghost delay (first Ghost only) and the final-pass duration.
     """
 
     def __init__(self, server):
         self.server = server
         self._last_ghost = ""
         self._last_final = ""
+        self._composer = GhostComposer()
 
-    def update(self, text: str = "", refined: str = "", ghost: str = "", **kwargs):
-        # Extra pipeline metadata (e.g. the Ghost window span) is intentionally
-        # not forwarded: the WebSocket payload shape stays stable.
+    def update(
+        self,
+        text: str = "",
+        refined: str = "",
+        ghost: str = "",
+        window=None,
+        **kwargs,
+    ):
+        # Compose BEFORE the dedup check: the composer state must advance
+        # exactly like TerminalDisplay's, even when the redraw itself is
+        # skipped below.
+        composed = self._composer.update(ghost, window) if ghost else self._composer.line
+
+        # The payload keeps every field the client may consume; displays
+        # that read `duration_ms` see it re-exported as `inference_ms`.
         if not text and not refined and not ghost:
             return
 
@@ -160,13 +212,19 @@ class ServerDisplay:
             "text": text,
             "refined": refined,
             "ghost": ghost,
+            "composed": composed,
+            "committed": " ".join(self._composer.committed),
+            "live": " ".join(self._composer.live),
+            "window": list(window) if window is not None else None,
+            "inference_ms": kwargs.get("duration_ms"),
+            "onset_ms": kwargs.get("onset_ms"),
             "final": False,
         }
         asyncio.run_coroutine_threadsafe(
             self.server.broadcast_message(msg), self.server._loop
         )
 
-    def finalize(self, text: str = ""):
+    def finalize(self, text: str = "", **kwargs):
         if not text:
             return
 
@@ -175,7 +233,12 @@ class ServerDisplay:
             return
         self._last_final = text
 
-        msg = {"type": "transcription", "text": text, "final": True}
+        msg = {
+            "type": "transcription",
+            "text": text,
+            "final": True,
+            "final_pass_ms": kwargs.get("final_pass_ms"),
+        }
         asyncio.run_coroutine_threadsafe(
             self.server.broadcast_message(msg), self.server._loop
         )
@@ -187,27 +250,52 @@ class ServerDisplay:
         )
         self._last_ghost = ""
         self._last_final = ""
+        self._composer.reset()
 
 
 class MultiDisplay:
     """
     Multiplexes transcription updates to multiple display backends.
+
+    Containment contract: one backend failing must never take down the STT
+    loop. Every call is wrapped — a backend that raises is logged (first
+    occurrence in full, then summarized so a flood of Ghost redraws can't
+    spam the log) and the remaining backends still receive the frame.
     """
+
+    LOG_EVERY_N = 50
 
     def __init__(self, *displays):
         self.displays = displays
+        self._error_counts = {}  # (backend class, method) -> failure count
+
+    def _call(self, method: str, *args, **kwargs):
+        for d in self.displays:
+            try:
+                getattr(d, method)(*args, **kwargs)
+            except Exception as e:
+                key = (type(d).__name__, method)
+                count = self._error_counts.get(key, 0) + 1
+                self._error_counts[key] = count
+                if count == 1:
+                    logger.error(
+                        f"Display {type(d).__name__}.{method} failed "
+                        f"(its backend is now bypassed, others kept): {e}"
+                    )
+                elif count % self.LOG_EVERY_N == 0:
+                    logger.debug(
+                        f"Display {type(d).__name__}.{method}: "
+                        f"{count} failures so far"
+                    )
 
     def update(self, text: str = "", refined: str = "", ghost: str = "", **kwargs):
-        for d in self.displays:
-            d.update(text, refined, ghost, **kwargs)
+        self._call("update", text, refined, ghost, **kwargs)
 
-    def finalize(self, text: str = ""):
-        for d in self.displays:
-            d.finalize(text)
+    def finalize(self, text: str = "", **kwargs):
+        self._call("finalize", text, **kwargs)
 
     def reset(self):
-        for d in self.displays:
-            d.reset()
+        self._call("reset")
 
 
 class InputDisplay:
@@ -235,11 +323,16 @@ class InputDisplay:
             # But the simulator resets on finalize.
             return
 
+        # The typing throttle is hot-reloadable: it is re-read from the
+        # config on every frame, so a changed `typing_throttle_ms` takes
+        # effect on the next keystroke without a restart.
+        self.simulator.throttle_s = config.typing_throttle_ms / 1000.0
+
         # We only type ghost text if explicitly enabled
         if ghost:
             self.simulator.enqueue_ghost(ghost, window=window)
 
-    def finalize(self, text: str = ""):
+    def finalize(self, text: str = "", **kwargs):
         config = self.config_manager.config.system_input
         if not config.enabled:
             # Even if disabled now, if it was enabled during ghost pass,

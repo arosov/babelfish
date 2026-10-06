@@ -14,6 +14,20 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 # device selected by highest-VRAM probing is the device ONNX Runtime uses.
 os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 
+# Force UTF-8 console I/O before anything logs a line. When stdout/stderr is a
+# pipe (VogonPoet captures it, bootstrap passes it through) or a legacy console
+# stream, Windows defaults to the locale 'charmap' codec (cp1252): any
+# character outside cp1252 the model emits (emoji, other scripts, symbol runs)
+# raises UnicodeEncodeError inside the STT loop and kills it. This is the root
+# fix; TerminalDisplay._safe_write and MultiDisplay's per-backend containment
+# are the safety nets if reconfigure can't apply (e.g. pytest capture stubs).
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 # Register the ONNX Runtime / NVIDIA DLL directories before any module below
 # imports onnxruntime (directly, or via onnx_asr / openwakeword). Without this
 # a CUDA provider whose dependencies cannot be resolved fails silently into
@@ -173,7 +187,7 @@ def run_stt_loop(
                         f"💤 IDLE: Waiting for wake-word '{ww_engine.active_start_word}'..."
                     )
                 else:
-                    logger.info("💤 IDLE: Waiting for trigger (Hotkey/PTT)...")
+                    logger.info("💤 IDLE: Waiting for trigger (Hotkey)...")
             else:
                 # This branch shouldn't be hit on startup now, but kept for logic consistency
                 logger.info("🎤 Listening... (Press Ctrl+C to stop)")
