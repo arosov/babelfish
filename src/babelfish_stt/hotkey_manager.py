@@ -1,6 +1,6 @@
 import logging
 import threading
-from typing import Optional, Dict, Union
+from typing import Optional
 from pynput import keyboard
 from pydantic import BaseModel
 from babelfish_stt.reconfigurable import Reconfigurable
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class HotkeyManager(Reconfigurable):
     """
     Global hotkey manager for Babelfish.
-    Supports both 'Hold to Talk' (PTT) and 'Toggle Listening' shortcuts.
+    Supports the 'Toggle Listening' shortcut.
     """
 
     def __init__(self, pipeline, server):
@@ -22,47 +22,7 @@ class HotkeyManager(Reconfigurable):
         self._lock = threading.Lock()
 
         # Current state
-        self.ptt_key: Optional[Union[keyboard.Key, keyboard.KeyCode]] = None
         self.toggle_hotkey: Optional[keyboard.HotKey] = None
-
-        # Mapping from UI strings to pynput Key constants
-        self._key_map = {
-            "left ctrl": keyboard.Key.ctrl_l,
-            "right ctrl": keyboard.Key.ctrl_r,
-            "left shift": keyboard.Key.shift,
-            "right shift": keyboard.Key.shift_r,
-            "left alt": keyboard.Key.alt,
-            "right alt": keyboard.Key.alt_r,
-            "left meta": keyboard.Key.cmd,
-            "right meta": keyboard.Key.cmd_r,
-            "space": keyboard.Key.space,
-            "enter": keyboard.Key.enter,
-            "tab": keyboard.Key.tab,
-            "escape": keyboard.Key.esc,
-        }
-
-    def _parse_key(
-        self, key_str: str
-    ) -> Optional[Union[keyboard.Key, keyboard.KeyCode]]:
-        """Parses a single key string into a pynput key or char."""
-        if not key_str:
-            return None
-
-        k = key_str.lower().strip()
-        if k in self._key_map:
-            return self._key_map[k]
-
-        if len(k) == 1:
-            return keyboard.KeyCode.from_char(k)
-
-        if k.startswith("f") and len(k) > 1:
-            try:
-                f_num = int(k[1:])
-                return getattr(keyboard.Key, f"f{f_num}")
-            except (ValueError, AttributeError):
-                pass
-
-        return None
 
     def _parse_hotkey_str(self, shortcut_str: str) -> Optional[str]:
         """Converts UI shortcut (Ctrl+Space) to pynput hotkey string (<ctrl>+<space>)."""
@@ -103,31 +63,18 @@ class HotkeyManager(Reconfigurable):
         if not listener:
             return
 
-        # 1. Handle PTT (Hold to Talk)
-        canonical_key = listener.canonical(key)
-        if self.ptt_key and (key == self.ptt_key or canonical_key == self.ptt_key):
-            if self.pipeline and self.pipeline.is_idle:
-                self.pipeline.request_mode(is_idle=False, force=False)
-
-        # 2. Handle Toggle (Pass to HotKey helper)
+        # Handle Toggle (Pass to HotKey helper)
         if self.toggle_hotkey:
-            self.toggle_hotkey.press(canonical_key)
+            self.toggle_hotkey.press(listener.canonical(key))
 
     def _on_release(self, key):
         listener = self.listener
         if not listener:
             return
 
-        # 1. Handle PTT (Hold to Talk)
-        canonical_key = listener.canonical(key)
-        if self.ptt_key and (key == self.ptt_key or canonical_key == self.ptt_key):
-            if self.pipeline and not self.pipeline.is_idle:
-                logger.info("[Hotkey] PTT Released -> Idle")
-                self.pipeline.request_mode(is_idle=True, force=False)
-
-        # 2. Handle Toggle (Pass to HotKey helper)
+        # Handle Toggle (Pass to HotKey helper)
         if self.toggle_hotkey:
-            self.toggle_hotkey.release(canonical_key)
+            self.toggle_hotkey.release(listener.canonical(key))
 
     def _on_toggle_triggered(self):
         if self.pipeline:
@@ -150,10 +97,6 @@ class HotkeyManager(Reconfigurable):
         with self._lock:
             self.stop()
 
-            # Setup PTT
-            ptt_str = config.ui.shortcuts.force_listen
-            self.ptt_key = self._parse_key(ptt_str)
-
             # Setup Toggle
             toggle_str = config.ui.shortcuts.toggle_listening
             toggle_parsed = self._parse_hotkey_str(toggle_str)
@@ -165,7 +108,7 @@ class HotkeyManager(Reconfigurable):
                 except Exception as e:
                     logger.error(f"Failed to parse toggle hotkey '{toggle_str}': {e}")
 
-            logger.info(f"Starting HotkeyManager: PTT={ptt_str}, Toggle={toggle_str}")
+            logger.info(f"Starting HotkeyManager: Toggle={toggle_str}")
 
             try:
                 self.listener = keyboard.Listener(
@@ -182,7 +125,6 @@ class HotkeyManager(Reconfigurable):
             except:
                 pass
             self.listener = None
-        self.ptt_key = None
         self.toggle_hotkey = None
 
     def reconfigure(self, config: BaseModel) -> None:

@@ -20,7 +20,7 @@ A two-model design (a streaming Nemotron decoder for the Ghost pass beside Parak
 *   **STT Engine:** NVIDIA Parakeet TDT via `onnx-asr`, one model instance serving both passes. Supports CUDA (NVIDIA), OpenVINO (Intel), and DirectML (Windows Unified) — one ONNX Runtime wheel flavor per install. `hardware.device` is always a concrete backend: Windows defaults to DirectML, Linux to CUDA (NVIDIA driver present) else CPU; ROCm is removed ([ADR 0007](docs/adr/0007-no-auto-concrete-backends-and-rocm-removed.md)).
 *   **Wake-word / Stop-word:** `openwakeword` for local, low-power keyword detection (Start/Stop triggers).
 *   **Communication:** WebSockets for bidirectional communication with the frontend (configuration, status, and transcripts).
-*   **Global Control:** `pynput` for system-wide hotkeys (Push-To-Talk, Toggle mode).
+*   **Global Control:** `pynput` for system-wide hotkeys (Toggle mode).
 *   **Notifications:** `notify-py` for platform-native status alerts.
 
 ## 🧠 Philosophy: Server as the Brain

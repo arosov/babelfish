@@ -55,8 +55,8 @@ by hand for VogonPoet use.
 
 ## 🎛 Triggers
 
-- Start in Idle. Toggle mode with `Ctrl+Space`; Push-To-Talk with `Left Shift`
-  (both configurable in `babelfish.config.json`).
+- Start in Idle. Toggle mode with `Ctrl+Space` (configurable in
+  `babelfish.config.json`).
 - `--wakeword hey_jarvis` — local openwakeword detection. The first
   `--wakeword` run downloads a few MB of openwakeword models.
 - `--stopword "stop listening"` — a transcript stop-phrase; if the argument
@@ -169,7 +169,7 @@ the `cpu` extra is expected to work, but it is currently untested.
   every launch canary-checks it with a single inference (±25%) and re-benches
   only on regime change.
 - **Local Wake-word / Stop-word:** integrated `openwakeword` support.
-- **Global Hotkeys:** PTT and Toggle via `pynput`.
+- **Global Hotkeys:** Toggle via `pynput`.
 - **Desktop Notifications:** wake/stop-word toasts in both modes.
 - **WebSocket API (opt-in):** real-time configuration and transcript streaming.
 

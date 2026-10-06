@@ -133,7 +133,6 @@ Wipes the `uv` cache if dependencies get corrupted.
 - **Models:** Resolved from the shared cache (`VOGON_APP_CACHE_DIR` /
   `cache.cache_dir`), then repo-local `models/`, otherwise the onnx-asr HF
   cache (auto-download). The primary model is `nemo-parakeet-tdt-0.6b-v3`.
-- **Startup Calibration:** Bench once per acceleration backend, cached in the config file's top-level `calibration` section (ADR 0013, superseding ADR 0011's always-runs posture): a real-speech probe matrix picks the Ghost window from the measured cost curve and the tier/throttle at that operating point; every later launch reuses the stored profile after a single canary inference agrees (±25%), re-benching only on regime change. No tier override, no manual knob. The profile is calibration output applied in memory, never configuration.
+- **Startup Calibration:** Bench once per acceleration backend, cached in the config file's top-level `calibration` section (ADR 0013, superseding ADR 0011's always-runs posture): a real-speech probe matrix picks the Ghost window from the measured cost curve and the tier/throttle at that operating point; every later launch reuses the stored profile after a single canary inference agrees (±25%), re-benching only on regime change. No tier override, no manual knob. The profile is calibration output applied in memory, never configuration. The Ghost *display* cadence is owned by inference completion, not the throttle.
 - **Hotkeys:** 
   - `Ctrl+Space` (default): Toggle Mode (Listen/Idle).
-  - `Left Shift` (default): Push-To-Talk (PTT).
