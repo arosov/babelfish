@@ -248,6 +248,7 @@ class TestEngineModelResolution(unittest.TestCase):
 
         model_dir = Path(self._tmp) / "cache" / "models" / self.MODEL_NAME
         model_dir.mkdir(parents=True)
+        (model_dir / "encoder-model.onnx").touch()  # a card holds an .onnx
 
         resolved = resolve_model_path(
             str(Path(self._tmp) / "cache"), self.base_dir, self.MODEL_NAME
@@ -258,7 +259,8 @@ class TestEngineModelResolution(unittest.TestCase):
     def test_cache_dir_missing_model_falls_through(self):
         from babelfish_stt.engine import resolve_model_path
 
-        # cache dir exists but has no model; repo/local dir also missing
+        # cache dir exists but has no card (no .onnx); repo-local dir also
+        # missing — a GPU device falls through to None (HF auto-download)
         (Path(self._tmp) / "cache").mkdir()
 
         resolved = resolve_model_path(
@@ -272,6 +274,7 @@ class TestEngineModelResolution(unittest.TestCase):
 
         model_dir = self.base_dir / "models" / self.MODEL_NAME
         model_dir.mkdir(parents=True)
+        (model_dir / "encoder-model.onnx").touch()
 
         resolved = resolve_model_path(None, self.base_dir, self.MODEL_NAME)
 
@@ -282,8 +285,10 @@ class TestEngineModelResolution(unittest.TestCase):
 
         cache_model = Path(self._tmp) / "cache" / "models" / self.MODEL_NAME
         cache_model.mkdir(parents=True)
+        (cache_model / "encoder-model.onnx").touch()
         repo_model = self.base_dir / "models" / self.MODEL_NAME
         repo_model.mkdir(parents=True)
+        (repo_model / "encoder-model.onnx").touch()
 
         resolved = resolve_model_path(
             str(Path(self._tmp) / "cache"), self.base_dir, self.MODEL_NAME
@@ -298,13 +303,26 @@ class TestEngineModelResolution(unittest.TestCase):
 
         self.assertIsNone(resolved)
 
-    # --- The device-keyed weights ladder (ADR 0014) ---
+    # --- The strict device-keyed weights ladder (ADR 0014) ---
+    #
+    # cpu implies redux and the engine MATERIALIZES the card when missing;
+    # GPU devices never touch redux. Unit tests stub the provisioning
+    # helper — no network here, ever.
+
+    REDUX_CARD_DIR = "nemo-parakeet-tdt-0.6b-v3-redux"
+
+    def _seed_redux(self, dest: Path) -> Path:
+        from babelfish_stt.engine import REDUX_CARD_FILES
+
+        dest.mkdir(parents=True, exist_ok=True)
+        for fname in REDUX_CARD_FILES:
+            (dest / fname).touch()
+        return dest
 
     def test_cpu_device_resolves_the_redux_card(self):
         from babelfish_stt.engine import resolve_model_path
 
-        redux = self.base_dir / "models" / "nemo-parakeet-tdt-0.6b-v3-redux"
-        redux.mkdir(parents=True)
+        redux = self._seed_redux(self.base_dir / "models" / self.REDUX_CARD_DIR)
 
         resolved = resolve_model_path(
             None, self.base_dir, self.MODEL_NAME, device="cpu"
@@ -312,28 +330,94 @@ class TestEngineModelResolution(unittest.TestCase):
 
         self.assertEqual(resolved, redux)
 
-    def test_cpu_ladder_is_strict_no_cross_card_fallback(self):
-        """Only fp32 v3 present + device cpu: the ladder does NOT silently
-        cross to the other card — it returns None (HF auto-download), and
-        the bootstrap's provisioning is what puts the right card in place."""
+    def test_cpu_ignores_the_fp32_card_and_provisions_redux(self):
+        """Hard invariant: fp32 v3 is never served on cpu. With only the
+        fp32 card sitting in the cache, a cpu device materializes the
+        redux card instead (provisioning stubbed)."""
         from babelfish_stt.engine import resolve_model_path
 
         (self.base_dir / "models" / self.MODEL_NAME).mkdir(parents=True)
+        (self.base_dir / "models" / self.MODEL_NAME / "encoder-model.onnx").touch()
+        expected_dest = self.base_dir / "models" / self.REDUX_CARD_DIR
 
-        resolved = resolve_model_path(
-            None, self.base_dir, self.MODEL_NAME, device="cpu"
-        )
+        with patch(
+            "babelfish_stt.engine._ensure_redux_card",
+            side_effect=lambda dest: dest and self._seed_redux(dest),
+        ) as mock_ensure:
+            resolved = resolve_model_path(
+                None, self.base_dir, self.MODEL_NAME, device="cpu"
+            )
 
-        self.assertIsNone(resolved)
+        mock_ensure.assert_called_once_with(expected_dest)
+        self.assertEqual(resolved, expected_dest)
+
+    def test_cpu_partial_card_is_repaired_not_served(self):
+        """A crash mid-download leaves a partial dir (e.g. no decoder):
+        resolve must not hand a partial card to the loader — it calls the
+        provisioning helper, which completes the dir in place."""
+        from babelfish_stt.engine import resolve_model_path
+
+        dest = self.base_dir / "models" / self.REDUX_CARD_DIR
+        dest.mkdir(parents=True)
+        (dest / "config.json").touch()
+        (dest / "encoder-model.onnx").touch()
+
+        with patch(
+            "babelfish_stt.engine._ensure_redux_card",
+            side_effect=lambda dest: self._seed_redux(dest),
+        ):
+            resolved = resolve_model_path(
+                None, self.base_dir, self.MODEL_NAME, device="cpu"
+            )
+
+        self.assertEqual(resolved, dest)
+
+    def test_cpu_card_auto_provision_uses_the_pinned_source(self):
+        """The engine-side provisioning record (ADR 0014): the same pinned
+        repo + revision + exactly the 4 loader files the bootstrap uses
+        (mirrored constants — keep the two in agreement)."""
+        from babelfish_stt import engine
+        from babelfish_stt.engine import resolve_model_path
+
+        expected_dest = self.base_dir / "models" / self.REDUX_CARD_DIR
+
+        def fake_download(**kwargs):
+            self._seed_redux(Path(kwargs["local_dir"]))
+            return str(kwargs["local_dir"])
+
+        with patch("huggingface_hub.snapshot_download", side_effect=fake_download) as mock_dl:
+            resolved = resolve_model_path(
+                None, self.base_dir, self.MODEL_NAME, device="cpu"
+            )
+
+        kwargs = mock_dl.call_args.kwargs
+        self.assertEqual(kwargs["repo_id"], engine.REDUX_REPO)
+        self.assertEqual(kwargs["revision"], engine.REDUX_REVISION)
+        self.assertEqual(kwargs["allow_patterns"], list(engine.REDUX_CARD_FILES))
+        self.assertEqual(Path(kwargs["local_dir"]), expected_dest)
+        self.assertEqual(resolved, expected_dest)
+
+    def test_offline_cpu_without_card_raises_actionable(self):
+        """Missing card + no network = refuse to start, never an fp32
+        fallback: the error names the remedy."""
+        from babelfish_stt.engine import resolve_model_path
+
+        with patch(
+            "huggingface_hub.snapshot_download",
+            side_effect=OSError("no network"),
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                resolve_model_path(None, self.base_dir, self.MODEL_NAME, device="cpu")
+
+        self.assertIn("fp32 v3 is never used on cpu", str(ctx.exception))
 
     def test_cache_dir_takes_priority_within_a_card(self):
         from babelfish_stt.engine import resolve_model_path
 
-        card = "nemo-parakeet-tdt-0.6b-v3-redux"
-        cache_model = Path(self._tmp) / "cache" / "models" / card
-        cache_model.mkdir(parents=True)
-        repo_model = self.base_dir / "models" / card
-        repo_model.mkdir(parents=True)
+        cache_model = self._seed_redux(
+            Path(self._tmp) / "cache" / "models" / self.REDUX_CARD_DIR
+        )
+        repo_model = self._seed_redux(self.base_dir / "models" / self.REDUX_CARD_DIR)
 
         resolved = resolve_model_path(
             str(Path(self._tmp) / "cache"),
@@ -344,16 +428,30 @@ class TestEngineModelResolution(unittest.TestCase):
 
         self.assertEqual(resolved, cache_model)
 
+    def test_gpu_never_loads_a_redux_dir(self):
+        """Hard invariant: a -redux dir in the cache cannot leak into a
+        GPU device — the GPU ladder resolves the fp32 card only, falling
+        to None (onnx-asr's fp32 HF default) when that card is absent."""
+        from babelfish_stt.engine import resolve_model_path
+
+        self._seed_redux(Path(self._tmp) / "cache" / "models" / self.REDUX_CARD_DIR)
+
+        resolved = resolve_model_path(
+            str(Path(self._tmp) / "cache"), self.base_dir, self.MODEL_NAME,
+            device="cuda:0",
+        )
+
+        self.assertIsNone(resolved)
+
     def test_engine_uses_cache_dir_path_in_load_call(self):
         from babelfish_stt.engine import STTEngine
         from babelfish_stt.config import HardwareConfig
 
         # ADR 0014: device cpu resolves the REDUX card of the ladder: the
         # cache dir named nemo-parakeet-tdt-0.6b-v3-redux.
-        cache_model = (
-            Path(self._tmp) / "cache" / "models" / (self.MODEL_NAME + "-redux")
+        cache_model = self._seed_redux(
+            Path(self._tmp) / "cache" / "models" / self.REDUX_CARD_DIR
         )
-        cache_model.mkdir(parents=True)
 
         config = BabelfishConfig(
             hardware=HardwareConfig(device="cpu"),
@@ -378,6 +476,7 @@ class TestEngineModelResolution(unittest.TestCase):
 
         cache_model = Path(self._tmp) / "cache" / "models" / self.MODEL_NAME
         cache_model.mkdir(parents=True)
+        (cache_model / "encoder-model.onnx").touch()
 
         config = BabelfishConfig(
             hardware=HardwareConfig(device="cuda"),
@@ -393,39 +492,44 @@ class TestEngineModelResolution(unittest.TestCase):
         self.assertEqual(engine.model_path, cache_model)
         self.assertEqual(engine.weights_tag, "fp32 v3")
 
-    def test_engine_model_override_forces_one_card_of_the_ladder(self):
-        """hardware.model ("v3"/"redux") pins one card regardless of the
-        device (the GPU A/B path, ADR 0014)."""
+    def test_engine_legacy_model_key_is_device_derived(self):
+        """An old config carrying hardware.model must not resurrect the A/B
+        override (cpu implies redux; redux never on gpu): the key is
+        ignored by pydantic (extra='ignore') and the ladder stays
+        device-derived."""
         from babelfish_stt.engine import STTEngine
-        from babelfish_stt.config import HardwareConfig
 
-        cache_base = Path(self._tmp) / "cache" / "models"
-        (cache_base / self.MODEL_NAME).mkdir(parents=True)
-
-        config = BabelfishConfig(
-            hardware=HardwareConfig(device="cuda", model="v3"),
-            cache={"cache_dir": str(Path(self._tmp) / "cache")},
+        cache_model = self._seed_redux(
+            Path(self._tmp) / "cache" / "models" / self.REDUX_CARD_DIR
+        )
+        config = BabelfishConfig.model_validate(
+            {
+                "hardware": {"device": "cpu", "model": "v3"},
+                "cache": {"cache_dir": str(Path(self._tmp) / "cache")},
+            }
         )
 
         with patch("onnx_asr.load_model"), \
                patch("babelfish_stt.engine.get_memory_usage", return_value={"total": 0, "used": 0}), \
-               patch("babelfish_stt.engine.resolve_device", return_value="cuda:0"), \
-               patch("babelfish_stt.engine.get_device_name", return_value="Test GPU (CUDA)"):
+               patch("babelfish_stt.engine.resolve_device", return_value="cpu"), \
+               patch("babelfish_stt.engine.get_device_name", return_value="CPU"):
             engine = STTEngine(config=config)
 
-        self.assertEqual(engine.model_path, cache_base / self.MODEL_NAME)
+        self.assertEqual(engine.model_path, cache_model)
 
-    def test_engine_without_local_model_passes_path_none(self):
+    def test_engine_gpu_without_local_card_passes_path_none(self):
+        # GPU device with no local fp32 card: onnx-asr's HF auto-download
+        # (the cpu variant now provisions instead of resolving to None).
         from babelfish_stt.engine import STTEngine
         from babelfish_stt.config import HardwareConfig
 
-        config = BabelfishConfig(hardware=HardwareConfig(device="cpu"))
+        config = BabelfishConfig(hardware=HardwareConfig(device="cuda"))
         config.cache.cache_dir = None
 
         with patch("onnx_asr.load_model") as mock_load, \
                patch("babelfish_stt.engine.get_memory_usage", return_value={"total": 0, "used": 0}), \
-               patch("babelfish_stt.engine.resolve_device", return_value="cpu"), \
-               patch("babelfish_stt.engine.get_device_name", return_value="CPU"):
+               patch("babelfish_stt.engine.resolve_device", return_value="cuda:0"), \
+               patch("babelfish_stt.engine.get_device_name", return_value="Test GPU (CUDA)"):
             STTEngine(config=config)
 
         _, kwargs = mock_load.call_args

@@ -124,10 +124,15 @@ Weights are a **device-keyed ladder** (ADR 0014): `device=cpu` →
 `eschmidbauer/parakeet-redux-onnx` at a pinned revision, SHA-256 digests
 logged at first provision); any GPU device → `models/nemo-parakeet-tdt-0.6b-v3/`
 (~2.4 GB, `istupakov/parakeet-tdt-0.6b-v3-onnx`).
-`hardware.model` (`"v3"` | `"redux"`) forces one card.
+No override exists: cpu implies redux and redux never loads on a GPU
+backend. The engine materializes the redux card itself when a cpu device
+resolves with it missing (the same pinned source; idempotent — a partial
+dir is completed in place), so `uv run babelfish --cpu` without a
+bootstrap provisioning still works online.
 Each card follows the search order: `cache.cache_dir` (config, or
-`VOGON_APP_CACHE_DIR` env) → repo-local `models/` → onnx-asr's default HF
-cache (auto-download on first run). Both cards may sit side by side in the
+`VOGON_APP_CACHE_DIR` env) → repo-local `models/` → (GPU devices only)
+onnx-asr's default HF cache (auto-download on first run). Both cards may
+sit side by side in the
 shared cache (delete the unused one manually to reclaim space):
 ```bash
 set VOGON_APP_CACHE_DIR=F:\vogonpoet_cache   # Windows
@@ -161,9 +166,10 @@ Wipes the `uv` cache if dependencies get corrupted.
   `nemo-parakeet-tdt-0.6b-v3-redux` (Parakeet Redux int4, ~418 MB, the
   out-of-the-box default), any GPU backend → `nemo-parakeet-tdt-0.6b-v3`
   (fp32 v3). Resolved from the shared cache (`VOGON_APP_CACHE_DIR` /
-  `cache.cache_dir`), then repo-local `models/`, otherwise the onnx-asr HF
-  cache (auto-download). `hardware.model` ("v3" | "redux") forces one card;
-  GPU + int4 is out of scope for now.
+  `cache.cache_dir`), then repo-local `models/`; GPU devices fall to the
+  onnx-asr HF cache (auto-download), cpu devices provision their card
+  themselves when missing (pinned source, idempotent). No card override
+  exists: cpu implies redux, redux never loads on a GPU backend.
 - **Startup Calibration:** Bench once per acceleration backend, cached in the config file's top-level `calibration` section (ADR 0013, superseding ADR 0011's always-runs posture): a real-speech probe matrix picks the Ghost window from the measured cost curve and the tier/throttle at that operating point; every later launch reuses the stored profile after a single canary inference agrees (±25%), re-benching only on regime change. No tier override, no manual knob. The profile is calibration output applied in memory, never configuration. The Ghost *display* cadence is owned by inference completion, not the throttle.
 - **Hotkeys:** 
   - `Ctrl+Space` (default): Toggle Mode (Listen/Idle).

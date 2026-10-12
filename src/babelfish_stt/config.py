@@ -28,24 +28,10 @@ class HardwareConfig(BaseModel):
     # A concrete backend id: "dml"/"dml:N", "cuda"/"cuda:N", "cpu", or a
     # specific id from `list_hardware` (never "auto" — ADR 0007).
     device: str = Field(default_factory=platform_default_device)
-    # Weights-ladder card override (ADR 0014): "v3" forces the fp32 v3
-    # card, "redux" forces the int4 card, regardless of device (A/B
-    # testing on a GPU machine). None derives the card from the device:
-    # cpu -> redux, any GPU backend -> fp32 v3.
-    model: Optional[str] = None
     microphone_name: Optional[str] = None
     quantization: Optional[str] = (
         None  # None means full precision; an explicit "int8" is still honoured
     )
-
-    @model_validator(mode="after")
-    def _validate_model_card(self) -> "HardwareConfig":
-        if self.model not in (None, "v3", "redux"):
-            raise ValueError(
-                f"hardware.model must be None, 'v3' or 'redux' "
-                f"(got {self.model!r})"
-            )
-        return self
 
 
 class HardwareStatus(BaseModel):

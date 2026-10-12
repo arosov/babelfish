@@ -365,7 +365,7 @@ class TestForcedCpuCoherence:
 class TestWeightsCard:
     """ADR 0014: provisioning is device-keyed — cpu resolves the Redux int4
     card (pinned repo revision, exactly 4 files), GPU backends keep fp32 v3 —
-    with config hardware.model as the explicit card override."""
+    with no card override: a legacy config hardware.model key is ignored."""
 
     def test_cpu_card_is_redux(self, bootstrap):
         card = bootstrap._weights_card("cpu")
@@ -395,20 +395,23 @@ class TestWeightsCard:
                 "vocab.txt",
             ]
 
-    def test_config_model_override_forces_the_card(
+    def test_config_hardware_model_key_is_ignored(
         self, bootstrap, monkeypatch, tmp_path
     ):
+        """ADR 0014 strict ladder: no user card override exists — the
+        device alone keys provisioning, even if a legacy config still
+        carries hardware.model ("v3" on cpu, or "redux" on gpu)."""
         (tmp_path / "babelfish.config.json").write_text(
             json.dumps({"hardware": {"device": "cpu", "model": "v3"}})
         )
         card = bootstrap._weights_card("cpu")
-        assert card["card"] == "gpu"
+        assert card["card"] == "cpu"
 
         (tmp_path / "babelfish.config.json").write_text(
             json.dumps({"hardware": {"device": "cuda", "model": "redux"}})
         )
         card = bootstrap._weights_card("cuda")
-        assert card["card"] == "cpu"
+        assert card["card"] == "gpu"
 
     def test_models_dir_resolution_follows_device(
         self, bootstrap, monkeypatch, tmp_path

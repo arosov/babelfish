@@ -288,30 +288,6 @@ def _platform_default_device() -> str:
     return "cpu"
 
 
-def _read_config_model() -> Optional[str]:
-    """Reads `hardware.model` ("v3" | "redux") from the babelfish config,
-    if one exists — the weights-ladder card override (ADR 0014). Anything
-    else (missing, None, unknown) means device-derived."""
-    candidates: List[Path] = []
-    app_data_dir = os.environ.get("VOGON_APP_DATA_DIR")
-    if app_data_dir:
-        candidates.append(Path(app_data_dir) / "babelfish.config.json")
-    if not app_data_dir:
-        candidates.append(BUNDLE_DIR / "babelfish.config.json")
-
-    for config_path in candidates:
-        if config_path.exists():
-            try:
-                with open(config_path, "r") as f:
-                    data = json.load(f)
-                model = data.get("hardware", {}).get("model")
-                if model in ("v3", "redux"):
-                    return str(model)
-            except Exception:
-                pass
-    return None
-
-
 def _best_detected_gpu_backend() -> str:
     """The best GPU backend nameable before ORT is installed: CUDA when an
     NVIDIA driver loads, else DirectML when a GPU enumerates on Windows
@@ -356,16 +332,12 @@ def _weights_card(device: str) -> Dict[str, object]:
     """The weights card a device resolves to (ADR 0014): directory name,
     HF repo (pinned revision for the CPU card), and provisioning patterns.
 
-    The config `hardware.model` override ("v3"/"redux") forces one card
-    regardless of the device, so provisioning always matches what the
-    engine's ladder will load.
+    Strict device-keying, no override: cpu implies the Redux card and
+    fp32 v3 never provisions for a cpu device; GPU devices keep fp32 v3
+    and never pull redux — mirrored from engine.weights_card_dir's
+    invariants.
     """
     card = "cpu" if device == "cpu" else "gpu"
-    override = _read_config_model()
-    if override == "redux":
-        card = "cpu"
-    elif override == "v3":
-        card = "gpu"
     return {
         "card": card,
         "dir_name": MODEL_DIR_NAMES[card],

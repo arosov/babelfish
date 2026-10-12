@@ -25,10 +25,14 @@ explicit opt-in that keeps the fp32 v3 model. Concretely:
    `models/nemo-parakeet-tdt-0.6b-v3`. `MODEL_NAME` stays the onnx-asr
    registry key — whatever weights sit in the resolved directory get
    loaded (the load-bearing property Track B exercised with zero code
-   changes). The ladder is strict: no cross-card fallback. `hardware.model`
-   (`"v3" | "redux"`, new optional config key, default device-derived)
-   forces one card — the A/B knob on a GPU machine. GPU + int4 MatMulNBits
-   is deliberately out of scope (GPU users keep the model we already test).
+   changes). The two invariants are hard, with no user override (the
+   originally planned `hardware.model` A/B knob was dropped when these
+   invariants hardened): **cpu implies redux** — fp32 v3 is never served
+   on cpu, even when its card sits in the cache — and **redux never loads
+   on a GPU backend** (GPU int4 MatMulNBits remains out of scope; a GPU
+   card experiment would be a placement change, not a ladder flag). A
+   partial card (crash mid-download) is never served: a cpu device
+   re-provisions to complete it (see 3).
 3. **Device decides flavor, provisioning, and launch (D1).** One helper,
    `_effective_device()`, is consumed by detection, provisioning, and the
    launch plan: `VOGON_FORCE_CPU` / `--cpu` CLI passthrough → cpu, config
@@ -44,8 +48,13 @@ explicit opt-in that keeps the fp32 v3 model. Concretely:
    moondream/parakeet-redux), exactly four files (`config.json`,
    `vocab.txt`, `encoder-model.onnx`, `decoder_joint-model.onnx`) — never
    the repo extras — with SHA-256 digests logged at first provision. GPU
-   provisioning is unchanged. `hardware.model` redirects provisioning so
-   bootstrap and engine never disagree about the card.
+   provisioning is unchanged. The engine mirrors the same pinned source:
+   when a cpu device resolves and the redux card is missing or partial
+   (bare `uv run babelfish --cpu` without a bootstrap run, or an offline
+   download that died), **the engine auto-provisions it itself** —
+   idempotent, completing the partial dir in place — and refuses to run
+   (never fp32-serves) when that is impossible. Pre-seeded cache = zero
+   network per launch.
 5. **Calibration fingerprints gain weights identity (D5).**
    `weights_identity(model_dir)` — SHA-256 over file names + sizes, plus
    full content of the small files — so an fp32 bench and a redux bench
@@ -107,9 +116,10 @@ Coverage pins: the effective-device override routed at detection (env and
 CLI passthrough, banner logged; pure-GPU/pure-CPU configs unchanged by
 Phase A); cpu-device flavor selection (Windows + Linux); launch-plan
 `--cpu` append without double-flagging; the provisioning card table
-(device → dir/repo/revision/patterns; `hardware.model` redirect); models
-destination resolution; the engine ladder (cpu → redux, gpu → fp32,
-override forces one card, strict no-cross-card fallback, weights tag in
-the log line and capture header); fingerprint keying by the weights
+(device → dir/repo/revision/patterns); models destination resolution;
+the engine ladder invariants (cpu → redux with engine-side
+auto-provisioning on the pinned source, gpu → fp32 with a legacy
+`hardware.model` key ignored, partial-card repair, offline refusal over
+fp32-serving, GPU-never-redux); fingerprint keying by the weights
 component (identical cards identical, size/content changes rotate,
 fp32-CPU vs redux-CPU distinct entries); stale store re-bench.

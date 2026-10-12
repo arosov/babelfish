@@ -110,11 +110,19 @@ Each card is resolved in this order:
    `VOGON_APP_CACHE_DIR` environment variable (the VogonPoet cache).
 2. **Repo-local** — `models/<card-name>/` in the checkout.
 3. **onnx-asr default** — the Hugging Face cache; auto-downloads on first
-   use, then stays cached. Standard `HF_HOME` / `HF_HUB_CACHE`
+   use, then stays cached (GPU devices only — a cpu device materializes
+   its own card instead, ADR 0014). Standard `HF_HOME` / `HF_HUB_CACHE`
    environment variables remain respected by HF.
 
-`hardware.model` (`"v3"` | `"redux"`, default unset) forces one card of the
-ladder regardless of the device — the A/B knob.
+The ladder is strict with no user override:
+
+- **cpu implies redux** — the engine materializes the card itself when it
+  is missing (an idempotent pinned download); offline without the card
+  refuses to start rather than serve fp32.
+- **redux never loads on a GPU backend** — GPU int4 is out of scope; a GPU
+  card experiment would be a placement change, not a ladder flag.
+- Both cards may sit side by side in the cache (~2.9 GB combined worst
+  case).
 
 To reuse an existing Parakeet install from VogonPoet instead of downloading
 again:
@@ -127,7 +135,7 @@ uv run babelfish
 
 or set `"cache": { "cache_dir": "F:\\vogonpoet_cache" }` in your config file.
 Ensure the directory contains `models/<card-name>/` for the card your device
-resolves (both cards may sit side by side; ~2.9 GB combined worst case).
+resolves.
 
 > ⚠️ **Caveat:** `scripts/bootstrap.py` is owned by babelfish itself — see
 > [ADR 0006](docs/adr/0006-babelfish-owns-its-bootstrap.md). It owns

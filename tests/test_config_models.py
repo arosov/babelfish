@@ -20,7 +20,6 @@ def test_hardware_config_defaults():
     assert config.device != "auto"
     assert config.quantization is None
     assert config.microphone_name is None
-    assert config.model is None
 
 
 def test_platform_default_device_is_concrete(monkeypatch):
@@ -38,14 +37,16 @@ def test_platform_default_device_is_concrete(monkeypatch):
     assert config_module.platform_default_device() == "cpu"
 
 
-def test_hardware_model_card_override_validation():
-    """hardware.model is the weights-ladder override (ADR 0014): 'v3',
-    'redux', or unset."""
-    assert HardwareConfig().model is None
-    assert HardwareConfig(model="v3").model == "v3"
-    assert HardwareConfig(model="redux").model == "redux"
-    with pytest.raises(ValidationError):
-        HardwareConfig(model="bogus-card")
+def test_legacy_hardware_model_key_is_ignored():
+    """An old config carrying hardware.model must not resurrect the A/B
+    override (ADR 0014 invariants: cpu implies redux, redux never runs on
+    GPU): the key is dropped by pydantic's extra='ignore' and the ladder
+    stays device-derived."""
+    config = BabelfishConfig.model_validate(
+        {"hardware": {"device": "cpu", "model": "v3"}}
+    )
+    assert not hasattr(config.hardware, "model")
+    assert config.hardware.device == "cpu"
 
 
 def test_hardware_status_validation():

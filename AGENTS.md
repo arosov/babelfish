@@ -53,9 +53,13 @@ provisioning, and DLL-path injection. Both standalone and driven (VogonPoet)
 modes run through it; CLI args pass through.
 Model resolution order (per-device weights ladder, ADR 0014): shared
 cache (`cache.cache_dir` or `VOGON_APP_CACHE_DIR`) →
-repo-local `models/` → onnx-asr HF cache (auto-download); the card
+repo-local `models/` → (GPU devices only) onnx-asr HF cache
+(auto-download); the card
 directory is `cpu` → `nemo-parakeet-tdt-0.6b-v3-redux`, GPU →
-`nemo-parakeet-tdt-0.6b-v3`, overridable via `hardware.model`.
+`nemo-parakeet-tdt-0.6b-v3`. The invariants are hard: cpu implies redux
+(the engine auto-provisions the card itself when missing, from the
+pinned source) and redux never loads on a GPU backend — no user
+override exists.
 
 Detailed execution patterns and developer commands are documented in `launcher.md`.
 

@@ -104,27 +104,46 @@ def _degraded_device_fix(device: str) -> Optional[str]:
 #
 # MODEL_NAME stays the onnx-asr registry key; it is NOT the file layout —
 # whatever weights sit in the resolved directory get loaded (the load-bearing
-# property the Track-B prototype exercised with zero code changes). The fp32
-# v3 directory keeps that name; the Redux int4 card lives beside it with a
-# -redux suffix. cpu devices land on the redux card, GPU devices keep fp32
-# v3 (GPU int4 MatMulNBits is deliberately out of scope for now); a config
-# hardware.model ("v3"/"redux") forces one card regardless of device.
+# property the Track-B prototype exercised with zero code changes). The
+# ladder is STRICT and device-keyed, with no user override:
+#
+#   cpu     -> the Redux int4 card (nemo-parakeet-tdt-0.6b-v3-redux),
+#              auto-provisioned here when missing — fp32 v3 is never run
+#              on cpu, even if its card is sitting in the cache.
+#   gpu     -> the fp32 v3 card (nemo-parakeet-tdt-0.6b-v3) — redux never
+#              loads on a GPU backend (GPU int4 MatMulNBits is out of
+#              scope; GPU int4 experiments go through placement, not the
+#              ladder).
 
 WEIGHTS_TAG_FP32 = "fp32 v3"
 WEIGHTS_TAG_REDUX = "parakeet-redux int4 MatMulNBits"
 _REDUX_SUFFIX = "-redux"
 
+# The cpu card's export source (ADR 0014). The bootstrap declares the same
+# repo/revision/patterns separately (it is a standalone script that cannot
+# import this package — keep the two in agreement). When the engine hits a
+# cpu device whose card is missing (bare `uv run babelfish --cpu`, a
+# download that died mid-way), it provisions the card itself: idempotent,
+# and the partial dir is completed rather than restarted.
+REDUX_REPO = "eschmidbauer/parakeet-redux-onnx"
+REDUX_REVISION = "1c285ba78d6f1880803f65355133a5ad3559a407"
+REDUX_CARD_FILES = (
+    "config.json",
+    "vocab.txt",
+    "encoder-model.onnx",
+    "decoder_joint-model.onnx",
+)
 
-def weights_card_dir(model_name: str, device: str, model_override: Optional[str]) -> str:
+
+def weights_card_dir(model_name: str, device: str) -> str:
     """The ladder card a device resolves to: the directory name under
-    models/ that holds the intended weights."""
-    if model_override == "redux":
-        return model_name + _REDUX_SUFFIX
-    if model_override == "v3":
-        return model_name
-    return (
-        model_name + _REDUX_SUFFIX if device == "cpu" else model_name
-    )
+    models/ that holds the intended weights.
+
+    Invariants (ADR 0014): cpu implies redux; GPU backends never run
+    redux. `device=None` (the legacy 3-arg call form) resolves the fp32
+    v3 card, as before.
+    """
+    return (model_name + _REDUX_SUFFIX) if device == "cpu" else model_name
 
 
 def weights_tag_for(path: Optional[Path]) -> str:
@@ -135,26 +154,76 @@ def weights_tag_for(path: Optional[Path]) -> str:
     return WEIGHTS_TAG_FP32
 
 
+def _card_complete(dest: Path, device: str) -> bool:
+    """A card directory is engine-loadable when every file the loader
+    needs exists. A partial dir (crash mid-download) reads as
+    incomplete, and the cpu path repairs it by re-provisioning."""
+    if not dest.exists():
+        return False
+    if device == "cpu":
+        return all((dest / f).exists() for f in REDUX_CARD_FILES)
+    return any(dest.glob("*.onnx"))
+
+
+def _ensure_redux_card(dest: Path) -> None:
+    """Provisions the cpu card in place (ADR 0014): the export source is
+    pinned to the verified revision; exactly the four loader files are
+    fetched (never the repo extras). Existing files are kept, so this is
+    idempotent and also completes a partial dir.
+
+    Fails loudly, never into an fp32 fallback: cpu implies redux (ADR
+    0014), so an offline start without the card must refuse to run with
+    an actionable error, not silently serve the gpu card's weights.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    from huggingface_hub import snapshot_download
+
+    logger.info(
+        f"📦 Provisioning the Redux card from {REDUX_REPO} "
+        f"(revision {REDUX_REVISION[:12]}) → {dest}"
+    )
+    try:
+        snapshot_download(
+            repo_id=REDUX_REPO,
+            revision=REDUX_REVISION,
+            local_dir=str(dest),
+            allow_patterns=list(REDUX_CARD_FILES),
+        )
+    except Exception as e:
+        raise RuntimeError(
+            f"Could not provision the Redux card from {REDUX_REPO}: {e}. "
+            "cpu devices only run the redux weights — provision once with "
+            "network access (scripts/run.bat, or `uv run babelfish --cpu` "
+            f"offline-tolerant). fp32 v3 is never used on cpu."
+        ) from e
+    missing = [f for f in REDUX_CARD_FILES if not (dest / f).exists()]
+    if missing:
+        raise RuntimeError(
+            f"The Redux card at {dest} is incomplete after provisioning "
+            f"(missing: {missing}); re-run once online."
+        )
+
+
 def resolve_model_path(
     cache_dir: Optional[str],
     base_dir: Path,
     model_name: str,
     device: Optional[str] = None,
-    model_override: Optional[str] = None,
 ) -> Optional[Path]:
     """
-    Model resolution order (the per-device weights ladder, ADR 0014):
+    Model resolution order (the strict per-device weights ladder, ADR 0014):
     1. Shared cache dir (config `cache.cache_dir`, auto-populated from
        VOGON_APP_CACHE_DIR) — e.g. VogonPoet's provisioned cache.
     2. Repo-local models/ directory.
-    3. None -> onnx-asr default path (HF cache; auto-downloads on first use).
+    3. GPU device with no local card -> None (onnx-asr auto-downloads the
+       fp32 v3 from its own HF registry default — unchanged behavior).
+       cpu device with no local card -> the redux card is provisioned
+       here: idempotent download of the pinned 4-file export; the call
+       raises (not fp32-serves) when that is impossible offline.
 
-    The card (directory name) is device-derived — cpu -> the redux card,
-    any GPU backend -> the fp32 v3 card — unless `model_override`
-    (hardware.model) forces one card. The legacy 3-arg call form resolves
-    the fp32 v3 card (device=None).
+    The legacy 3-arg call form resolves the fp32 v3 card (device=None).
     """
-    card_dir = weights_card_dir(model_name, device, model_override)
+    card_dir = weights_card_dir(model_name, device)
     tag = weights_tag_for(Path(card_dir))
     candidates = []
 
@@ -164,21 +233,24 @@ def resolve_model_path(
     candidates.append(("repo", base_dir / "models" / card_dir))
 
     for source, candidate in candidates:
-        if candidate.exists():
+        if _card_complete(candidate, device):
             logger.info(f"📦 Model source ({source}): {candidate} ({tag})")
             return candidate
 
-    logger.info(
-        "📦 No local model found; onnx-asr will use its default HF cache "
-        "(auto-download on first use)."
-    )
-    if device == "cpu" and model_override is None:
-        logger.warning(
-            "📦 No local %s card for device cpu (expected the Redux card, "
-            "provisioned by the bootstrap); the fallback downloads the fp32 "
-            "v3 weights from HF." % card_dir
+    if device != "cpu":
+        logger.info(
+            "📦 No local model found; onnx-asr will use its default HF cache "
+            "(auto-download on first use)."
         )
-    return None
+        return None
+
+    # cpu implies redux (ADR 0014): materialize the card — the first
+    # candidate destination wins (shared cache when configured, else the
+    # repo-local models/), and a partial dir is completed in place.
+    source, dest = candidates[0]
+    _ensure_redux_card(dest)
+    logger.info(f"📦 Model source ({source}, freshly provisioned): {dest} ({tag})")
+    return dest
 
 
 class STTEngine(Reconfigurable):
@@ -198,15 +270,12 @@ class STTEngine(Reconfigurable):
         self.device_type = self._resolve_device(target_device)
         self.config_ref = config  # Keep reference to update status
 
-        # Model resolution order (the per-device weights ladder, ADR 0014):
-        # 1. Shared cache dir (config `cache.cache_dir`, auto-populated from
-        #    VOGON_APP_CACHE_DIR) — e.g. VogonPoet's provisioned cache.
-        # 2. Repo-local models/ directory (used when running from a checkout
-        #    with a local model copy).
-        # 3. onnx-asr default path (HF cache; auto-downloads on first use).
-        # The card is device-derived (cpu -> redux int4, gpu -> fp32 v3)
-        # unless hardware.model forces one; self.model_path is kept for the
-        # calibration fingerprint's weights identity (D5/ADR 0014) and
+        # Model resolution order (the strict per-device weights ladder,
+        # ADR 0014): shared cache > repo-local models/ > (gpu only) the
+        # onnx-asr HF default; a cpu device always materializes the redux
+        # card here if it is missing — cpu implies redux, fp32 never runs
+        # on cpu, redux never runs on a GPU backend. self.model_path is
+        # kept for the calibration fingerprint's weights identity and
         # self.weights_tag for the startup diagnostics.
         model_path = self._resolve_model_path(config)
         self.model_path = model_path
@@ -261,6 +330,14 @@ class STTEngine(Reconfigurable):
                 logger.warning("Retrying with CPU provider...")
                 self.device_type = "cpu"  # Update device type to cpu
                 self.quantization = None  # the fallback forces full precision
+                # cpu implies redux (ADR 0014): the degraded run re-enters
+                # the ladder as a cpu device — re-resolving (and
+                # provisioning the redux card if needed) instead of
+                # serving the fp32 v3 card it had already resolved for
+                # the GPU.
+                model_path = self._resolve_model_path(config)
+                self.model_path = model_path
+                self.weights_tag = weights_tag_for(model_path)
                 self.model = self._load_model_bounded(
                     self.MODEL_NAME,
                     path=str(model_path) if model_path else None,
@@ -367,7 +444,8 @@ class STTEngine(Reconfigurable):
     def _resolve_model_path(self, config: BabelfishConfig) -> Optional[Path]:
         """
         Returns the first existing local model directory, or None to let
-        onnx-asr use its default HF cache (auto-download on first use).
+        onnx-asr use its default HF cache (GPU only — a cpu device never
+        resolves to None: it materializes the redux card, ADR 0014).
         """
         cache_dir = config.cache.cache_dir
 
@@ -378,7 +456,6 @@ class STTEngine(Reconfigurable):
             base_dir,
             self.MODEL_NAME,
             device=self.device_type,
-            model_override=getattr(config.hardware, "model", None),
         )
 
     def _resolve_device(self, device: str) -> str:
