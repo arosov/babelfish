@@ -223,3 +223,7 @@ localhost.key
 models/
 babelfish.config.json
 .opencode/
+
+# Prototype scratch evidence (logs / captures / probe scripts; re-derivable via
+# docs/prototypes/2026-10-12-parakeet-redux-cpu-report.md)
+.scratch_logs/
