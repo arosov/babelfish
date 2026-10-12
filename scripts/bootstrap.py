@@ -206,6 +206,37 @@ def _read_config_device() -> str:
     return "auto"
 
 
+def _force_cpu_env() -> bool:
+    """True when VOGON_FORCE_CPU asks for a CPU-only run."""
+    return str(os.environ.get("VOGON_FORCE_CPU", "")).lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _effective_device(passthrough: Optional[List[str]] = None) -> str:
+    """The device every layer must agree on (ADR 0014): one helper consumed
+    by detection, provisioning, and the launch plan — previously only the
+    launch plan saw the CPU overrides, so a forced-CPU run still synced and
+    provisioned the GPU environment around a CPU inference (the observed
+    layering anomaly).
+
+    Resolution order:
+      1. VOGON_FORCE_CPU=1, or a `--cpu` in the CLI passthrough → "cpu".
+      2. config `hardware.device` as written (ADR 0007: always a concrete
+         backend; legacy ''/'auto'/rocm* map to the platform default).
+      3. missing config → the platform default.
+    """
+    if _force_cpu_env() or "--cpu" in (passthrough or []):
+        return "cpu"
+    device = _read_config_device()
+    if device in ("", "auto") or device.startswith("rocm"):
+        return _platform_default_device()
+    return device
+
+
 def _platform_default_device() -> str:
     """The concrete backend a fresh/legacy config starts on (ADR 0007).
 
@@ -350,7 +381,7 @@ class HardwareDetector:
             pass
         return list(dict.fromkeys(gpus))
 
-    def get_best_mode(self) -> Dict[str, str]:
+    def get_best_mode(self, passthrough: Optional[List[str]] = None) -> Dict[str, str]:
         detected_caps = []
         if self.detect_nvidia():
             detected_caps.append("NVIDIA")
@@ -369,6 +400,23 @@ class HardwareDetector:
             default = _platform_default_device()
             logger.info(f"Migrating legacy device '{config_device}' → '{default}'")
             config_device = default
+
+        # The CPU overrides (VOGON_FORCE_CPU / --cpu in the CLI passthrough)
+        # are honored by EVERY layer (ADR 0014): detection routes to CPU
+        # mode, so sync, provisioning, and launch all follow the CPU — the
+        # GPU environment no longer spins up around a CPU inference. A
+        # config that already says "cpu" takes the existing branches below
+        # (unchanged behavior); the forced case is the only Phase-A change.
+        if (
+            _effective_device(passthrough) == "cpu"
+            and config_device != "cpu"
+        ):
+            logger.info(
+                "Effective device: cpu (config says "
+                f"{config_device}; VOGON_FORCE_CPU / --cpu override) — sync, "
+                "provisioning, and launch all follow the CPU."
+            )
+            return {"hw_mode": "cpu", "extra": "cpu", "desc": "CPU"}
 
         # NVIDIA presence: driver libraries, or a GPU name from enumeration.
         nvidia_present = "NVIDIA" in detected_caps or any(
@@ -819,16 +867,14 @@ class HardwareLaunchPlan:
             args += ["--server", "--port", str(PORT)]
         args += list(extra_args or [])
 
-        # Force CPU mode at RUNTIME (not SYNC time)
-        force_cpu = str(os.environ.get("VOGON_FORCE_CPU", "")).lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
-        if not force_cpu and _read_config_device() == "cpu":
-            force_cpu = True
-        if force_cpu or hw_mode == "cpu":
+        # The effective device (ADR 0014) decides the --cpu append: the same
+        # overrides detection consumed (VOGON_FORCE_CPU, --cpu passthrough,
+        # hardware.device == "cpu"), so the launch flags never disagree with
+        # the synced flavor.
+        if (
+            "--cpu" not in args
+            and (_effective_device(extra_args) == "cpu" or hw_mode == "cpu")
+        ):
             args.append("--cpu")
 
         return args, env
@@ -840,7 +886,7 @@ def run_standalone(argv: List[str]) -> None:
     models_dir_arg, passthrough_args = _split_args(argv)
 
     print("Bootstrap: detecting hardware...", file=sys.stderr)
-    hw = HardwareDetector().get_best_mode()
+    hw = HardwareDetector().get_best_mode(passthrough_args)
     hw_mode = hw["hw_mode"]
     extra = hw["extra"]
     print(f"Bootstrap: hardware: {hw['desc']} (mode: {hw_mode})", file=sys.stderr)

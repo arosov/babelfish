@@ -244,6 +244,89 @@ class TestHardwareDetectorModes:
         assert hw["extra"] == "cpu"
 
 
+def _detector_for(bootstrap, monkeypatch, platform="win32", nvidia=True, gpus=("NVIDIA GPU",)):
+    """Builds a HardwareDetector with faked platform + detection."""
+    class _FakeSys:
+        stderr = sys.stderr
+
+        def __init__(self):
+            self.platform = platform
+
+    monkeypatch.setattr(bootstrap, "sys", _FakeSys())
+    monkeypatch.setattr(bootstrap.HardwareDetector, "detect_nvidia", lambda *args: nvidia)
+    monkeypatch.setattr(bootstrap.HardwareDetector, "detect_metal", lambda s: False)
+    monkeypatch.setattr(bootstrap.HardwareDetector, "get_all_gpus", lambda s: list(gpus))
+    return bootstrap.HardwareDetector()
+
+
+class TestForcedCpuCoherence:
+    """ADR 0014 Phase A: VOGON_FORCE_CPU / --cpu are honored by EVERY layer.
+
+    A forced-CPU run must route detection to CPU mode — zero GPU flavor
+    sync, zero GPU provisioning — even when the config still says cuda.
+    This is the observed layering anomaly (GPU environment around a CPU
+    inference), now closed."""
+
+    def test_env_force_routes_cuda_config_to_cpu_mode(
+        self, bootstrap, monkeypatch, caplog
+    ):
+        monkeypatch.setenv("VOGON_FORCE_CPU", "1")
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cuda")
+        detector = _detector_for(bootstrap, monkeypatch, platform="win32")
+        with caplog.at_level(logging.INFO, logger="babelfish_bootstrap"):
+            hw = detector.get_best_mode()
+        assert hw == {"hw_mode": "cpu", "extra": "cpu", "desc": "CPU"}
+        assert any(
+            "Effective device: cpu (config says cuda" in r.message
+            for r in caplog.records
+        )
+
+    def test_cpu_cli_passthrough_routes_cuda_config_to_cpu_mode(
+        self, bootstrap, monkeypatch
+    ):
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cuda")
+        detector = _detector_for(bootstrap, monkeypatch, platform="win32")
+        hw = detector.get_best_mode(passthrough=["--cpu", "--type"])
+        assert hw["hw_mode"] == "cpu"
+        assert hw["extra"] == "cpu"
+
+    def test_linux_cuda_config_with_env_force_skips_nvidia_linux(
+        self, bootstrap, monkeypatch
+    ):
+        monkeypatch.setenv("VOGON_FORCE_CPU", "1")
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cuda")
+        detector = _detector_for(bootstrap, monkeypatch, platform="linux", nvidia=True)
+        hw = detector.get_best_mode()
+        assert hw["hw_mode"] == "cpu"
+        assert hw["extra"] == "cpu"
+
+    def test_pure_cpu_config_keeps_the_windows_gpu_sync(self, bootstrap, monkeypatch):
+        """Behavior-preserving gate: Phase A only touches the FORCED case.
+        A config that itself says "cpu" still syncs windows-gpu (the
+        runtime --cpu flag handles the device)."""
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cpu")
+        detector = _detector_for(bootstrap, monkeypatch, platform="win32", nvidia=False, gpus=[])
+        hw = detector.get_best_mode()
+        assert hw["extra"] == "windows-gpu"
+
+    def test_launch_plan_cpu_passthrough_appends_cpu_once(
+        self, bootstrap, monkeypatch
+    ):
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cuda")
+        plan = bootstrap.HardwareLaunchPlan(FakeEnvManager())
+        args, _ = plan.build("nvidia_win", ["--cpu"])
+        assert args.count("--cpu") == 1
+
+    def test_launch_plan_cpu_passthrough_without_cpu_config(
+        self, bootstrap, monkeypatch
+    ):
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cuda")
+        plan = bootstrap.HardwareLaunchPlan(FakeEnvManager())
+        args, _ = plan.build("nvidia_win", ["--type"])
+        assert "--cpu" not in args
+        assert "--type" in args
+
+
 def test_ort_flavor_map_covers_all_modes(bootstrap):
     """Every hw_mode the detector can return maps to exactly one ORT flavor
     package + required provider (ORT_FLAVOR feeds both the
