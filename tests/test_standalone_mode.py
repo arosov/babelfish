@@ -298,11 +298,61 @@ class TestEngineModelResolution(unittest.TestCase):
 
         self.assertIsNone(resolved)
 
+    # --- The device-keyed weights ladder (ADR 0014) ---
+
+    def test_cpu_device_resolves_the_redux_card(self):
+        from babelfish_stt.engine import resolve_model_path
+
+        redux = self.base_dir / "models" / "nemo-parakeet-tdt-0.6b-v3-redux"
+        redux.mkdir(parents=True)
+
+        resolved = resolve_model_path(
+            None, self.base_dir, self.MODEL_NAME, device="cpu"
+        )
+
+        self.assertEqual(resolved, redux)
+
+    def test_cpu_ladder_is_strict_no_cross_card_fallback(self):
+        """Only fp32 v3 present + device cpu: the ladder does NOT silently
+        cross to the other card — it returns None (HF auto-download), and
+        the bootstrap's provisioning is what puts the right card in place."""
+        from babelfish_stt.engine import resolve_model_path
+
+        (self.base_dir / "models" / self.MODEL_NAME).mkdir(parents=True)
+
+        resolved = resolve_model_path(
+            None, self.base_dir, self.MODEL_NAME, device="cpu"
+        )
+
+        self.assertIsNone(resolved)
+
+    def test_cache_dir_takes_priority_within_a_card(self):
+        from babelfish_stt.engine import resolve_model_path
+
+        card = "nemo-parakeet-tdt-0.6b-v3-redux"
+        cache_model = Path(self._tmp) / "cache" / "models" / card
+        cache_model.mkdir(parents=True)
+        repo_model = self.base_dir / "models" / card
+        repo_model.mkdir(parents=True)
+
+        resolved = resolve_model_path(
+            str(Path(self._tmp) / "cache"),
+            self.base_dir,
+            self.MODEL_NAME,
+            device="cpu",
+        )
+
+        self.assertEqual(resolved, cache_model)
+
     def test_engine_uses_cache_dir_path_in_load_call(self):
         from babelfish_stt.engine import STTEngine
         from babelfish_stt.config import HardwareConfig
 
-        cache_model = Path(self._tmp) / "cache" / "models" / self.MODEL_NAME
+        # ADR 0014: device cpu resolves the REDUX card of the ladder: the
+        # cache dir named nemo-parakeet-tdt-0.6b-v3-redux.
+        cache_model = (
+            Path(self._tmp) / "cache" / "models" / (self.MODEL_NAME + "-redux")
+        )
         cache_model.mkdir(parents=True)
 
         config = BabelfishConfig(
@@ -318,6 +368,52 @@ class TestEngineModelResolution(unittest.TestCase):
 
         _, kwargs = mock_load.call_args
         self.assertEqual(kwargs["path"], str(cache_model))
+        self.assertEqual(engine.weights_tag, "parakeet-redux int4 MatMulNBits")
+
+    def test_engine_gpu_device_resolves_the_fp32_card(self):
+        """ADR 0014: a GPU device keeps the fp32 v3 card by design — GPU
+        int4 MatMulNBits is not in scope."""
+        from babelfish_stt.engine import STTEngine
+        from babelfish_stt.config import HardwareConfig
+
+        cache_model = Path(self._tmp) / "cache" / "models" / self.MODEL_NAME
+        cache_model.mkdir(parents=True)
+
+        config = BabelfishConfig(
+            hardware=HardwareConfig(device="cuda"),
+            cache={"cache_dir": str(Path(self._tmp) / "cache")},
+        )
+
+        with patch("onnx_asr.load_model"), \
+               patch("babelfish_stt.engine.get_memory_usage", return_value={"total": 0, "used": 0}), \
+               patch("babelfish_stt.engine.resolve_device", return_value="cuda:0"), \
+               patch("babelfish_stt.engine.get_device_name", return_value="Test GPU (CUDA)"):
+            engine = STTEngine(config=config)
+
+        self.assertEqual(engine.model_path, cache_model)
+        self.assertEqual(engine.weights_tag, "fp32 v3")
+
+    def test_engine_model_override_forces_one_card_of_the_ladder(self):
+        """hardware.model ("v3"/"redux") pins one card regardless of the
+        device (the GPU A/B path, ADR 0014)."""
+        from babelfish_stt.engine import STTEngine
+        from babelfish_stt.config import HardwareConfig
+
+        cache_base = Path(self._tmp) / "cache" / "models"
+        (cache_base / self.MODEL_NAME).mkdir(parents=True)
+
+        config = BabelfishConfig(
+            hardware=HardwareConfig(device="cuda", model="v3"),
+            cache={"cache_dir": str(Path(self._tmp) / "cache")},
+        )
+
+        with patch("onnx_asr.load_model"), \
+               patch("babelfish_stt.engine.get_memory_usage", return_value={"total": 0, "used": 0}), \
+               patch("babelfish_stt.engine.resolve_device", return_value="cuda:0"), \
+               patch("babelfish_stt.engine.get_device_name", return_value="Test GPU (CUDA)"):
+            engine = STTEngine(config=config)
+
+        self.assertEqual(engine.model_path, cache_base / self.MODEL_NAME)
 
     def test_engine_without_local_model_passes_path_none(self):
         from babelfish_stt.engine import STTEngine

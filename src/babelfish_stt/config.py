@@ -6,18 +6,15 @@ from pydantic import BaseModel, Field, model_validator
 
 
 def platform_default_device() -> str:
-    """The concrete backend a fresh config starts on (ADR 0007).
+    """The concrete backend a fresh config starts on (ADR 0007, ADR 0014).
 
-    Windows defaults to DirectML (small wheel, works on every GPU vendor);
-    Linux defaults to CUDA when an NVIDIA driver is present, else CPU.
+    The default is CPU on every platform, served by the Parakeet Redux
+    int4 weights (ADR 0014: a 418 MB first-run download instead of 2.4 GB,
+    3.9x faster load, transcripts equivalent to fp32 v3 on the bundled
+    fixtures). GPUs are an explicit opt-in — write `hardware.device` in
+    the config or pass `babelfish --gpu` — and keep the fp32 v3 weights.
     Decided at config creation — never at runtime, and never "auto".
     """
-    if sys.platform == "win32":
-        return "dml"
-    if sys.platform == "linux":
-        from babelfish_stt.hardware import detect_nvidia
-
-        return "cuda" if detect_nvidia() else "cpu"
     return "cpu"
 
 
@@ -31,10 +28,24 @@ class HardwareConfig(BaseModel):
     # A concrete backend id: "dml"/"dml:N", "cuda"/"cuda:N", "cpu", or a
     # specific id from `list_hardware` (never "auto" — ADR 0007).
     device: str = Field(default_factory=platform_default_device)
+    # Weights-ladder card override (ADR 0014): "v3" forces the fp32 v3
+    # card, "redux" forces the int4 card, regardless of device (A/B
+    # testing on a GPU machine). None derives the card from the device:
+    # cpu -> redux, any GPU backend -> fp32 v3.
+    model: Optional[str] = None
     microphone_name: Optional[str] = None
     quantization: Optional[str] = (
         None  # None means full precision; an explicit "int8" is still honoured
     )
+
+    @model_validator(mode="after")
+    def _validate_model_card(self) -> "HardwareConfig":
+        if self.model not in (None, "v3", "redux"):
+            raise ValueError(
+                f"hardware.model must be None, 'v3' or 'redux' "
+                f"(got {self.model!r})"
+            )
+        return self
 
 
 class HardwareStatus(BaseModel):

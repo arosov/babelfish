@@ -72,7 +72,8 @@ def test_split_args_models_dir_equals_form(bootstrap):
     assert passthrough == []
 
 
-def test_standalone_launch_has_no_server_flags(bootstrap):
+def test_standalone_launch_has_no_server_flags(bootstrap, monkeypatch):
+    monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cuda")
     plan = bootstrap.HardwareLaunchPlan(FakeEnvManager())
     args, env = plan.build("nvidia_win", ["--type"])
     assert "--server" not in args
@@ -83,7 +84,8 @@ def test_standalone_launch_has_no_server_flags(bootstrap):
 
 
 def test_driven_launch_has_server_flags(bootstrap, monkeypatch):
-    monkeypatch.setattr("babelfish_bootstrap.DRIVEN", True)
+    monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cuda")
+    monkeypatch.setattr(bootstrap, "DRIVEN", True)
     plan = bootstrap.HardwareLaunchPlan(FakeEnvManager())
     args, env = plan.build("nvidia_win")
     assert args[4:8] == ["--server", "--port", "8123"]
@@ -111,10 +113,21 @@ def test_cpu_hw_mode_appends_cpu_flag(bootstrap):
     assert "--cpu" in args
 
 
-def test_gpu_mode_without_force_has_no_cpu_flag(bootstrap):
+def test_gpu_mode_without_force_has_no_cpu_flag(bootstrap, monkeypatch):
+    monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cuda")
     plan = bootstrap.HardwareLaunchPlan(FakeEnvManager())
     args, _ = plan.build("nvidia_win")
     assert "--cpu" not in args
+
+
+def test_fresh_config_gpu_launch_appends_cpu(bootstrap, monkeypatch):
+    """ADR 0014: with no config file at all, the machine default device is
+    cpu — the launch rides --cpu even when a GPU wheel happens to be synced
+    (an existing config may have synced GPU flavors; the fresh default is
+    still CPU, and the launch flag must agree with it)."""
+    plan = bootstrap.HardwareLaunchPlan(FakeEnvManager())
+    args, _ = plan.build("windows_gpu")
+    assert "--cpu" in args
 
 
 class TestHardwareDetectorModes:
@@ -138,15 +151,18 @@ class TestHardwareDetectorModes:
         monkeypatch.setattr(bootstrap.HardwareDetector, "get_all_gpus", lambda s: list(gpus))
         return bootstrap.HardwareDetector()
 
-    def test_nvidia_windows_defaults_to_directml(self, bootstrap, monkeypatch):
-        # No config file: 'auto' migrates to the platform default 'dml'
-        # (win32), so even an NVIDIA machine syncs windows-gpu first.
+    def test_fresh_config_defaults_to_cpu_even_with_nvidia(
+        self, bootstrap, monkeypatch
+    ):
+        # No config file: 'auto' migrates to the platform default, which is
+        # 'cpu' on every platform now (ADR 0014) — even an NVIDIA machine
+        # starts on CPU with the redux card, GPUs are opt-in.
         detector = self._detector(bootstrap, monkeypatch, platform="win32", nvidia=True, gpus=["NVIDIA GPU"])
         hw = detector.get_best_mode()
         assert hw == {
-            "hw_mode": "windows_gpu",
-            "extra": "windows-gpu",
-            "desc": "DirectML",
+            "hw_mode": "cpu",
+            "extra": "cpu",
+            "desc": "CPU",
         }
 
     def test_nvidia_windows_cuda_config_uses_nvidia_win(self, bootstrap, monkeypatch):
@@ -168,13 +184,13 @@ class TestHardwareDetectorModes:
         assert hw["extra"] == "windows-gpu"
         assert "DirectML" in hw["desc"]
 
-    def test_windows_cpu_config_still_syncs_windows_gpu(self, bootstrap, monkeypatch):
-        # Runtime --cpu (via HardwareLaunchPlan) handles a 'cpu' device; the
-        # synced environment stays the Windows default.
+    def test_windows_cpu_config_gets_the_cpu_flavor(self, bootstrap, monkeypatch):
+        # ADR 0014: the device decides the flavor (D1) — a cpu config syncs
+        # the small plain onnxruntime wheel; no GPU env is spun up.
         monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cpu")
         detector = self._detector(bootstrap, monkeypatch, platform="win32", nvidia=False, gpus=[])
         hw = detector.get_best_mode()
-        assert hw["extra"] == "windows-gpu"
+        assert hw == {"hw_mode": "cpu", "extra": "cpu", "desc": "CPU"}
 
     def test_windows_cuda_config_without_nvidia_warns_but_honors_request(
         self, bootstrap, monkeypatch, caplog
@@ -193,8 +209,8 @@ class TestHardwareDetectorModes:
         detector = self._detector(bootstrap, monkeypatch, platform="win32", nvidia=False, gpus=[])
         with caplog.at_level(logging.INFO, logger="babelfish_bootstrap"):
             hw = detector.get_best_mode()
-        assert hw["extra"] == "windows-gpu"
-        assert any("Migrating legacy device 'rocm:0' → 'dml'" in r.message for r in caplog.records)
+        assert hw["extra"] == "cpu"
+        assert any("Migrating legacy device 'rocm:0' → 'cpu'" in r.message for r in caplog.records)
 
     def test_linux_nvidia_defaults_to_cuda(self, bootstrap, monkeypatch):
         monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cuda")
@@ -254,7 +270,7 @@ def _detector_for(bootstrap, monkeypatch, platform="win32", nvidia=True, gpus=("
 
     monkeypatch.setattr(bootstrap, "sys", _FakeSys())
     monkeypatch.setattr(bootstrap.HardwareDetector, "detect_nvidia", lambda *args: nvidia)
-    monkeypatch.setattr(bootstrap.HardwareDetector, "detect_metal", lambda s: False)
+    monkeypatch.setattr(bootstrap.HardwareDetector, "detect_metal", lambda *args: False)
     monkeypatch.setattr(bootstrap.HardwareDetector, "get_all_gpus", lambda s: list(gpus))
     return bootstrap.HardwareDetector()
 
@@ -300,14 +316,14 @@ class TestForcedCpuCoherence:
         assert hw["hw_mode"] == "cpu"
         assert hw["extra"] == "cpu"
 
-    def test_pure_cpu_config_keeps_the_windows_gpu_sync(self, bootstrap, monkeypatch):
-        """Behavior-preserving gate: Phase A only touches the FORCED case.
-        A config that itself says "cpu" still syncs windows-gpu (the
-        runtime --cpu flag handles the device)."""
+    def test_pure_cpu_config_gets_the_cpu_flavor(self, bootstrap, monkeypatch):
+        """Phase-B refinement of the Phase-A gate: the device decides the
+        flavor (D1), so a config that says "cpu" now syncs the plain CPU
+        wheel — below the anomaly fix, this is the consistent endpoint."""
         monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cpu")
         detector = _detector_for(bootstrap, monkeypatch, platform="win32", nvidia=False, gpus=[])
         hw = detector.get_best_mode()
-        assert hw["extra"] == "windows-gpu"
+        assert hw == {"hw_mode": "cpu", "extra": "cpu", "desc": "CPU"}
 
     def test_launch_plan_cpu_passthrough_appends_cpu_once(
         self, bootstrap, monkeypatch
@@ -325,6 +341,91 @@ class TestForcedCpuCoherence:
         args, _ = plan.build("nvidia_win", ["--type"])
         assert "--cpu" not in args
         assert "--type" in args
+
+    def test_gpu_cli_passthrough_selects_best_detected_backend(
+        self, bootstrap, monkeypatch
+    ):
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cpu")
+        detector = _detector_for(bootstrap, monkeypatch, platform="win32", nvidia=True)
+        hw = detector.get_best_mode(passthrough=["--gpu"])
+        assert hw["hw_mode"] == "nvidia_win"
+
+    def test_gpu_cli_passthrough_without_gpu_stays_cpu(
+        self, bootstrap, monkeypatch
+    ):
+        monkeypatch.setattr(bootstrap, "_read_config_device", lambda: "cpu")
+        detector = _detector_for(
+            bootstrap, monkeypatch, platform="win32", nvidia=False, gpus=[]
+        )
+        hw = detector.get_best_mode(passthrough=["--gpu"])
+        assert hw["hw_mode"] == "cpu"
+        assert hw["extra"] == "cpu"
+
+
+class TestWeightsCard:
+    """ADR 0014: provisioning is device-keyed — cpu resolves the Redux int4
+    card (pinned repo revision, exactly 4 files), GPU backends keep fp32 v3 —
+    with config hardware.model as the explicit card override."""
+
+    def test_cpu_card_is_redux(self, bootstrap):
+        card = bootstrap._weights_card("cpu")
+        assert card["card"] == "cpu"
+        assert card["dir_name"] == "nemo-parakeet-tdt-0.6b-v3-redux"
+        assert card["repo"] == "eschmidbauer/parakeet-redux-onnx"
+        assert card["revision"] == bootstrap.MODEL_REPO_CPU_REVISION
+        assert sorted(card["patterns"]) == [
+            "config.json",
+            "decoder_joint-model.onnx",
+            "encoder-model.onnx",
+            "vocab.txt",
+        ]
+
+    def test_gpu_card_is_fp32_v3(self, bootstrap):
+        for device in ("cuda:0", "dml:0", "openvino:GPU.0"):
+            card = bootstrap._weights_card(device)
+            assert card["card"] == "gpu", device
+            assert card["dir_name"] == "nemo-parakeet-tdt-0.6b-v3"
+            assert card["repo"] == "istupakov/parakeet-tdt-0.6b-v3-onnx"
+            assert card["revision"] is None
+            assert card["patterns"] == [
+                "encoder-model.onnx",
+                "decoder_joint-model.onnx",
+                "encoder-model.onnx.data",
+                "config.json",
+                "vocab.txt",
+            ]
+
+    def test_config_model_override_forces_the_card(
+        self, bootstrap, monkeypatch, tmp_path
+    ):
+        (tmp_path / "babelfish.config.json").write_text(
+            json.dumps({"hardware": {"device": "cpu", "model": "v3"}})
+        )
+        card = bootstrap._weights_card("cpu")
+        assert card["card"] == "gpu"
+
+        (tmp_path / "babelfish.config.json").write_text(
+            json.dumps({"hardware": {"device": "cuda", "model": "redux"}})
+        )
+        card = bootstrap._weights_card("cuda")
+        assert card["card"] == "cpu"
+
+    def test_models_dir_resolution_follows_device(
+        self, bootstrap, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("VOGON_APP_CACHE_DIR", str(tmp_path / "cache"))
+        cpu_dir = bootstrap._resolve_models_dir(None, "cpu")
+        assert cpu_dir == tmp_path / "cache" / "models" / "nemo-parakeet-tdt-0.6b-v3-redux"
+        gpu_dir = bootstrap._resolve_models_dir(None, "cuda:0")
+        assert gpu_dir == tmp_path / "cache" / "models" / "nemo-parakeet-tdt-0.6b-v3"
+        explicit = bootstrap._resolve_models_dir("C:/vp_models", "gpu")
+        assert explicit == Path("C:/vp_models") / "nemo-parakeet-tdt-0.6b-v3"
+
+    def test_run_redux_launcher_compatibility_names(self, bootstrap):
+        """scripts/run_redux.py keyed off the historical constants; both
+        names keep their old values as GPU-card aliases."""
+        assert bootstrap.MODEL_DIR_NAME == "nemo-parakeet-tdt-0.6b-v3"
+        assert bootstrap.MODEL_REPO == "istupakov/parakeet-tdt-0.6b-v3-onnx"
 
 
 def test_ort_flavor_map_covers_all_modes(bootstrap):

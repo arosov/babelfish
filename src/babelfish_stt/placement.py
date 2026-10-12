@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 import logging
 import sys
 
@@ -46,6 +46,24 @@ def _best_of(backend: str, facts: HardwareFacts):
         return None
     candidates = [g for g in facts.gpus if g.device.startswith(backend + ":")]
     return _best(candidates).device if candidates else _DEFAULT_DEVICE.get(backend)
+
+
+def best_gpu_device(facts: HardwareFacts) -> Optional[str]:
+    """The best available GPU device across provider backends, or None when
+    no GPU backend is usable in this ORT install.
+
+    Priority order mirrors engine/placement conventions: CUDA first, then
+    DirectML, then OpenVINO (the manual opt-in still wins nothing here —
+    it is last). Within a backend, the highest-VRAM discrete card wins
+    (same rule as resolve_device). Used by `babelfish --gpu` (ADR 0014):
+    the CLI's in-memory device override.
+    """
+    for backend in ("cuda", "dml", "openvino"):
+        if _PROVIDER[backend] in facts.providers:
+            device = _best_of(backend, facts)
+            if device:
+                return device
+    return None
 
 
 def resolve_device(requested: str, facts: HardwareFacts) -> str:

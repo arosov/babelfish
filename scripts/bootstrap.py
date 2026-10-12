@@ -31,7 +31,9 @@ self-heal (this heals mixed ORT wheel installs), `verify_ort_flavor` — a
 live check that the installed onnxruntime actually exposes the mode's
 execution provider, which triggers the sync even on a matching marker
 (H1) and only records the marker once the intended provider imports (H2)
-—, model provisioning from `istupakov/parakeet-tdt-0.6b-v3-onnx`, and the
+—, device-keyed model provisioning (ADR 0014: the CPU default pulls the
+Parakeet Redux int4 export with a pinned revision; GPU devices keep the
+fp32 v3 export), and the
 DLL injection. The launcher scripts only resolve uv, seed the shared
 cache variables, and delegate.
 """
@@ -62,9 +64,45 @@ uv_python = os.environ.get("UV_PYTHON_INSTALL_DIR", "System Default")
 logger.info(f"Active UV Cache: {uv_cache}")
 logger.info(f"Active UV Python Install Dir: {uv_python}")
 
-# Multilingual Parakeet-TDT v3 (25 languages)
-MODEL_REPO = "istupakov/parakeet-tdt-0.6b-v3-onnx"
-MODEL_DIR_NAME = "nemo-parakeet-tdt-0.6b-v3"
+# Multilingual Parakeet weight cards, keyed by device (ADR 0014). The CPU
+# default card is the Parakeet Redux int4 export (418 MB, loads 3.9x faster,
+# transcripts equivalent to fp32 v3 on the bundled fixtures) — the GPU card
+# is the fp32 v3 export we have always shipped. The redux repo is pinned to
+# the revision verified live in the Oct 2026 prototype pass (word-for-word
+# vs the Photon reference); re-verify after any upstream re-export.
+# License: CC-BY-4.0 derivative (moondream/parakeet-redux base model).
+MODEL_REPOS = {
+    "gpu": "istupakov/parakeet-tdt-0.6b-v3-onnx",
+    "cpu": "eschmidbauer/parakeet-redux-onnx",
+}
+MODEL_REPO_CPU_REVISION = "1c285ba78d6f1880803f65355133a5ad3559a407"
+MODEL_DIR_NAMES = {
+    "gpu": "nemo-parakeet-tdt-0.6b-v3",
+    "cpu": "nemo-parakeet-tdt-0.6b-v3-redux",
+}
+# Back-compat aliases: the GPU card keeps the historical constants.
+MODEL_REPO = MODEL_REPOS["gpu"]
+MODEL_DIR_NAME = MODEL_DIR_NAMES["gpu"]
+
+# Provisioning patterns per device (ADR 0014): the CPU card is exactly the
+# four files the engine needs — never the repo extras (preprocessor.onnx,
+# vad-model.onnx, .cache/). GPU patterns are unchanged (fp32 v3, .data
+# external-weights layout).
+PROVISION_PATTERNS = {
+    "gpu": [
+        "encoder-model.onnx",
+        "decoder_joint-model.onnx",
+        "encoder-model.onnx.data",
+        "config.json",
+        "vocab.txt",
+    ],
+    "cpu": [
+        "config.json",
+        "vocab.txt",
+        "encoder-model.onnx",
+        "decoder_joint-model.onnx",
+    ],
+}
 
 # This script lives in the babelfish checkout: its parent is the project root.
 BUNDLE_DIR = Path(__file__).resolve().parent.parent
@@ -238,16 +276,125 @@ def _effective_device(passthrough: Optional[List[str]] = None) -> str:
 
 
 def _platform_default_device() -> str:
-    """The concrete backend a fresh/legacy config starts on (ADR 0007).
+    """The concrete backend a fresh/legacy config starts on (ADR 0007,
+    ADR 0014).
 
-    Windows defaults to DirectML; Linux defaults to CUDA when an NVIDIA
-    driver is present, else CPU. Decided at config creation — never "auto".
+    The default is CPU on every platform — served by the Redux int4 card,
+    with GPUs an explicit opt-in (config hardware.device or `babelfish
+    --gpu`). Decided at config creation — never "auto"; kept authoritative
+    here in case the bootstrap must create one. Mirrors
+    babelfish_stt.config.platform_default_device.
     """
-    if sys.platform == "win32":
-        return "dml"
-    if sys.platform == "linux":
-        return "cuda" if HardwareDetector.detect_nvidia() else "cpu"
     return "cpu"
+
+
+def _read_config_model() -> Optional[str]:
+    """Reads `hardware.model` ("v3" | "redux") from the babelfish config,
+    if one exists — the weights-ladder card override (ADR 0014). Anything
+    else (missing, None, unknown) means device-derived."""
+    candidates: List[Path] = []
+    app_data_dir = os.environ.get("VOGON_APP_DATA_DIR")
+    if app_data_dir:
+        candidates.append(Path(app_data_dir) / "babelfish.config.json")
+    if not app_data_dir:
+        candidates.append(BUNDLE_DIR / "babelfish.config.json")
+
+    for config_path in candidates:
+        if config_path.exists():
+            try:
+                with open(config_path, "r") as f:
+                    data = json.load(f)
+                model = data.get("hardware", {}).get("model")
+                if model in ("v3", "redux"):
+                    return str(model)
+            except Exception:
+                pass
+    return None
+
+
+def _best_detected_gpu_backend() -> str:
+    """The best GPU backend nameable before ORT is installed: CUDA when an
+    NVIDIA driver loads, else DirectML when a GPU enumerates on Windows
+    (the runtime resolution still validates the exact device), else CPU."""
+    if HardwareDetector.detect_nvidia():
+        return "cuda"
+    if sys.platform == "win32" and HardwareDetector().get_all_gpus():
+        return "dml"
+    if HardwareDetector.detect_metal():
+        return "metal"
+    return "cpu"
+
+
+def _effective_device(passthrough: Optional[List[str]] = None) -> str:
+    """The device every layer must agree on (ADR 0014): one helper consumed
+    by detection, provisioning, and the launch plan — previously only the
+    launch plan saw the CPU overrides, so a forced-CPU run still synced and
+    provisioned the GPU environment around a CPU inference (the observed
+    layering anomaly).
+
+    Resolution order:
+      1. VOGON_FORCE_CPU=1, or a `--cpu` in the CLI passthrough → "cpu".
+      2. A `--gpu` in the CLI passthrough → the best detected GPU backend
+         (the CLI's in-memory --gpu override, mirrored here so the synced
+         flavor matches what the engine will resolve).
+      3. config `hardware.device` as written (ADR 0007: always a concrete
+         backend; legacy ''/'auto'/rocm* map to the platform default).
+      4. missing config → the platform default ("cpu" everywhere now).
+    """
+    if _force_cpu_env() or "--cpu" in (passthrough or []):
+        return "cpu"
+    args = passthrough or []
+    if "--gpu" in args:
+        return _best_detected_gpu_backend()
+    device = _read_config_device()
+    if device in ("", "auto") or device.startswith("rocm"):
+        return _platform_default_device()
+    return device
+
+
+def _weights_card(device: str) -> Dict[str, object]:
+    """The weights card a device resolves to (ADR 0014): directory name,
+    HF repo (pinned revision for the CPU card), and provisioning patterns.
+
+    The config `hardware.model` override ("v3"/"redux") forces one card
+    regardless of the device, so provisioning always matches what the
+    engine's ladder will load.
+    """
+    card = "cpu" if device == "cpu" else "gpu"
+    override = _read_config_model()
+    if override == "redux":
+        card = "cpu"
+    elif override == "v3":
+        card = "gpu"
+    return {
+        "card": card,
+        "dir_name": MODEL_DIR_NAMES[card],
+        "repo": MODEL_REPOS[card],
+        "revision": MODEL_REPO_CPU_REVISION if card == "cpu" else None,
+        "patterns": list(PROVISION_PATTERNS[card]),
+    }
+
+
+def _log_weight_digests(dest_dir: Path) -> None:
+    """SHA-256 per provisioned weights file, logged once on first provision.
+
+    The export-source pinning record (ADR 0014): the CPU card comes from a
+    community export, so the shipped bytes are fingerprinted at provision
+    time and comparable after any upstream re-export. Chunked reads: the
+    encoder is ~344 MB."""
+    import hashlib
+
+    for f in sorted(dest_dir.iterdir()):
+        if not f.is_file():
+            continue
+        digest = hashlib.sha256()
+        with open(f, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(chunk)
+        logger.info(
+            f"Provisioned {f.name}: sha256={digest.hexdigest()} "
+            f"size={f.stat().st_size}"
+        )
 
 
 class HardwareDetector:
@@ -391,32 +538,31 @@ class HardwareDetector:
         all_gpu_names = self.get_all_gpus()
         logger.info(f"Hardware Detection: Caps={detected_caps}, GPUs={all_gpu_names}")
 
-        # `hardware.device` is the source of truth (ADR 0007); detection only
-        # gates the Linux CUDA flavor. Legacy values ('', 'auto', rocm*) map
-        # to the platform default — the config file itself is NOT rewritten
-        # here (runtime config_manager migration owns that).
-        config_device = _read_config_device()
-        if config_device in ("", "auto") or config_device.startswith("rocm"):
+        # Legacy values ('', 'auto', rocm*) map to the platform default; the
+        # config file itself is NOT rewritten here (runtime config_manager
+        # migration owns that).
+        raw_config = _read_config_device()
+        if raw_config in ("", "auto") or raw_config.startswith("rocm"):
             default = _platform_default_device()
-            logger.info(f"Migrating legacy device '{config_device}' → '{default}'")
-            config_device = default
+            logger.info(f"Migrating legacy device '{raw_config}' → '{default}'")
 
-        # The CPU overrides (VOGON_FORCE_CPU / --cpu in the CLI passthrough)
-        # are honored by EVERY layer (ADR 0014): detection routes to CPU
-        # mode, so sync, provisioning, and launch all follow the CPU — the
-        # GPU environment no longer spins up around a CPU inference. A
-        # config that already says "cpu" takes the existing branches below
-        # (unchanged behavior); the forced case is the only Phase-A change.
+        # The effective device (ADR 0014) — VOGON_FORCE_CPU, the --cpu/--gpu
+        # CLI passthrough, then `hardware.device` — is what detection,
+        # provisioning, and the launch plan all consume. Whenever it differs
+        # from the config's own value, say so: the exact confusion the
+        # 2026-10-12 run_redux trace showed (GPU environment around a CPU
+        # inference) becomes an explicit, reasoned log line.
+        device = _effective_device(passthrough)
         if (
-            _effective_device(passthrough) == "cpu"
-            and config_device != "cpu"
+            device != raw_config
+            and raw_config not in ("", "auto")
+            and not raw_config.startswith("rocm")
         ):
             logger.info(
-                "Effective device: cpu (config says "
-                f"{config_device}; VOGON_FORCE_CPU / --cpu override) — sync, "
-                "provisioning, and launch all follow the CPU."
+                f"Effective device: {device} (config says {raw_config}; "
+                "CLI/env override) — sync, provisioning, and launch all "
+                "follow it."
             )
-            return {"hw_mode": "cpu", "extra": "cpu", "desc": "CPU"}
 
         # NVIDIA presence: driver libraries, or a GPU name from enumeration.
         nvidia_present = "NVIDIA" in detected_caps or any(
@@ -429,7 +575,7 @@ class HardwareDetector:
 
             arch = platform.machine().lower()
             if "arm" in arch or "aarch64" in arch:
-                if config_device == "cpu":
+                if device == "cpu":
                     logger.info("Apple Silicon detected but device is 'cpu'. Using CPU.")
                     return {"hw_mode": "cpu", "extra": "cpu", "desc": "Apple Silicon (CPU mode)"}
                 # Apple Silicon -> CoreML Capable
@@ -447,16 +593,21 @@ class HardwareDetector:
                 }
 
         if sys.platform == "win32":
-            # Windows is DirectML-first: the windows-gpu wheel is small and
-            # works on every GPU vendor. CUDA is an explicit opt-in via
-            # hardware.device ("cuda"/"cuda:N") and syncs nvidia-win on demand.
-            if config_device.startswith("cuda"):
+            # ADR 0014: CPU is the default — the small plain onnxruntime
+            # wheel, no GPU probing for the engine. GPU wheels are opt-in:
+            # CUDA via hardware.device ("cuda"/"cuda:N") syncs nvidia-win on
+            # demand; any other value rides DirectML (windows-gpu works on
+            # every GPU vendor).
+            if device == "cpu":
+                logger.info("Device cpu: using cpu extra (no GPU flavor sync).")
+                return {"hw_mode": "cpu", "extra": "cpu", "desc": "CPU"}
+            if device.startswith("cuda"):
                 if not nvidia_present:
                     logger.warning(
-                        f"hardware.device '{config_device}' requests CUDA but no "
+                        f"hardware.device '{device}' requests CUDA but no "
                         "NVIDIA GPU was detected; honoring the request anyway."
                     )
-                logger.info(f"Device {config_device}: using nvidia-win extra.")
+                logger.info(f"Device {device}: using nvidia-win extra.")
                 return {
                     "hw_mode": "nvidia_win",
                     "extra": "nvidia-win",
@@ -469,10 +620,10 @@ class HardwareDetector:
             }
 
         if sys.platform == "linux":
-            if config_device.startswith("cuda"):
+            if device.startswith("cuda"):
                 if not nvidia_present:
                     logger.warning(
-                        f"hardware.device '{config_device}' requests CUDA but no "
+                        f"hardware.device '{device}' requests CUDA but no "
                         "NVIDIA GPU was detected; syncing the CPU flavor — the "
                         "runtime will degrade to CPU."
                     )
@@ -487,14 +638,14 @@ class HardwareDetector:
                     "extra": "nvidia-linux",
                     "desc": "NVIDIA GPU",
                 }
-            if config_device.startswith("dml"):
+            if device.startswith("dml"):
                 logger.warning(
-                    f"Device '{config_device}' (DirectML) is invalid on Linux; using CPU."
+                    f"Device '{device}' (DirectML) is invalid on Linux; using CPU."
                 )
                 return {"hw_mode": "cpu", "extra": "cpu", "desc": "CPU"}
-            # 'cpu' and anything else. intel-linux is a manual opt-in extra
-            # and is never selected here.
-            logger.info(f"Device {config_device}: using cpu extra.")
+            # 'cpu', openvino (manual opt-in, never auto-selected), and
+            # anything else.
+            logger.info(f"Device {device}: using cpu extra.")
             return {"hw_mode": "cpu", "extra": "cpu", "desc": "CPU"}
 
         return {"hw_mode": "cpu", "extra": "cpu", "desc": "CPU"}
@@ -535,6 +686,7 @@ class EnvironmentManager:
         dest_dir: Path,
         allow_patterns: List[str],
         status_callback=None,
+        revision: Optional[str] = None,
     ):
         if dest_dir.exists() and any(dest_dir.glob("*.onnx")):
             return
@@ -549,12 +701,23 @@ class EnvironmentManager:
                 status_callback(message)
 
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None,
-            lambda: snapshot_download(
-                repo_id=repo_id, local_dir=str(dest_dir), allow_patterns=allow_patterns
-            ),
-        )
+
+        def _download():
+            kwargs = {}
+            if revision:
+                kwargs["revision"] = revision
+            return snapshot_download(
+                repo_id=repo_id,
+                local_dir=str(dest_dir),
+                allow_patterns=allow_patterns,
+                **kwargs,
+            )
+
+        await loop.run_in_executor(None, _download)
+
+        # First provision: record what actually shipped (ADR 0014's
+        # export-pinning evidence — the CPU card is a community export).
+        _log_weight_digests(dest_dir)
 
     def get_env_with_dll_injection(self, hw_mode: str) -> Dict[str, str]:
         """Prepends the ONNX Runtime capi dir and the pip NVIDIA DLL dirs to
@@ -677,10 +840,12 @@ class BootstrapServer:
 
     def __init__(self, models_dir: Optional[Path] = None):
         self.websocket = None
-        # Default mirrors the standalone flow: explicit dir if VogonPoet
-        # passed one, else the shared cache, else repo-local models/.
+        # The models BASE: explicit dir if VogonPoet passed one, else the
+        # same resolution as the engine (config cache > env > repo-local).
+        # The device's card directory name is appended at provisioning time
+        # (ADR 0014), once the effective device is known.
         self.models_dir = (
-            models_dir or _resolve_models_dir().parent
+            Path(models_dir) if models_dir else _resolve_models_base()
         )
         self.detector = HardwareDetector()
         self.env_manager = EnvironmentManager(BUNDLE_DIR)
@@ -749,27 +914,27 @@ class BootstrapServer:
 
     async def run_bootstrap(self):
         await self.send_update("Detecting Hardware...")
+        # The effective device keys BOTH the engine resolution and the
+        # provisioning card (ADR 0014); driven mode has no CLI passthrough,
+        # so the env/config decide here.
+        device = _effective_device()
+        card = _weights_card(device)
         hw = self.detector.get_best_mode()
         hw_mode = hw["hw_mode"]
         extra = hw["extra"]
 
         await self.send_update(f"Hardware: {hw['desc']}. Target mode: {hw_mode}")
 
-        # Model Provisioning
+        # Model Provisioning (device-keyed, ADR 0014)
         self.models_dir.mkdir(parents=True, exist_ok=True)
-        model_dest = self.models_dir / MODEL_DIR_NAME
-        patterns = ["*.onnx", "*.onnx.data", "config.json", "*.txt"]
-        if hw_mode != "cpu":
-            patterns = [
-                "encoder-model.onnx",
-                "decoder_joint-model.onnx",
-                "encoder-model.onnx.data",
-                "config.json",
-                "vocab.txt",
-            ]
+        model_dest = self.models_dir / card["dir_name"]
 
         await self.env_manager.provision_model(
-            MODEL_REPO, model_dest, patterns, self.send_update
+            card["repo"],
+            model_dest,
+            card["patterns"],
+            self.send_update,
+            revision=card["revision"],
         )
 
         # Dependency Sync
@@ -831,14 +996,21 @@ def _read_config_cache_dir() -> Optional[str]:
     return None
 
 
-def _resolve_models_dir(explicit: Optional[str] = None) -> Path:
-    """Model destination matching engine.resolve_model_path's search order:
+def _resolve_models_base(explicit: Optional[str] = None) -> Path:
+    """The models base matching engine.resolve_model_path's search order:
     explicit --models-dir > config cache.cache_dir > VOGON_APP_CACHE_DIR >
     repo-local models/."""
     if explicit:
-        return Path(explicit) / MODEL_DIR_NAME
+        return Path(explicit)
     base = _read_config_cache_dir() or os.environ.get("VOGON_APP_CACHE_DIR") or BUNDLE_DIR
-    return Path(base) / "models" / MODEL_DIR_NAME
+    return Path(base) / "models"
+
+
+def _resolve_models_dir(explicit: Optional[str] = None, device: str = "cpu") -> Path:
+    """Model destination: the models base under the device's weights-card
+    directory name (ADR 0014: cpu -> nemo-parakeet-tdt-0.6b-v3-redux,
+    gpu -> nemo-parakeet-tdt-0.6b-v3)."""
+    return _resolve_models_base(explicit) / _weights_card(device)["dir_name"]
 
 
 class HardwareLaunchPlan:
@@ -886,6 +1058,8 @@ def run_standalone(argv: List[str]) -> None:
     models_dir_arg, passthrough_args = _split_args(argv)
 
     print("Bootstrap: detecting hardware...", file=sys.stderr)
+    device = _effective_device(passthrough_args)
+    card = _weights_card(device)
     hw = HardwareDetector().get_best_mode(passthrough_args)
     hw_mode = hw["hw_mode"]
     extra = hw["extra"]
@@ -893,25 +1067,28 @@ def run_standalone(argv: List[str]) -> None:
 
     env_manager = EnvironmentManager(BUNDLE_DIR)
 
-    # Model Provisioning
-    model_dest = _resolve_models_dir(models_dir_arg)
+    # Model provisioning is device-keyed (ADR 0014): the cpu device pulls
+    # the Redux int4 card — exactly 4 files, ~418 MB, pinned revision —
+    # while GPU devices provision fp32 v3 from the same repo as always.
+    # Whatever weights land in the resolved directory are what the engine
+    # ladder loads.
+    model_dest = _resolve_models_dir(models_dir_arg, device)
     model_dest.parent.mkdir(parents=True, exist_ok=True)
-    patterns = ["*.onnx", "*.onnx.data", "config.json", "*.txt"]
-    if hw_mode != "cpu":
-        patterns = [
-            "encoder-model.onnx",
-            "decoder_joint-model.onnx",
-            "encoder-model.onnx.data",
-            "config.json",
-            "vocab.txt",
-        ]
 
     if not (model_dest.exists() and any(model_dest.glob("*.onnx"))):
-        print(f"Bootstrap: provisioning model from {MODEL_REPO}...", file=sys.stderr)
+        print(
+            f"Bootstrap: provisioning model from {card['repo']}...",
+            file=sys.stderr,
+        )
         loop = asyncio.new_event_loop()
         try:
             loop.run_until_complete(
-                env_manager.provision_model(MODEL_REPO, model_dest, patterns)
+                env_manager.provision_model(
+                    card["repo"],
+                    model_dest,
+                    card["patterns"],
+                    revision=card["revision"],
+                )
             )
         finally:
             loop.close()

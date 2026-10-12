@@ -15,32 +15,37 @@ from babelfish_stt.config import (
 
 def test_hardware_config_defaults():
     config = HardwareConfig()
-    # A concrete platform default, never "auto" (ADR 0007)
+    # A concrete platform default, never "auto" (ADR 0007, ADR 0014)
     assert config.device == platform_default_device()
     assert config.device != "auto"
     assert config.quantization is None
     assert config.microphone_name is None
+    assert config.model is None
 
 
 def test_platform_default_device_is_concrete(monkeypatch):
-    """win32 -> dml; Linux -> cuda only with an NVIDIA driver; darwin -> cpu."""
+    """ADR 0014: the fresh default is 'cpu' on every platform — concrete,
+    never 'auto'; GPU backends are an explicit opt-in."""
     from babelfish_stt import config as config_module
 
     monkeypatch.setattr(config_module.sys, "platform", "win32")
-    assert config_module.platform_default_device() == "dml"
+    assert config_module.platform_default_device() == "cpu"
 
     monkeypatch.setattr(config_module.sys, "platform", "darwin")
     assert config_module.platform_default_device() == "cpu"
 
     monkeypatch.setattr(config_module.sys, "platform", "linux")
-
-    import babelfish_stt.hardware as hardware_module
-
-    monkeypatch.setattr(hardware_module, "detect_nvidia", lambda: True)
-    assert config_module.platform_default_device() == "cuda"
-
-    monkeypatch.setattr(hardware_module, "detect_nvidia", lambda: False)
     assert config_module.platform_default_device() == "cpu"
+
+
+def test_hardware_model_card_override_validation():
+    """hardware.model is the weights-ladder override (ADR 0014): 'v3',
+    'redux', or unset."""
+    assert HardwareConfig().model is None
+    assert HardwareConfig(model="v3").model == "v3"
+    assert HardwareConfig(model="redux").model == "redux"
+    with pytest.raises(ValidationError):
+        HardwareConfig(model="bogus-card")
 
 
 def test_hardware_status_validation():

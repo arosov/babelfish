@@ -99,32 +99,84 @@ def _degraded_device_fix(device: str) -> Optional[str]:
     )
 
 
+# --- Weights ladder (ADR 0014) ---
+#
+# MODEL_NAME stays the onnx-asr registry key; it is NOT the file layout —
+# whatever weights sit in the resolved directory get loaded (the load-bearing
+# property the Track-B prototype exercised with zero code changes). The fp32
+# v3 directory keeps that name; the Redux int4 card lives beside it with a
+# -redux suffix. cpu devices land on the redux card, GPU devices keep fp32
+# v3 (GPU int4 MatMulNBits is deliberately out of scope for now); a config
+# hardware.model ("v3"/"redux") forces one card regardless of device.
+
+WEIGHTS_TAG_FP32 = "fp32 v3"
+WEIGHTS_TAG_REDUX = "parakeet-redux int4 MatMulNBits"
+_REDUX_SUFFIX = "-redux"
+
+
+def weights_card_dir(model_name: str, device: str, model_override: Optional[str]) -> str:
+    """The ladder card a device resolves to: the directory name under
+    models/ that holds the intended weights."""
+    if model_override == "redux":
+        return model_name + _REDUX_SUFFIX
+    if model_override == "v3":
+        return model_name
+    return (
+        model_name + _REDUX_SUFFIX if device == "cpu" else model_name
+    )
+
+
+def weights_tag_for(path: Optional[Path]) -> str:
+    """The human-readable weights tag for a resolved model directory
+    (the 📦 Model source log line: exactly which card loaded)."""
+    if path is not None and path.name.endswith(_REDUX_SUFFIX):
+        return WEIGHTS_TAG_REDUX
+    return WEIGHTS_TAG_FP32
+
+
 def resolve_model_path(
-    cache_dir: Optional[str], base_dir: Path, model_name: str
+    cache_dir: Optional[str],
+    base_dir: Path,
+    model_name: str,
+    device: Optional[str] = None,
+    model_override: Optional[str] = None,
 ) -> Optional[Path]:
     """
-    Model resolution order:
+    Model resolution order (the per-device weights ladder, ADR 0014):
     1. Shared cache dir (config `cache.cache_dir`, auto-populated from
        VOGON_APP_CACHE_DIR) — e.g. VogonPoet's provisioned cache.
     2. Repo-local models/ directory.
     3. None -> onnx-asr default path (HF cache; auto-downloads on first use).
+
+    The card (directory name) is device-derived — cpu -> the redux card,
+    any GPU backend -> the fp32 v3 card — unless `model_override`
+    (hardware.model) forces one card. The legacy 3-arg call form resolves
+    the fp32 v3 card (device=None).
     """
+    card_dir = weights_card_dir(model_name, device, model_override)
+    tag = weights_tag_for(Path(card_dir))
     candidates = []
 
     if cache_dir:
-        candidates.append(("shared-cache", Path(cache_dir) / "models" / model_name))
+        candidates.append(("shared-cache", Path(cache_dir) / "models" / card_dir))
 
-    candidates.append(("repo", base_dir / "models" / model_name))
+    candidates.append(("repo", base_dir / "models" / card_dir))
 
     for source, candidate in candidates:
         if candidate.exists():
-            logger.info(f"📦 Model source ({source}): {candidate}")
+            logger.info(f"📦 Model source ({source}): {candidate} ({tag})")
             return candidate
 
     logger.info(
         "📦 No local model found; onnx-asr will use its default HF cache "
         "(auto-download on first use)."
     )
+    if device == "cpu" and model_override is None:
+        logger.warning(
+            "📦 No local %s card for device cpu (expected the Redux card, "
+            "provisioned by the bootstrap); the fallback downloads the fp32 "
+            "v3 weights from HF." % card_dir
+        )
     return None
 
 
@@ -145,13 +197,19 @@ class STTEngine(Reconfigurable):
         self.device_type = self._resolve_device(target_device)
         self.config_ref = config  # Keep reference to update status
 
-        # Model resolution order:
+        # Model resolution order (the per-device weights ladder, ADR 0014):
         # 1. Shared cache dir (config `cache.cache_dir`, auto-populated from
         #    VOGON_APP_CACHE_DIR) — e.g. VogonPoet's provisioned cache.
         # 2. Repo-local models/ directory (used when running from a checkout
         #    with a local model copy).
         # 3. onnx-asr default path (HF cache; auto-downloads on first use).
+        # The card is device-derived (cpu -> redux int4, gpu -> fp32 v3)
+        # unless hardware.model forces one; self.model_path is kept for the
+        # calibration fingerprint's weights identity (D5/ADR 0014) and
+        # self.weights_tag for the startup diagnostics.
         model_path = self._resolve_model_path(config)
+        self.model_path = model_path
+        self.weights_tag = weights_tag_for(model_path)
 
         # Quantization Policy: full precision everywhere by default.
         # An explicit hardware.quantization setting is still honoured.
@@ -314,7 +372,13 @@ class STTEngine(Reconfigurable):
 
         # Repo checkout layout: src/babelfish_stt/engine.py -> repo root
         base_dir = Path(__file__).resolve().parent.parent.parent
-        return resolve_model_path(cache_dir, base_dir, self.MODEL_NAME)
+        return resolve_model_path(
+            cache_dir,
+            base_dir,
+            self.MODEL_NAME,
+            device=self.device_type,
+            model_override=getattr(config.hardware, "model", None),
+        )
 
     def _resolve_device(self, device: str) -> str:
         from babelfish_stt.hardware import probe_hardware_facts

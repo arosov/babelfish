@@ -316,6 +316,7 @@ async def run_babelfish(
     wakeword: Optional[str] = None,
     stopword: Optional[str] = None,
     force_cpu: bool = False,
+    force_gpu: bool = False,
     port: Optional[int] = None,
     serve: bool = False,
     type_into_apps: bool = False,
@@ -338,10 +339,31 @@ async def run_babelfish(
     else:
         logger.info("✅ Configuration validated against hardware.")
 
+    # The device the CONFIG named (ADR 0014): kept so the startup banner can
+    # state the EFFECTIVE device whenever the CLI overrides it — the exact
+    # config-vs-effective confusion the 2026-10-12 traces showed.
+    requested_device = config_manager.config.hardware.device
+
     # Override config with CLI flags if provided (in-memory only, never saved)
     if force_cpu:
         config_manager.config.hardware.device = "cpu"
         logger.info("   MODE: Force CPU Execution (CLI Override)")
+    elif force_gpu:
+        from babelfish_stt.placement import best_gpu_device
+        from babelfish_stt.hardware import probe_hardware_facts
+
+        gpu_device = best_gpu_device(probe_hardware_facts())
+        if gpu_device is None:
+            logger.warning(
+                "   MODE: --gpu requested but no GPU backend is available in "
+                f"this ORT install; keeping the config device "
+                f"({requested_device})."
+            )
+        else:
+            config_manager.config.hardware.device = gpu_device
+            logger.info(
+                f"   MODE: Force GPU Execution (CLI Override: {gpu_device})"
+            )
 
     if type_into_apps:
         config_manager.config.system_input.enabled = True
@@ -472,6 +494,7 @@ async def run_babelfish(
                     "ghost_padding_s": profile.ghost_padding_s,
                     "min_padding_s": profile.min_padding_s,
                     "device": engine.device_type,
+                    "weights": engine.weights_tag,
                 },
             )
             displays.append(capture)
@@ -488,6 +511,7 @@ async def run_babelfish(
                     "ghost_padding_s": profile.ghost_padding_s,
                     "min_padding_s": profile.min_padding_s,
                     "device": engine.device_type,
+                    "weights": engine.weights_tag,
                 },
             )
             displays.append(capture)
@@ -506,6 +530,20 @@ async def run_babelfish(
 
     logger.info("⏳ Loading engines and models (this may take a few seconds)...")
     vad, engine, ww_engine, streamer, display, pipeline, capture = await heavy_init()
+
+    # ADR 0014: the startup banner states the EFFECTIVE device, not the
+    # config's, whenever they differ (CLI override or device resolution) —
+    # "config says cuda, running on cpu" is never an implicit fact again.
+    if engine.device_type != requested_device:
+        reason = (
+            "CLI override"
+            if (force_cpu or force_gpu)
+            else "device resolution"
+        )
+        logger.info(
+            f"🚀 Effective device: {engine.device_type} "
+            f"(config says {requested_device}; {reason})"
+        )
 
     # Initialize the notifier (both modes get wake/stop-word desktop toasts)
     notifier = DesktopNotifier()
@@ -591,6 +629,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--gpu",
+        action="store_true",
+        help="Flip to the best detected GPU backend for this run (in-memory "
+        "override, never saved). GPU devices keep the fp32 v3 weights card; "
+        "only the machine default (CPU) and an explicit config device are "
+        "the other options. Mutually exclusive with --cpu.",
+    )
+
+    parser.add_argument(
         "--server",
         action="store_true",
         help="Run in service mode: expose the WebSocket API (for VogonPoet). "
@@ -672,6 +719,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     if args.port is not None and not args.server:
         parser.error("--port requires --server")
 
+    if args.cpu and args.gpu:
+        parser.error("--cpu and --gpu are mutually exclusive")
+
     if args.replay_path and args.type_into_apps:
         parser.error(
             "--replay forbids --type: the replay harness must never type "
@@ -712,6 +762,7 @@ def main():
             wakeword=args.wakeword,
             stopword=args.stopword,
             force_cpu=args.cpu,
+            force_gpu=args.gpu,
             port=args.port,
             serve=args.server,
             type_into_apps=args.type_into_apps,
