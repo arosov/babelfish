@@ -71,7 +71,7 @@ wheels = [
 
 [[package]]
 name = "babelfish"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "grapheme", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32' or (extra == 'extra-9-babelfish-cpu' and extra == 'extra-9-babelfish-intel-linux') or (extra == 'extra-9-babelfish-cpu' and extra == 'extra-9-babelfish-nvidia-linux') or (extra == 'extra-9-babelfish-cpu' and extra == 'extra-9-babelfish-nvidia-win') or (extra == 'extra-9-babelfish-cpu' and extra == 'extra-9-babelfish-windows-gpu') or (extra == 'extra-9-babelfish-intel-linux' and extra == 'extra-9-babelfish-nvidia-linux') or (extra == 'extra-9-babelfish-intel-linux' and extra == 'extra-9-babelfish-nvidia-win') or (extra == 'extra-9-babelfish-intel-linux' and extra == 'extra-9-babelfish-windows-gpu') or (extra == 'extra-9-babelfish-nvidia-linux' and extra == 'extra-9-babelfish-nvidia-win') or (extra == 'extra-9-babelfish-nvidia-linux' and extra == 'extra-9-babelfish-windows-gpu') or (extra == 'extra-9-babelfish-nvidia-win' and extra == 'extra-9-babelfish-windows-gpu')" },
