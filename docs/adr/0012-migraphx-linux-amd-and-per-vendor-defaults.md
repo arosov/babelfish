@@ -3,7 +3,11 @@
 Date: 2026-10-04
 Status: Proposed — decision made, implementation pending (a follow-up
 session implements the pyproject/bootstrap/placement/hardware/engine
-branches, the tests, and the README selection matrix).
+branches, the tests, and the README selection matrix). The
+*DirectML-stays-the-Windows-default* clause is amended by
+[ADR 0014](0014-cpu-default-with-device-keyed-weights-ladder.md): the
+default device is CPU on every platform now, and DirectML (like CUDA) is
+an explicit opt-in.
 
 ## Context
 

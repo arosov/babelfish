@@ -92,16 +92,29 @@ You can persist the same block in your config file instead of using `--type`.
 
 ## 📦 Cache & Model Provisioning
 
-The Parakeet model (`nemo-parakeet-tdt-0.6b-v3`, ~2.4GB) is resolved in this
-order:
+Weights come as a per-device **ladder**
+([ADR 0014](docs/adr/0014-cpu-default-with-device-keyed-weights-ladder.md)):
+the CPU default loads the **Parakeet Redux int4** card
+(`nemo-parakeet-tdt-0.6b-v3-redux`, ~418 MB, from
+`eschmidbauer/parakeet-redux-onnx` at a pinned revision); any GPU backend
+keeps the fp32 card (`nemo-parakeet-tdt-0.6b-v3`, ~2.4 GB, from
+`istupakov/parakeet-tdt-0.6b-v3-onnx`) — GPU int4 is deliberately out of
+scope. Transcripts are equivalent on the bundled fixtures (measured live,
+Oct 2026): the 7× smaller card optimizes footprint and first-run download,
+not short-window CPU latency.
 
-1. **Shared cache** — `<cache.cache_dir>/models/nemo-parakeet-tdt-0.6b-v3/`,
-   where `cache.cache_dir` comes from an explicit config value or the
+Each card is resolved in this order:
+
+1. **Shared cache** — `<cache.cache_dir>/models/<card-name>/`, where
+   `cache.cache_dir` comes from an explicit config value or the
    `VOGON_APP_CACHE_DIR` environment variable (the VogonPoet cache).
-2. **Repo-local** — `models/nemo-parakeet-tdt-0.6b-v3/` in the checkout.
-3. **onnx-asr default** — the Hugging Face cache; auto-downloads ~2.4GB on
-   first use, then stays cached. Standard `HF_HOME` / `HF_HUB_CACHE`
+2. **Repo-local** — `models/<card-name>/` in the checkout.
+3. **onnx-asr default** — the Hugging Face cache; auto-downloads on first
+   use, then stays cached. Standard `HF_HOME` / `HF_HUB_CACHE`
    environment variables remain respected by HF.
+
+`hardware.model` (`"v3"` | `"redux"`, default unset) forces one card of the
+ladder regardless of the device — the A/B knob.
 
 To reuse an existing Parakeet install from VogonPoet instead of downloading
 again:
@@ -113,7 +126,8 @@ uv run babelfish
 ```
 
 or set `"cache": { "cache_dir": "F:\\vogonpoet_cache" }` in your config file.
-Ensure the directory contains `models/nemo-parakeet-tdt-0.6b-v3/`.
+Ensure the directory contains `models/<card-name>/` for the card your device
+resolves (both cards may sit side by side; ~2.9 GB combined worst case).
 
 > ⚠️ **Caveat:** `scripts/bootstrap.py` is owned by babelfish itself — see
 > [ADR 0006](docs/adr/0006-babelfish-owns-its-bootstrap.md). It owns
@@ -131,19 +145,23 @@ enforces it) — pick exactly one for your hardware/OS:
 
 | Extra           | Platform | Backend                     |
 |-----------------|----------|-----------------------------|
-| `cpu`           | any      | CPU (also the macOS path)   |
+| `cpu`           | any      | CPU (**default**; also the macOS path) |
 | `nvidia-win`    | Windows  | NVIDIA CUDA (opt-in)        |
-| `nvidia-linux`  | Linux    | NVIDIA CUDA (default)       |
-| `windows-gpu`   | Windows  | AMD/Intel/NVIDIA via DirectML (default) |
+| `nvidia-linux`  | Linux    | NVIDIA CUDA (opt-in)        |
+| `windows-gpu`   | Windows  | AMD/Intel/NVIDIA via DirectML (opt-in) |
 | `intel-linux`   | Linux    | Intel OpenVINO (manual opt-in) |
 
 Defaults are decided at config creation and are never `"auto"` —
 `hardware.device` is always a concrete backend
-([ADR 0007](docs/adr/0007-no-auto-concrete-backends-and-rocm-removed.md)):
-Windows starts on DirectML (picking `cuda`/`cuda:N` in the UI syncs
-`nvidia-win` on demand); Linux starts on CUDA when an NVIDIA driver is
-detected, else CPU. Linux + AMD runs on CPU (the ROCm execution provider was
-removed from ONNX Runtime ≥ 1.23).
+([ADR 0007](docs/adr/0007-no-auto-concrete-backends-and-rocm-removed.md),
+[ADR 0014](docs/adr/0014-cpu-default-with-device-keyed-weights-ladder.md)).
+Every platform starts on **CPU** (with the Redux int4 weights); GPUs are an
+explicit opt-in — write `hardware.device` in the config, or pass
+`babelfish --gpu` for one in-memory override. A GPU config syncs its
+wheel on demand: `cuda`/`cuda:N` → `nvidia-win`/`nvidia-linux`,
+`dml` → `windows-gpu`. Linux + AMD runs on CPU (the ROCm execution provider
+was removed from ONNX Runtime ≥ 1.23).
+Existing `dml`/`cuda` configs keep working unchanged (they stay on fp32 v3).
 
 ```powershell
 # Windows + NVIDIA

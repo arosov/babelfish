@@ -191,8 +191,9 @@ def test_capture_replays_without_duplication():
 
 
 def test_capture_header_snapshot():
-    """The capture header records the performance profile and device the
-    ghosts were produced under (the frozen signal's provenance)."""
+    """The capture header records the performance profile, device, and
+    weights card the ghosts were produced under (the frozen signal's
+    provenance — ADR 0014 adds the weights tag to the header)."""
     capture = _load_capture()
     header = capture["header"]
     for key in (
@@ -204,3 +205,10 @@ def test_capture_header_snapshot():
     ):
         assert key in header, f"capture header missing {key}"
     assert header["ghost_window_s"] > 0
+    # The weights tag rides with every NEW capture; the committed fixture
+    # predates it (optional here, required for regressions going forward).
+    if "weights" in header:
+        assert header["weights"] in (
+            "fp32 v3",
+            "parakeet-redux int4 MatMulNBits",
+        )

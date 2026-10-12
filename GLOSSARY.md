@@ -72,3 +72,12 @@ babelfish, not VogonPoet — see
 [ADR 0006](docs/adr/0006-babelfish-owns-its-bootstrap.md).
 _Avoid_: installer, setup script, env setup
 
+**Weights ladder**:
+The per-device choice of Parakeet weights card (ADR 0014): a `cpu` device resolves the
+**Redux card** (`nemo-parakeet-tdt-0.6b-v3-redux`, int4, ~418 MB) and any GPU device the
+**fp32 card** (`nemo-parakeet-tdt-0.6b-v3`). The directory is what rotates — the
+engine's `MODEL_NAME` is only the onnx-asr registry key. `hardware.model` ("v3" |
+"redux") forces one card; the ladder is strict, with no cross-card fallback.
+_Avoid_: model swap, weights swap (that's the run_redux prototype's mechanism),
+quantization (that is `hardware.quantization`, a different axis)
+
