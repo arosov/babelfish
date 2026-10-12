@@ -29,6 +29,7 @@ from babelfish_stt.calibration import (
     table_tier_for_cost,
     tier_for_cost,
     throttle_for_cost,
+    weights_identity,
 )
 from babelfish_stt.config import (
     CALIBRATION_SCHEMA_VERSION,
@@ -450,13 +451,18 @@ class STTEngine(Reconfigurable):
 
         Uses the RESOLVED device (self.device_type, reassigned in place
         by the GPU->CPU fallbacks above) so a driver-broken launch
-        can't poison a GPU-keyed entry with CPU measurements.
+        can't poison a GPU-keyed entry with CPU measurements, and the
+        resolved card's weights identity (ADR 0014) so the fp32 and
+        redux profiles can never collide under one key — the measured
+        prototype bug (a Redux bench silently overwrote the fp32 CPU
+        profile under the same weights-blind key).
         """
         return fingerprint(
             backend=self.device_type,
             device_name=get_device_name(self.device_type),
             quantization=self.quantization,
             model_name=self.MODEL_NAME,
+            weights_id=weights_identity(self.model_path),
             schema_version=CALIBRATION_SCHEMA_VERSION,
             ort_version=ort_version(),
             onnx_asr_version=onnx_asr_version(),

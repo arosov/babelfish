@@ -2,7 +2,11 @@ import json
 import os
 import pytest
 from unittest.mock import patch
-from babelfish_stt.config import BabelfishConfig, platform_default_device
+from babelfish_stt.config import (
+    BabelfishConfig,
+    CALIBRATION_SCHEMA_VERSION,
+    platform_default_device,
+)
 from babelfish_stt.config_manager import ConfigManager
 
 
@@ -159,7 +163,7 @@ def test_config_manager_save_roundtrips_calibration(tmp_path):
     manager.record_calibration("dml:0|GPU (DirectML)|None|m|1|1.24.4|0.12.0", entry)
 
     data = json.loads(config_file.read_text())
-    assert data["calibration"]["schema_version"] == 1
+    assert data["calibration"]["schema_version"] == CALIBRATION_SCHEMA_VERSION
     assert "dml:0|GPU (DirectML)|None|m|1|1.24.4|0.12.0" in data["calibration"]["profiles"]
 
     reloaded = ConfigManager(config_path=str(config_file))

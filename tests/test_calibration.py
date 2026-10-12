@@ -11,6 +11,7 @@ resolved-device fingerprint, and every later launch is canary-checked
 import asyncio
 import json
 import unittest
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import numpy as np
@@ -24,6 +25,7 @@ from babelfish_stt.calibration import (
 )
 from babelfish_stt.config import (
     BabelfishConfig,
+    CALIBRATION_SCHEMA_VERSION,
     CalibrationProfileEntry,
     HardwareConfig,
     PerformanceProfile,
@@ -32,7 +34,16 @@ from babelfish_stt.config_manager import ConfigManager
 from babelfish_stt.engine import STTEngine
 from babelfish_stt.placement import GpuDevice, HardwareFacts
 
-FP = "cuda:0|Test GPU (CUDA)|None|nemo-parakeet-tdt-0.6b-v3|1|1.30.0|0.12.0"
+FP = cal.fingerprint(
+    backend="cuda:0",
+    device_name="Test GPU (CUDA)",
+    quantization=None,
+    model_name="nemo-parakeet-tdt-0.6b-v3",
+    weights_id="d34db33fcafe",
+    schema_version=CALIBRATION_SCHEMA_VERSION,
+    ort_version="1.30.0",
+    onnx_asr_version="0.12.0",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +190,8 @@ class TestFingerprint(unittest.TestCase):
             device_name="Test GPU (CUDA)",
             quantization=None,
             model_name="nemo-parakeet-tdt-0.6b-v3",
-            schema_version=1,
+            weights_id="d34db33fcafe",
+            schema_version=CALIBRATION_SCHEMA_VERSION,
             ort_version="1.30.0",
             onnx_asr_version="0.12.0",
         )
@@ -196,12 +208,146 @@ class TestFingerprint(unittest.TestCase):
             self._fp(device_name="Other GPU (CUDA)"),
             self._fp(quantization="int8"),
             self._fp(model_name="some-other-model"),
-            self._fp(schema_version=2),
+            self._fp(weights_id="deadbeef1234"),
+            self._fp(weights_id=""),
+            self._fp(schema_version=CALIBRATION_SCHEMA_VERSION + 1),
             self._fp(ort_version="1.29.0"),
             self._fp(onnx_asr_version="0.13.0"),
         ]
         for variant in variants:
             self.assertNotEqual(variant, base)
+
+
+class TestWeightsIdentity(unittest.TestCase):
+    """weights_identity gives the fingerprint its weights component
+    (ADR 0014): the fp32 and redux cards can never share a cache key."""
+
+    def setUp(self):
+        import tempfile
+        import shutil
+
+        self._tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self._tmp, ignore_errors=True)
+
+    def _card(self, name, files):
+        d = Path(self._tmp) / name
+        d.mkdir(parents=True)
+        for fname, blob in files.items():
+            (d / fname).write_bytes(blob)
+        return d
+
+    def test_missing_and_empty_dirs_yield_empty_identity(self):
+        self.assertEqual(cal.weights_identity(None), "")
+        self.assertEqual(cal.weights_identity(Path(self._tmp) / "nope"), "")
+        empty = Path(self._tmp) / "empty"
+        empty.mkdir()
+        self.assertEqual(cal.weights_identity(empty), "")
+
+    def test_identity_is_stable_for_identical_cards(self):
+        files = {
+            "config.json": b'{"x": 1}',
+            "vocab.txt": b"abc",
+            "encoder-model.onnx": b"\x00" * (16 * 1024 * 1024),
+        }
+        a = self._card("a", files)
+        b = self._card("b", files)
+        self.assertEqual(cal.weights_identity(a), cal.weights_identity(b))
+
+    def test_big_file_size_change_rotates_the_identity(self):
+        """The packed encoder (~344 MB redux / ~2.4 GB fp32) is identified
+        by name + size: a different export has a different size, which is
+        what separates the two cards. Files are created sparse via
+        truncate() — only the name/size go into the digest, no GB reads."""
+        def _card_with_size(name, size):
+            d = Path(self._tmp) / name
+            d.mkdir(parents=True)
+            (d / "config.json").write_bytes(b'{"x": 1}')
+            with open(d / "encoder-model.onnx", "wb") as f:
+                f.truncate(size)
+            return d
+
+        a = _card_with_size("big_a", 344 * 1024 * 1024)
+        b = _card_with_size("big_b", 2400 * 1024 * 1024)
+        self.assertNotEqual(cal.weights_identity(a), cal.weights_identity(b))
+
+    def test_small_file_content_change_rotates_the_identity(self):
+        a = self._card(
+            "a",
+            {
+                "config.json": b'{"x": 1}',
+                "vocab.txt": b"abc",
+                "encoder-model.onnx": b"\x00" * (16 * 1024 * 1024),
+            },
+        )
+        b = self._card(
+            "b",
+            {
+                "config.json": b'{"x": 2}',
+                "vocab.txt": b"abc",
+                "encoder-model.onnx": b"\x00" * (16 * 1024 * 1024),
+            },
+        )
+        self.assertNotEqual(cal.weights_identity(a), cal.weights_identity(b))
+
+    def test_fingerprint_collision_regression_fp32_vs_redux_cpu(self):
+        """The measured prototype bug: an fp32 CPU bench and a redux CPU
+        bench shared one weights-blind key, so the second silently
+        overwrote the first. With the weights component the two
+        fingerprints are distinct entries and both profiles survive a
+        weights swap."""
+        def _seed_card(name, files):
+            d = Path(self._tmp) / name
+            d.mkdir(parents=True)
+            for fname, blob in files.items():
+                (d / fname).write_bytes(blob)
+            return d
+
+        # fp32 v3: small files (hashable content) + big binaries (only
+        # name+size enter the digest — no GB write/read in tests)
+        fp32_card = _seed_card(
+            "v3",
+            {"config.json": b'{"name": "v3"}', "vocab.txt": b"abc"},
+        )
+        for fname, size in (
+            ("encoder-model.onnx", 7 * 1024 * 1024),
+            ("encoder-model.onnx.data", 2336 * 1024 * 1024),
+            ("decoder_joint-model.onnx", 65 * 1024 * 1024),
+        ):
+            with open(fp32_card / fname, "wb") as f:
+                f.truncate(size)
+
+        redux_card = _seed_card(
+            "redux",
+            {"config.json": b'{"name": "redux"}', "vocab.txt": b"abc"},
+        )
+        for fname, size in (
+            ("encoder-model.onnx", 344 * 1024 * 1024),
+            ("decoder_joint-model.onnx", 73 * 1024 * 1024),
+        ):
+            with open(redux_card / fname, "wb") as f:
+                f.truncate(size)
+
+        common = dict(
+            backend="cpu",
+            device_name="CPU",
+            quantization=None,
+            model_name="nemo-parakeet-tdt-0.6b-v3",
+            schema_version=CALIBRATION_SCHEMA_VERSION,
+            ort_version="1.30.0",
+            onnx_asr_version="0.12.0",
+        )
+        weights_fp32 = cal.weights_identity(fp32_card)
+        weights_redux = cal.weights_identity(redux_card)
+        fp32_fp = cal.fingerprint(weights_id=weights_fp32, **common)
+        redux_fp = cal.fingerprint(weights_id=weights_redux, **common)
+
+        self.assertNotEqual(weights_fp32, weights_redux)
+        self.assertNotEqual(fp32_fp, redux_fp)
+        # Both are cpu-keyed; the keys differ ONLY by the weights id
+        self.assertEqual(
+            fp32_fp.replace(weights_fp32, ""),
+            redux_fp.replace(weights_redux, ""),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -575,7 +721,7 @@ class TestCalibrateCache:
         # The persisted file carries the entry under `calibration`
         data = json.loads(config_manager.config_path.read_text())
         assert FP in data["calibration"]["profiles"]
-        assert data["calibration"]["schema_version"] == 1
+        assert data["calibration"]["schema_version"] == CALIBRATION_SCHEMA_VERSION
         # And the profile is the entry's operating point
         assert profile.tier == "high"
         assert profile.ghost_throttle_ms == 150
@@ -587,7 +733,7 @@ class TestCalibrateCache:
         config_manager = self._config_manager(
             tmp_path,
             calibration={
-                "schema_version": 1,
+                "schema_version": CALIBRATION_SCHEMA_VERSION,
                 "profiles": {FP: _seed_entry()},
             },
         )
@@ -613,7 +759,7 @@ class TestCalibrateCache:
         config_manager = self._config_manager(
             tmp_path,
             calibration={
-                "schema_version": 1,
+                "schema_version": CALIBRATION_SCHEMA_VERSION,
                 "profiles": {FP: _seed_entry()},
             },
         )
@@ -637,7 +783,7 @@ class TestCalibrateCache:
         config_manager = self._config_manager(
             tmp_path,
             calibration={
-                "schema_version": 1,
+                "schema_version": CALIBRATION_SCHEMA_VERSION,
                 "profiles": {FP: _seed_entry(tier="medium", window=3.0)},
             },
         )
@@ -677,7 +823,7 @@ class TestCalibrateCache:
         }
         config_manager = self._config_manager(
             tmp_path,
-            calibration={"schema_version": 1, "profiles": seeded},
+            calibration={"schema_version": CALIBRATION_SCHEMA_VERSION, "profiles": seeded},
         )
         engine = self._engine()  # a distinct fingerprint
 
@@ -707,7 +853,7 @@ class TestCalibrateCache:
     def test_raising_canary_defaults_and_persists_nothing(self, tmp_path):
         config_manager = self._config_manager(
             tmp_path,
-            calibration={"schema_version": 1, "profiles": {FP: _seed_entry()}},
+            calibration={"schema_version": CALIBRATION_SCHEMA_VERSION, "profiles": {FP: _seed_entry()}},
         )
         engine = self._engine()
         engine.canary_probe.side_effect = RuntimeError("canary exploded")

@@ -16,6 +16,7 @@ speech purely on probe workload, and one scalar cannot serve both
 passes — the Ghost/Final rank order flips across backends).
 """
 
+import hashlib
 import importlib.metadata
 import logging
 import statistics
@@ -293,21 +294,74 @@ def final_rtfx(duration_s: float, cost_ms: float) -> float:
 # --- Fingerprint ---
 
 
+# Full-content hashing is bounded to small files; the big weights binaries
+# (fp32 encoder ~2.4 GB with its .onnx.data, redux encoder ~344 MB) are
+# identified by name + byte size. A re-export that kept every file size
+# byte-identical would collide — vanishingly unlikely, and the price of
+# full-content identity is hashing 2.4+ GB on every launch, a multi-second
+# startup tax. The measured prototype bug (fp32 and redux profiles sharing
+# one key) turns on the packed encoder's different size, which this
+# catches exactly.
+_WEIGHTS_FULL_HASH_LIMIT = 8 * 1024 * 1024
+
+
+def weights_identity(model_dir) -> str:
+    """Stable identity of the weights card a model directory holds.
+
+    SHA-256 over each file's name and size, plus the full content of small
+    files (config.json, vocab.txt) whose bytes pin the export. Raises
+    nothing: a missing/unreadable/empty directory yields "" (no local
+    card to identify — e.g. onnx-asr's HF auto-download path), so the
+    fingerprint simply omits the weights component, as before ADR 0014.
+
+    The measured prototype bug this closes: fingerprint
+    `cpu|CPU|None|<MODEL_NAME>|1|1.30.0|0.12.0` was weights-blind — a
+    Redux bench overwrote the fp32 profile under the same key and vice
+    versa (the canary only catches it within ±25%).
+    """
+    if not model_dir:
+        return ""
+    try:
+        files = sorted(
+            p for p in Path(model_dir).iterdir() if p.is_file()
+        )
+    except OSError:
+        return ""
+    if not files:
+        return ""
+
+    digest = hashlib.sha256()
+    try:
+        for f in files:
+            digest.update(f.name.encode("utf-8", "surrogateescape"))
+            digest.update(str(f.stat().st_size).encode("ascii"))
+            if f.stat().st_size <= _WEIGHTS_FULL_HASH_LIMIT:
+                digest.update(f.read_bytes())
+    except OSError:
+        return ""
+    return digest.hexdigest()[:12]
+
+
 def fingerprint(
     backend: str,
     device_name: str,
     quantization: Optional[str],
     model_name: str,
+    weights_id: str = "",
     schema_version: int = CALIBRATION_SCHEMA_VERSION,
     ort_version: str = "",
     onnx_asr_version: str = "",
 ) -> str:
     """Cache key for a benched profile: resolved backend + device name +
-    quantization + model + bench schema + onnxruntime/onnx-asr versions.
+    quantization + model + WEIGHTS IDENTITY + bench schema +
+    onnxruntime/onnx-asr versions.
 
     The caller passes the RESOLVED backend (post GPU->CPU fallback) so a
     driver-broken launch can't poison a GPU-keyed entry with CPU
-    measurements.
+    measurements, and the weights identity of the resolved model
+    directory (weights_identity) so an fp32 bench and a redux bench can
+    never share a key — the fp32 CPU and redux CPU profiles are distinct
+    entries (ADR 0014; the measured collision from the prototype).
     """
     return "|".join(
         (
@@ -315,6 +369,7 @@ def fingerprint(
             device_name,
             str(quantization),
             model_name,
+            weights_id,
             str(schema_version),
             ort_version,
             onnx_asr_version,

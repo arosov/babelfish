@@ -38,7 +38,7 @@
       "description": "The persisted calibration cache (ADR 0013): bench once per\nacceleration backend, keyed by fingerprint, canary-checked every\nlaunch.\n\nDeliberately NOT `pipeline.performance` \u2014 that key keeps its\nlive strip-migration semantics from the ADR 0011 rework; calibration\noutput lives in its own top-level section so stale pacing keys are\nstill wiped while benched entries survive.",
       "properties": {
         "schema_version": {
-          "default": 1,
+          "default": 2,
           "title": "Schema Version",
           "type": "integer"
         },

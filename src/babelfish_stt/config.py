@@ -84,7 +84,9 @@ class PerformanceProfile(BaseModel):
 # any change to what a stored entry means (probe protocol, cell-table
 # shape, boundary table): the store is ignored when stale and re-benched,
 # and the version rides in the fingerprint so a bump rotates cache keys.
-CALIBRATION_SCHEMA_VERSION = 1
+# Bumped to 2 by ADR 0014: fingerprints gained a weights-identity
+# component, so stored v1 entries (weights-blind) are ignored once.
+CALIBRATION_SCHEMA_VERSION = 2
 
 
 class CalibrationProfileEntry(BaseModel):
