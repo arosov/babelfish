@@ -202,6 +202,26 @@ def _ensure_redux_card(dest: Path) -> None:
             f"The Redux card at {dest} is incomplete after provisioning "
             f"(missing: {missing}); re-run once online."
         )
+    _log_card_digests(dest)
+
+
+def _log_card_digests(dest: Path) -> None:
+    """SHA-256 per provisioned file, logged at first provision — the same
+    export-pinning evidence scripts/bootstrap.py records for its own
+    provisioning funnel (mirrored helper; keep the two in agreement)."""
+    import hashlib
+
+    for f in sorted(dest.iterdir()):
+        if not f.is_file():
+            continue
+        digest = hashlib.sha256()
+        with open(f, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(chunk)
+        logger.info(
+            f"Provisioned {f.name}: sha256={digest.hexdigest()} "
+            f"size={f.stat().st_size}"
+        )
 
 
 def resolve_model_path(
